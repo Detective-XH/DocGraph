@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -114,7 +115,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  index <path>\n  status <path>\n  serve --path <path>\n  serve --workspace <dir>\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  index [--force] <path>\n  status <path>\n  serve --path <path>\n  serve --workspace <dir>\n")
 	os.Exit(1)
 }
 
@@ -122,12 +123,13 @@ var noGitignore bool
 
 func cmdIndex(args []string) {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
+	force := fs.Bool("force", false, "Delete the existing .docgraph database before indexing")
 	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
 	fs.Parse(args)
 	if fs.NArg() < 1 {
-		log.Fatal("usage: docgraph index <path>")
+		log.Fatal("usage: docgraph index [--force] <path>")
 	}
-	indexPath(fs.Arg(0)).Close()
+	indexPathOpts(fs.Arg(0), *force).Close()
 }
 
 func cmdStatus(args []string) {
@@ -216,14 +218,24 @@ func cmdServe(args []string) {
 }
 
 func indexPath(dir string) *store.Store {
+	return indexPathOpts(dir, false)
+}
+
+func indexPathOpts(dir string, force bool) *store.Store {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(root, ".docgraph"), 0o755); err != nil {
+	dbDir := filepath.Join(root, ".docgraph")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		log.Fatal(err)
 	}
-	st, err := store.Open(filepath.Join(root, ".docgraph", "docgraph.db"))
+	if force {
+		if err := removeIndexDB(dbDir); err != nil {
+			log.Fatal(err)
+		}
+	}
+	st, err := store.Open(filepath.Join(dbDir, "docgraph.db"))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -231,6 +243,16 @@ func indexPath(dir string) *store.Store {
 		log.Fatal(err)
 	}
 	return st
+}
+
+func removeIndexDB(dbDir string) error {
+	for _, name := range []string{"docgraph.db", "docgraph.db-wal", "docgraph.db-shm"} {
+		path := filepath.Join(dbDir, name)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func indexStore(root string, st *store.Store) error {

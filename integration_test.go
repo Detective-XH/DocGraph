@@ -188,6 +188,38 @@ func copyDir(t *testing.T, src, dst string) {
 	}
 }
 
+func TestIndexPathForceRebuildsDatabase(t *testing.T) {
+	projectDir := t.TempDir()
+	docPath := filepath.Join(projectDir, "doc.md")
+	if err := os.WriteFile(docPath, []byte("# Doc\n\nInitial content.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st := indexPathOpts(projectDir, false)
+	stats, err := st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FileCount != 1 {
+		t.Fatalf("expected initial index to contain 1 file, got %d", stats.FileCount)
+	}
+	st.Close()
+
+	if err := os.Remove(docPath); err != nil {
+		t.Fatal(err)
+	}
+
+	st = indexPathOpts(projectDir, true)
+	defer st.Close()
+	stats, err = st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FileCount != 0 {
+		t.Fatalf("expected force rebuild to remove stale file rows, got %d files", stats.FileCount)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: Full pipeline single project
 // ---------------------------------------------------------------------------
