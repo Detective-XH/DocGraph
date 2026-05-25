@@ -1,0 +1,47 @@
+version: 2
+updates:
+
+  # Go modules — split high-risk dep from the rest
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 5
+    # modernc.org/sqlite owns ~75% of supply chain — review separately
+    ignore:
+      - dependency-name: "modernc.org/sqlite"
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # modernc.org/sqlite — isolated PR for manual supply chain review
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 1
+    allow:
+      - dependency-name: "modernc.org/sqlite"
+    commit-message:
+      prefix: "deps(sqlite)"
+
+  # GitHub Actions — pin by digest is ideal; at minimum keep versions current
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: Europe/London
+    open-pull-requests-limit: 3
+    groups:
+      actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
