@@ -22,6 +22,25 @@ Run this diagnostic:
 
 **Score 0-1**: DocGraph adds marginal value. Stick with grep and Read tools.
 
+## Quick setup for MCP clients
+
+For a single project:
+
+```bash
+docgraph init --install-clients auto /path/to/project
+```
+
+For a multi-project workspace:
+
+```bash
+docgraph install --clients all --workspace /path/to/workspace
+```
+
+Supported client names are `claude`, `codex`, `hermes`, and `opencode`.
+`auto` always writes project-local Claude Code config and only writes global
+client configs when their config directories already exist. `all` creates
+config files for every supported client.
+
 ## What DocGraph is good at
 
 1. **Cross-reference tracking** — "Who references ADR-001?" requires scanning

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/install"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
 	"github.com/Detective-XH/docgraph/internal/scanner"
@@ -89,6 +90,8 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 ## Setup and indexing modes
 
 - docgraph init <path>: creates .docgraphignore, ensures .gitignore ignores .docgraph/, and creates a local .mcp.json when missing.
+- docgraph init --install-clients auto <path>: after local setup, auto-detects Claude Code, Codex, Hermes, and OpenCode config locations and writes DocGraph MCP entries where detected.
+- docgraph install --clients all <path>: non-interactive installer for Claude Code, Codex, Hermes, and OpenCode. Use --workspace to configure workspace mode instead of single-project mode.
 
 - Default: respects both .gitignore and .docgraphignore
 - --no-gitignore flag: ignores .gitignore rules, indexes ALL .md files
@@ -115,6 +118,8 @@ func main() {
 	switch os.Args[1] {
 	case "init":
 		cmdInit(os.Args[2:])
+	case "install":
+		cmdInstall(os.Args[2:])
 	case "index":
 		cmdIndex(os.Args[2:])
 	case "sync":
@@ -129,7 +134,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n")
 	os.Exit(1)
 }
 
@@ -138,6 +143,8 @@ var similarityThreshold float64
 
 func cmdInit(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	installClients := fs.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
+	workspaceMode := fs.Bool("workspace", false, "Configure installed clients to use serve --workspace")
 	fs.Parse(args)
 	dir := "."
 	if fs.NArg() > 0 {
@@ -149,6 +156,43 @@ func cmdInit(args []string) {
 	}
 	if err := initProject(root); err != nil {
 		log.Fatal(err)
+	}
+	if *installClients != "" {
+		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode})
+		if err != nil {
+			log.Fatal(err)
+		}
+		printInstallResults(results)
+	}
+}
+
+func cmdInstall(args []string) {
+	fs := flag.NewFlagSet("install", flag.ExitOnError)
+	clients := fs.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
+	workspaceMode := fs.Bool("workspace", false, "Configure clients to use serve --workspace")
+	fs.Parse(args)
+	dir := "."
+	if fs.NArg() > 0 {
+		dir = fs.Arg(0)
+	}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	results, err := install.Apply(root, install.Options{Clients: *clients, Workspace: *workspaceMode})
+	if err != nil {
+		log.Fatal(err)
+	}
+	printInstallResults(results)
+}
+
+func printInstallResults(results []install.Result) {
+	if len(results) == 0 {
+		fmt.Fprintln(os.Stderr, "No MCP client configs were updated")
+		return
+	}
+	for _, result := range results {
+		fmt.Fprintf(os.Stderr, "Configured %s: %s\n", result.Client, result.Path)
 	}
 }
 

@@ -45,13 +45,19 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [path]                                 # Create local DocGraph config
+docgraph init [--install-clients auto|all|LIST] [--workspace] [path] # Create local config; optionally install MCP clients
+docgraph install [--clients auto|all|LIST] [--workspace] [path]      # Configure MCP clients without re-initializing
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
 docgraph serve [--threshold N] [--no-gitignore] --path <path>     # MCP stdio server (single project)
 docgraph serve [--threshold N] [--no-gitignore] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 ```
+
+`LIST` is a comma-separated client list: `claude,codex,hermes,opencode`.
+`auto` always writes project-local Claude Code config and also writes Codex,
+Hermes, and OpenCode config when their config directories already exist.
+`all` creates config files for every supported client.
 
 ## MCP Tools
 
@@ -175,15 +181,33 @@ This ignores `.gitignore` rules but still respects `.docgraphignore`.
 
 DocGraph works with any MCP-compatible client via stdio transport.
 
+For automatic setup:
+
+```bash
+docgraph init --install-clients auto /path/to/project
+docgraph install --clients all --workspace /path/to/workspace
+```
+
+The installer writes:
+
+| Client | Config target |
+|--------|---------------|
+| Claude Code | `/path/to/project/.mcp.json` |
+| Codex | `$CODEX_HOME/config.toml` or `~/.codex/config.toml` |
+| Hermes Agent | `~/.hermes/config.yaml` |
+| OpenCode | project `opencode.json` / `.opencode.json`, otherwise `$XDG_CONFIG_HOME/opencode/opencode.json` |
+
 ### Claude Code
 
 Add to `.mcp.json` in your project root:
 
 ```json
 {
-  "docgraph": {
-    "command": "docgraph",
-    "args": ["serve", "--workspace", "/path/to/workspace"]
+  "mcpServers": {
+    "docgraph": {
+      "command": "docgraph",
+      "args": ["serve", "--path", "."]
+    }
   }
 }
 ```
@@ -192,15 +216,10 @@ Add to `.mcp.json` in your project root:
 
 Add to your MCP configuration:
 
-```json
-{
-  "mcpServers": {
-    "docgraph": {
-      "command": "docgraph",
-      "args": ["serve", "--workspace", "/path/to/workspace"]
-    }
-  }
-}
+```toml
+[mcp_servers.docgraph]
+command = "docgraph"
+args = ["serve", "--workspace", "/path/to/workspace"]
 ```
 
 ### Hermes Agent

@@ -355,6 +355,103 @@ func TestCmdInitCreatesLocalConfig(t *testing.T) {
 	}
 }
 
+func TestCmdInitInstallsSelectedMCPClients(t *testing.T) {
+	projectDir := t.TempDir()
+	home := t.TempDir()
+	codexHome := filepath.Join(t.TempDir(), "codex")
+	xdgConfig := filepath.Join(t.TempDir(), "xdg")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+
+	cmdInit([]string{"--install-clients", "claude,codex,hermes,opencode", projectDir})
+
+	assertJSONMCPArgs(t, filepath.Join(projectDir, ".mcp.json"), []string{"serve", "--path", "."})
+
+	codexConfig := readFile(t, filepath.Join(codexHome, "config.toml"))
+	if !strings.Contains(codexConfig, "[mcp_servers.docgraph]") ||
+		!strings.Contains(codexConfig, filepath.ToSlash(projectDir)) {
+		t.Fatalf("expected Codex config to contain docgraph entry for %s, got %s", projectDir, codexConfig)
+	}
+
+	hermesConfig := readFile(t, filepath.Join(home, ".hermes", "config.yaml"))
+	if !strings.Contains(hermesConfig, "mcp_servers:") ||
+		!strings.Contains(hermesConfig, "docgraph:") ||
+		!strings.Contains(hermesConfig, projectDir) {
+		t.Fatalf("expected Hermes config to contain docgraph entry for %s, got %s", projectDir, hermesConfig)
+	}
+
+	assertJSONMCPArgs(t, filepath.Join(xdgConfig, "opencode", "opencode.json"), []string{"serve", "--path", projectDir})
+}
+
+func TestCmdInstallAutoDetectsExistingMCPClientDirs(t *testing.T) {
+	projectDir := t.TempDir()
+	home := t.TempDir()
+	codexHome := filepath.Join(t.TempDir(), "codex")
+	xdgConfig := filepath.Join(t.TempDir(), "xdg")
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", codexHome)
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+
+	for _, dir := range []string{
+		codexHome,
+		filepath.Join(home, ".hermes"),
+		filepath.Join(xdgConfig, "opencode"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cmdInstall([]string{"--clients", "auto", "--workspace", projectDir})
+
+	assertJSONMCPArgs(t, filepath.Join(projectDir, ".mcp.json"), []string{"serve", "--workspace", projectDir})
+	if got := readFile(t, filepath.Join(codexHome, "config.toml")); !strings.Contains(got, "--workspace") {
+		t.Fatalf("expected auto-installed Codex config to use workspace mode, got %s", got)
+	}
+	if got := readFile(t, filepath.Join(home, ".hermes", "config.yaml")); !strings.Contains(got, "--workspace") {
+		t.Fatalf("expected auto-installed Hermes config to use workspace mode, got %s", got)
+	}
+	assertJSONMCPArgs(t, filepath.Join(xdgConfig, "opencode", "opencode.json"), []string{"serve", "--workspace", projectDir})
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func assertJSONMCPArgs(t *testing.T, path string, want []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var doc struct {
+		MCPServers map[string]struct {
+			Command string   `json:"command"`
+			Args    []string `json:"args"`
+		} `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	got, ok := doc.MCPServers["docgraph"]
+	if !ok {
+		t.Fatalf("expected docgraph MCP server in %s, got %s", path, string(data))
+	}
+	if got.Command != "docgraph" {
+		t.Fatalf("expected command docgraph in %s, got %q", path, got.Command)
+	}
+	if strings.Join(got.Args, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("expected args %v in %s, got %v", want, path, got.Args)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: Full pipeline single project
 // ---------------------------------------------------------------------------
