@@ -32,15 +32,17 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 go install github.com/Detective-XH/docgraph@latest
 ```
 
-Or build from source:
+Or build from source with version embedded:
 
 ```bash
-git clone https://github.com/Detective-XH/docgraph.git
-cd docgraph
-go build -o docgraph .
+git clone https://github.com/Detective-XH/DocGraph.git
+cd DocGraph
+go build -ldflags "-X main.version=$(git describe --tags --always)" -o docgraph .
 ```
 
 Requires Go 1.25 or later.
+
+> `go install` does not support `-ldflags` injection, so `docgraph version` will output `dev` for binaries installed that way. Use the source build above to get a versioned binary.
 
 ## CLI
 
