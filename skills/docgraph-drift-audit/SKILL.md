@@ -33,11 +33,12 @@ docgraph_status
 Record file count, node count, edge count, unresolved refs count.
 If unresolved refs > 5% of total edges, expect widespread broken-link findings below.
 
-Locate the database for raw queries:
+Locate the database and verify sqlite3 is available:
 
 ```bash
 DB=$(find . -name "docgraph.db" -path "*/.docgraph/*" | head -1)
 echo "DB: $DB"
+command -v sqlite3 >/dev/null 2>&1 || echo "WARNING: sqlite3 not found — install with: brew install sqlite (macOS) or apt install sqlite3 (Linux). Steps 2a–2e require it."
 ```
 
 ---

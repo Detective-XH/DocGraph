@@ -122,6 +122,30 @@ has no effect.
 - Markdown glossary lines like **Term:** definition produce searchable
   definition nodes.
 
+## Companion skills
+
+DocGraph ships purpose-built skills for LLM agents. When you install DocGraph
+for Claude Code (via docgraph init --install-clients claude or
+docgraph install --clients claude), the skills are automatically installed
+to .claude/skills/ alongside the MCP config.
+
+Each skill is matched to its agent. Currently available:
+
+| Agent | Skill | Purpose |
+|-------|-------|---------|
+| Claude Code | docgraph-drift-audit | Audit .md files for DocGraph compatibility |
+
+The docgraph-drift-audit skill checks: frontmatter presence, outgoing links,
+broken wikilinks (unresolved refs), heading structure, and similarity islands.
+It reports PASS/FAIL per category and offers auto-fix using docgraph_files
+and docgraph_similar.
+
+To install for Claude Code:
+  docgraph init --install-clients claude <path>   (installs MCP config + skill)
+  docgraph install --clients claude <path>        (installs MCP config + skill)
+
+Skills are installed with skip-if-exists policy — safe to re-run.
+
 ## Security — Content Trust
 
 Returned text comes from user-owned Markdown files, which may include cloned
@@ -198,6 +222,11 @@ func cmdInit(args []string) {
 			log.Fatal(err)
 		}
 		printInstallResults(results)
+		if claudeInstalled(results) {
+			if err := installSkills(root); err != nil {
+				log.Printf("warning: skills install: %v", err)
+			}
+		}
 	}
 }
 
@@ -237,14 +266,14 @@ func installSkills(root string) error {
 }
 
 func cmdInstall(args []string) {
-	fs := flag.NewFlagSet("install", flag.ExitOnError)
-	clients := fs.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
-	workspaceMode := fs.Bool("workspace", false, "Configure clients to use serve --workspace")
-	scope := fs.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
-	fs.Parse(args)
+	fset := flag.NewFlagSet("install", flag.ExitOnError)
+	clients := fset.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
+	workspaceMode := fset.Bool("workspace", false, "Configure clients to use serve --workspace")
+	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
+	fset.Parse(args)
 	dir := "."
-	if fs.NArg() > 0 {
-		dir = fs.Arg(0)
+	if fset.NArg() > 0 {
+		dir = fset.Arg(0)
 	}
 	root, err := filepath.Abs(dir)
 	if err != nil {
@@ -255,6 +284,20 @@ func cmdInstall(args []string) {
 		log.Fatal(err)
 	}
 	printInstallResults(results)
+	if claudeInstalled(results) {
+		if err := installSkills(root); err != nil {
+			log.Printf("warning: skills install: %v", err)
+		}
+	}
+}
+
+func claudeInstalled(results []install.Result) bool {
+	for _, r := range results {
+		if r.Client == "claude" {
+			return true
+		}
+	}
+	return false
 }
 
 func printInstallResults(results []install.Result) {
@@ -268,35 +311,35 @@ func printInstallResults(results []install.Result) {
 }
 
 func cmdIndex(args []string) {
-	fs := flag.NewFlagSet("index", flag.ExitOnError)
-	force := fs.Bool("force", false, "Delete the existing .docgraph database before indexing")
-	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
-	fs.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
-	fs.Parse(args)
-	if fs.NArg() < 1 {
+	fset := flag.NewFlagSet("index", flag.ExitOnError)
+	force := fset.Bool("force", false, "Delete the existing .docgraph database before indexing")
+	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
+	fset.Parse(args)
+	if fset.NArg() < 1 {
 		log.Fatal("usage: docgraph index [--force] [--threshold N] <path>")
 	}
-	indexPathOpts(fs.Arg(0), *force).Close()
+	indexPathOpts(fset.Arg(0), *force).Close()
 }
 
 func cmdSync(args []string) {
-	fs := flag.NewFlagSet("sync", flag.ExitOnError)
-	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
-	fs.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
-	fs.Parse(args)
-	if fs.NArg() < 1 {
+	fset := flag.NewFlagSet("sync", flag.ExitOnError)
+	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
+	fset.Parse(args)
+	if fset.NArg() < 1 {
 		log.Fatal("usage: docgraph sync [--threshold N] <path>")
 	}
-	indexPath(fs.Arg(0)).Close()
+	indexPath(fset.Arg(0)).Close()
 }
 
 func cmdStatus(args []string) {
-	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	fs.Parse(args)
-	if fs.NArg() < 1 {
+	fset := flag.NewFlagSet("status", flag.ExitOnError)
+	fset.Parse(args)
+	if fset.NArg() < 1 {
 		log.Fatal("usage: docgraph status <path>")
 	}
-	root, err := filepath.Abs(fs.Arg(0))
+	root, err := filepath.Abs(fset.Arg(0))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -314,12 +357,12 @@ func cmdStatus(args []string) {
 }
 
 func cmdServe(args []string) {
-	fs := flag.NewFlagSet("serve", flag.ExitOnError)
-	p := fs.String("path", "", "Project directory to index and serve")
-	ws := fs.String("workspace", "", "Workspace root (index all child dirs as projects)")
-	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
-	fs.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
-	fs.Parse(args)
+	fset := flag.NewFlagSet("serve", flag.ExitOnError)
+	p := fset.String("path", "", "Project directory to index and serve")
+	ws := fset.String("workspace", "", "Workspace root (index all child dirs as projects)")
+	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
+	fset.Parse(args)
 
 	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
 
