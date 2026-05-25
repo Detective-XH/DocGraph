@@ -1,0 +1,244 @@
+package workspace
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/Detective-XH/docgraph/internal/parser"
+	"github.com/Detective-XH/docgraph/internal/resolver"
+	"github.com/Detective-XH/docgraph/internal/scanner"
+	"github.com/Detective-XH/docgraph/internal/similarity"
+	"github.com/Detective-XH/docgraph/internal/store"
+)
+type Project struct {
+	Name  string
+	Path  string
+	Store *store.Store
+}
+type Workspace struct {
+	Root        string
+	Projects    []*Project
+	NoGitignore bool
+}
+
+func Open(root string) (*Workspace, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	excluded := loadExcludeList(filepath.Join(abs, ".docgraphignore"))
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return nil, err
+	}
+	w := &Workspace{Root: abs}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name()[0] == '.' {
+			continue
+		}
+		if excluded[e.Name()] {
+			fmt.Fprintf(os.Stderr, "[workspace] excluding %s (.docgraphignore)\n", e.Name())
+			continue
+		}
+		dir := filepath.Join(abs, e.Name())
+		if err := os.MkdirAll(filepath.Join(dir, ".docgraph"), 0o755); err != nil {
+			return nil, err
+		}
+		st, err := store.Open(filepath.Join(dir, ".docgraph", "docgraph.db"))
+		if err != nil {
+			return nil, err
+		}
+		w.Projects = append(w.Projects, &Project{Name: e.Name(), Path: dir, Store: st})
+	}
+	sort.Slice(w.Projects, func(i, j int) bool { return w.Projects[i].Name < w.Projects[j].Name })
+	return w, nil
+}
+func (w *Workspace) Close() error {
+	var last error
+	for _, p := range w.Projects {
+		if err := p.Store.Close(); err != nil {
+			last = err
+		}
+	}
+	return last
+}
+func (w *Workspace) IndexAll() error {
+	for _, p := range w.Projects {
+		if err := indexProjectOpts(p, w.NoGitignore); err != nil {
+			fmt.Fprintf(os.Stderr, "index %s: %v\n", p.Name, err)
+		}
+	}
+	return nil
+}
+func (w *Workspace) Search(query, kind string, limit int) ([]store.SearchResult, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	var all []store.SearchResult
+	for _, p := range w.Projects {
+		perProjectCap := limit * 2
+		results, err := p.Store.Search(query, kind, perProjectCap)
+		if err != nil {
+			continue
+		}
+		for i := range results {
+			results[i].Node.QualifiedName = "[" + p.Name + "] " + results[i].Node.QualifiedName
+		}
+		all = append(all, results...)
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Rank < all[j].Rank })
+	if len(all) > limit {
+		all = all[:limit]
+	}
+	return all, nil
+}
+func (w *Workspace) GetAllStats() (map[string]store.Stats, error) {
+	m := make(map[string]store.Stats)
+	for _, p := range w.Projects {
+		if s, err := p.Store.GetStats(); err == nil {
+			m[p.Name] = s
+		}
+	}
+	return m, nil
+}
+func (w *Workspace) GetAllFiles(pathFilter string) (map[string][]store.FileInfo, error) {
+	m := make(map[string][]store.FileInfo)
+	for _, p := range w.Projects {
+		if files, err := p.Store.GetFiles(pathFilter); err == nil {
+			m[p.Name] = files
+		}
+	}
+	return m, nil
+}
+func (w *Workspace) FindProject(name string) *Project {
+	for _, p := range w.Projects {
+		if p.Name == name {
+			return p
+		}
+	}
+	return nil
+}
+func (w *Workspace) GetIncomingEdges(projectName, nodeID string) ([]store.Edge, error) {
+	if p := w.FindProject(projectName); p != nil {
+		return p.Store.GetIncomingEdges(nodeID)
+	}
+	return nil, fmt.Errorf("project %q not found", projectName)
+}
+func (w *Workspace) GetOutgoingEdges(projectName, nodeID string) ([]store.Edge, error) {
+	if p := w.FindProject(projectName); p != nil {
+		return p.Store.GetOutgoingEdges(nodeID)
+	}
+	return nil, fmt.Errorf("project %q not found", projectName)
+}
+func (w *Workspace) FindNodeByName(name string) (*store.Node, string, error) {
+	for _, p := range w.Projects {
+		if n, err := p.Store.FindNodeByName(name); err == nil && n != nil {
+			return n, p.Name, nil
+		}
+	}
+	return nil, "", nil
+}
+func (w *Workspace) FindNodeByPath(path string) (*store.Node, string, error) {
+	for _, p := range w.Projects {
+		if n, err := p.Store.FindNodeByPath(path); err == nil && n != nil {
+			return n, p.Name, nil
+		}
+	}
+	return nil, "", nil
+}
+func ReindexProject(p *Project) {
+	if err := indexProject(p); err != nil {
+		fmt.Fprintf(os.Stderr, "[reindex] %s: %v\n", p.Name, err)
+	}
+}
+
+func indexProjectNoGitignore(p *Project, noGitignore bool) error {
+	return indexProjectOpts(p, noGitignore)
+}
+
+func indexProject(p *Project) error {
+	return indexProjectOpts(p, false)
+}
+
+func indexProjectOpts(p *Project, noGitignore bool) error {
+	entries, err := scanner.ScanDirOpts(p.Path, scanner.ScanOptions{NoGitignore: noGitignore})
+	if err != nil {
+		return err
+	}
+	var nNew, nSkip int
+	for _, e := range entries {
+		src, err := os.ReadFile(e.Path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
+			continue
+		}
+		h := sha256.Sum256(src)
+		hash := hex.EncodeToString(h[:])
+		if old, _ := p.Store.GetFileHash(e.RelPath); hash == old {
+			nSkip++
+			continue
+		}
+		p.Store.DeleteFileData(e.RelPath)
+		res, err := parser.ParseFile(e.Path, e.RelPath, src, hash)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
+			continue
+		}
+		nodes := append(append([]store.Node{res.DocNode}, res.Headings...), res.Tags...)
+		res.FileInfo.ModifiedAt = e.ModifiedAt
+		if err := p.Store.InsertNodes(nodes); err != nil {
+			return err
+		}
+		if err := p.Store.InsertEdges(res.Edges); err != nil {
+			return err
+		}
+		if len(res.RawLinks) > 0 {
+			refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
+			for _, rl := range res.RawLinks {
+				refs = append(refs, store.UnresolvedRef{
+					FromNodeID: rl.FromNodeID, ReferenceText: rl.Target,
+					ReferenceKind: rl.Kind, Line: rl.Line, FilePath: e.RelPath})
+			}
+			if err := p.Store.InsertUnresolvedRefs(refs); err != nil {
+				return err
+			}
+		}
+		if err := p.Store.UpsertFile(res.FileInfo); err != nil {
+			return err
+		}
+		nNew++
+	}
+	fmt.Fprintf(os.Stderr, "[%s] Indexed %d files (%d new, %d unchanged)\n", p.Name, len(entries), nNew, nSkip)
+	if nNew > 0 {
+		if err := resolver.Resolve(p.Store); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] resolver: %v\n", p.Name, err)
+		}
+		// Only recompute similarity on bulk changes (>5 files) to avoid O(N²) on every save
+		if nNew > 5 {
+			if err := similarity.ComputeSimilarity(p.Store, 0); err != nil {
+				fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func loadExcludeList(path string) map[string]bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]bool)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && line[0] != '#' {
+			m[line] = true
+		}
+	}
+	return m
+}

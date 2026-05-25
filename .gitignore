@@ -1,0 +1,10 @@
+.docgraph/
+.claude/
+CLAUDE.md
+plans/
+release/
+docgraph
+*.db
+*.db-wal
+*.db-shm
+serve.log
