@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~3,900 lines of Go (+ ~3,100 lines of tests) |
+| Codebase | ~4,640 lines of Go (+ ~3,860 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -52,6 +52,7 @@ docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental 
 docgraph status <path>                       # Print index stats
 docgraph serve [--threshold N] [--no-gitignore] --path <path>     # MCP stdio server (single project)
 docgraph serve [--threshold N] [--no-gitignore] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph version                             # Print build version
 ```
 
 `LIST` is a comma-separated client list: `claude,codex,hermes,opencode`.
