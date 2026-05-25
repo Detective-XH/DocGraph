@@ -57,7 +57,9 @@ func indexTestProject(t *testing.T, projectDir string) *store.Store {
 		if err != nil {
 			continue
 		}
-		nodes := append(append([]store.Node{res.DocNode}, res.Headings...), res.Tags...)
+		nodes := append([]store.Node{res.DocNode}, res.Headings...)
+		nodes = append(nodes, res.Defs...)
+		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := st.InsertNodes(nodes); err != nil {
 			t.Fatal(err)
@@ -116,7 +118,9 @@ func indexTestProjectIncremental(t *testing.T, st *store.Store, projectDir strin
 		if err != nil {
 			continue
 		}
-		nodes := append(append([]store.Node{res.DocNode}, res.Headings...), res.Tags...)
+		nodes := append([]store.Node{res.DocNode}, res.Headings...)
+		nodes = append(nodes, res.Defs...)
+		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := st.InsertNodes(nodes); err != nil {
 			t.Fatal(err)
@@ -286,6 +290,68 @@ func TestCmdSyncIndexesProject(t *testing.T) {
 	}
 	if stats.FileCount != 1 {
 		t.Fatalf("expected sync to index 1 file, got %d", stats.FileCount)
+	}
+}
+
+func TestCmdIndexSimilarityThreshold(t *testing.T) {
+	projectDir := t.TempDir()
+	docs := map[string]string{
+		"a.md": "# Governance\n\npolicy security compliance architecture\n",
+		"b.md": "# Security\n\npolicy security compliance audit\n",
+		"c.md": "# Install\n\nquickstart tutorial setup\n",
+	}
+	for name, content := range docs {
+		if err := os.WriteFile(filepath.Join(projectDir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cmdIndex([]string{"--threshold", "0.01", projectDir})
+
+	st, err := store.Open(filepath.Join(projectDir, ".docgraph", "docgraph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	stats, err := st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.EdgesByKind["similar_to"] == 0 {
+		t.Fatalf("expected low threshold to create similar_to edges, got stats: %+v", stats.EdgesByKind)
+	}
+}
+
+func TestCmdInitCreatesLocalConfig(t *testing.T) {
+	projectDir := t.TempDir()
+
+	cmdInit([]string{projectDir})
+
+	for _, path := range []string{
+		filepath.Join(projectDir, ".docgraph"),
+		filepath.Join(projectDir, ".docgraphignore"),
+		filepath.Join(projectDir, ".gitignore"),
+		filepath.Join(projectDir, ".mcp.json"),
+	} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("expected init artifact %s: %v", path, err)
+		}
+	}
+
+	gitignore, err := os.ReadFile(filepath.Join(projectDir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(gitignore), ".docgraph/") {
+		t.Fatalf("expected .gitignore to contain .docgraph/, got %q", string(gitignore))
+	}
+
+	mcpConfig, err := os.ReadFile(filepath.Join(projectDir, ".mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(mcpConfig), `"docgraph"`) || !strings.Contains(string(mcpConfig), `"serve"`) {
+		t.Fatalf("expected .mcp.json to configure docgraph serve, got %s", string(mcpConfig))
 	}
 }
 
@@ -600,6 +666,27 @@ func TestMCPRoundTrip(t *testing.T) {
 	// Should find results (not "Found 0 results")
 	if strings.Contains(searchText, "Found 0 results") {
 		t.Error("search for 'Document' returned 0 results, expected matches")
+	}
+
+	// 4. Call docgraph_context and verify bounded source content is included.
+	resp = sendAndRecv(t, 4, "tools/call", map[string]any{
+		"name":      "docgraph_context",
+		"arguments": map[string]any{"task": "Document", "maxNodes": float64(1), "maxContentBytes": float64(1000)},
+	})
+	if resp["error"] != nil {
+		t.Fatalf("docgraph_context error: %v", resp["error"])
+	}
+	contextResult, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatal("expected result in docgraph_context response")
+	}
+	contextContent, ok := contextResult["content"].([]any)
+	if !ok || len(contextContent) == 0 {
+		t.Fatal("expected non-empty content in docgraph_context result")
+	}
+	contextText, _ := contextContent[0].(map[string]any)["text"].(string)
+	if !strings.Contains(contextText, "#### Content") || !strings.Contains(contextText, "```markdown") {
+		t.Errorf("expected context output to include bounded markdown content, got: %s", contextText)
 	}
 
 	// Cleanup

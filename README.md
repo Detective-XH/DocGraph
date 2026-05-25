@@ -45,11 +45,12 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph index [--force] [--no-gitignore] <path>     # Index a project
-docgraph sync [--no-gitignore] <path>                # Incremental hash-based update
+docgraph init [path]                                 # Create local DocGraph config
+docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
+docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--no-gitignore] --path <path>        # MCP stdio server (single project)
-docgraph serve [--no-gitignore] --workspace <dir>    # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 ```
 
 ## MCP Tools
@@ -57,7 +58,7 @@ docgraph serve [--no-gitignore] --workspace <dir>    # MCP stdio server (auto-di
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) |
-| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, and cross-refs |
+| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content |
 | 3 | `docgraph_references` | Incoming links (who references this doc) |
 | 4 | `docgraph_links` | Outgoing links (what this doc links to) |
 | 5 | `docgraph_impact` | Blast radius analysis (BFS over incoming refs, configurable depth) |
@@ -90,7 +91,8 @@ they don't explicitly link to each other — the key advantage over
 grep-based search.
 
 Similarity is computed automatically during indexing. Query with
-`docgraph_similar`.
+`docgraph_similar`. Tune sensitivity with `--threshold N` on `index`, `sync`,
+or `serve`; lower values create more `similar_to` edges.
 
 ## Node and Edge Kinds
 
@@ -115,6 +117,7 @@ Similarity is computed automatically during indexing. Query with
 - Respects `.gitignore` rules
 - YAML frontmatter parsed into metadata JSON
 - Headings extracted as structural hierarchy
+- Definition lines such as `**Term:** definition` produce `definition` nodes
 - `[[wikilinks]]`, `[links](path.md)`, `![[embeds]]`, external URLs, and frontmatter tags all produce typed edges
 - Max file size: 1 MB
 - Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, and similar
@@ -130,7 +133,7 @@ docgraph serve --workspace /path/to/workspace
 
 - Each project gets its own `.docgraph/docgraph.db` (add `.docgraph/` to `.gitignore`)
 - Cross-project search fans out to all databases
-- File watcher (fsnotify, 2s debounce) monitors all projects for live re-indexing
+- File watcher (fsnotify, 2s debounce) monitors served projects for live re-indexing
 - No configuration file needed
 
 ## File Exclusion

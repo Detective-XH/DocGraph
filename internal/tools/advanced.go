@@ -11,9 +11,11 @@ import (
 )
 
 var contextTool = mcp.NewTool("docgraph_context",
-	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes search + node details + cross-references in one call. For a single known document, use docgraph_node instead."),
+	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead."),
 	mcp.WithString("task", mcp.Required(), mcp.Description("Description of the task/topic to find context for")),
 	mcp.WithNumber("maxNodes", mcp.Description("Max documents to return (default 10)")),
+	mcp.WithBoolean("includeContent", mcp.Description("Include bounded source content for each result (default true)")),
+	mcp.WithNumber("maxContentBytes", mcp.Description("Max source bytes per result (default 2000, hard cap 6000)")),
 )
 
 var nodeTool = mcp.NewTool("docgraph_node",
@@ -112,6 +114,14 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 	}
 	task = sanitizeArg(task, maxArgLength)
 	maxNodes := getIntArg(args, "maxNodes", 10)
+	includeContent := getBoolArg(args, "includeContent", true)
+	maxContentBytes := getIntArg(args, "maxContentBytes", 2000)
+	if maxContentBytes <= 0 {
+		maxContentBytes = 2000
+	}
+	if maxContentBytes > 6000 {
+		maxContentBytes = 6000
+	}
 
 	var results []store.SearchResult
 	var err error
@@ -147,9 +157,34 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 				sb.WriteString(fmt.Sprintf("> %s\n", line))
 			}
 		}
+
+		if includeContent {
+			appendBoundedContent(&sb, h, &node, maxContentBytes)
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, maxBytes int) {
+	root := h.getProjectRootForNode(node.ID)
+	if root == "" {
+		sb.WriteString("\n#### Content\n[content unavailable: project root not available]\n")
+		return
+	}
+	content, err := store.ReadSectionContent(node.FilePath, node.StartLine, node.EndLine, root, maxBytes)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("\n#### Content\n[content unavailable: %v]\n", err))
+		return
+	}
+	content = strings.TrimRight(content, "\n")
+	if content == "" {
+		return
+	}
+	sb.WriteString(fmt.Sprintf("\n#### Content (indexed lines %d-%d, max %d bytes)\n", node.StartLine, node.EndLine, maxBytes))
+	sb.WriteString("```markdown\n")
+	sb.WriteString(content)
+	sb.WriteString("\n```\n")
 }
 
 func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

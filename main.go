@@ -10,6 +10,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
@@ -30,7 +31,7 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 
 | Intent | Tool |
 |--------|------|
-| Find docs about a topic | docgraph_context (start here) |
+| Find docs about a topic | docgraph_context (start here; includes bounded source content) |
 | Search by keyword | docgraph_search |
 | Who references this doc? | docgraph_references |
 | What does this doc link to? | docgraph_links |
@@ -42,7 +43,7 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 | Find related docs (no explicit links needed) | docgraph_similar |
 | Index health check | docgraph_status |
 
-Start with docgraph_context — it combines search + structure + cross-references in one call.
+Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
 Only use docgraph_search when you need keyword-level precision or kind filtering.
 
 ## Reducing noise
@@ -51,6 +52,7 @@ Only use docgraph_search when you need keyword-level precision or kind filtering
 - docgraph_explore caps at maxDocs (default 5) — keep it low for focused answers.
 - docgraph_impact with depth > 2 can return many results — start with depth=1.
 - docgraph_similar uses TF-IDF + shared references + tag overlap to find topically related docs, even without explicit links.
+- docgraph_context includes source content by default. Set includeContent=false or lower maxContentBytes when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
 
 ## Managing .docgraphignore
@@ -84,12 +86,18 @@ archive/
 
 Workspace-level .docgraphignore (at the workspace root) excludes entire projects by name.
 
-## Indexing modes
+## Setup and indexing modes
+
+- docgraph init <path>: creates .docgraphignore, ensures .gitignore ignores .docgraph/, and creates a local .mcp.json when missing.
 
 - Default: respects both .gitignore and .docgraphignore
 - --no-gitignore flag: ignores .gitignore rules, indexes ALL .md files
   (still respects .docgraphignore). Useful when important docs are gitignored
   (e.g., .claude/skills/, memory/ directories).
+- --threshold flag on index/sync/serve tunes similar_to edge creation
+  (default 0.25; lower values create more similarity edges).
+- Markdown glossary lines like **Term:** definition produce searchable
+  definition nodes.
 
 ## Security — Content Trust
 
@@ -105,6 +113,8 @@ func main() {
 		usage()
 	}
 	switch os.Args[1] {
+	case "init":
+		cmdInit(os.Args[2:])
 	case "index":
 		cmdIndex(os.Args[2:])
 	case "sync":
@@ -119,19 +129,37 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  index [--force] <path>\n  sync <path>\n  status <path>\n  serve --path <path>\n  serve --workspace <dir>\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n")
 	os.Exit(1)
 }
 
 var noGitignore bool
+var similarityThreshold float64
+
+func cmdInit(args []string) {
+	fs := flag.NewFlagSet("init", flag.ExitOnError)
+	fs.Parse(args)
+	dir := "."
+	if fs.NArg() > 0 {
+		dir = fs.Arg(0)
+	}
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := initProject(root); err != nil {
+		log.Fatal(err)
+	}
+}
 
 func cmdIndex(args []string) {
 	fs := flag.NewFlagSet("index", flag.ExitOnError)
 	force := fs.Bool("force", false, "Delete the existing .docgraph database before indexing")
 	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fs.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	fs.Parse(args)
 	if fs.NArg() < 1 {
-		log.Fatal("usage: docgraph index [--force] <path>")
+		log.Fatal("usage: docgraph index [--force] [--threshold N] <path>")
 	}
 	indexPathOpts(fs.Arg(0), *force).Close()
 }
@@ -139,9 +167,10 @@ func cmdIndex(args []string) {
 func cmdSync(args []string) {
 	fs := flag.NewFlagSet("sync", flag.ExitOnError)
 	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fs.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	fs.Parse(args)
 	if fs.NArg() < 1 {
-		log.Fatal("usage: docgraph sync <path>")
+		log.Fatal("usage: docgraph sync [--threshold N] <path>")
 	}
 	indexPath(fs.Arg(0)).Close()
 }
@@ -174,6 +203,7 @@ func cmdServe(args []string) {
 	p := fs.String("path", "", "Project directory to index and serve")
 	ws := fs.String("workspace", "", "Workspace root (index all child dirs as projects)")
 	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fs.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	fs.Parse(args)
 
 	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
@@ -185,6 +215,7 @@ func cmdServe(args []string) {
 		}
 		defer w.Close()
 		w.NoGitignore = noGitignore
+		w.SimilarityThreshold = similarityThreshold
 		w.IndexAll()
 		tools.RegisterWorkspace(srv, w)
 		var paths []string
@@ -269,6 +300,68 @@ func removeIndexDB(dbDir string) error {
 	return nil
 }
 
+func initProject(root string) error {
+	if err := os.MkdirAll(filepath.Join(root, ".docgraph"), 0o755); err != nil {
+		return err
+	}
+
+	docgraphIgnore := filepath.Join(root, ".docgraphignore")
+	if _, err := os.Stat(docgraphIgnore); errors.Is(err, os.ErrNotExist) {
+		content := "# DocGraph ignore patterns\n# Uses .gitignore syntax.\n\n"
+		if err := os.WriteFile(docgraphIgnore, []byte(content), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Created %s\n", docgraphIgnore)
+	}
+
+	gitignore := filepath.Join(root, ".gitignore")
+	if err := ensureGitignoreLine(gitignore, ".docgraph/"); err != nil {
+		return err
+	}
+
+	mcpConfig := filepath.Join(root, ".mcp.json")
+	if _, err := os.Stat(mcpConfig); errors.Is(err, os.ErrNotExist) {
+		content := `{
+  "mcpServers": {
+    "docgraph": {
+      "command": "docgraph",
+      "args": ["serve", "--path", "."]
+    }
+  }
+}
+`
+		if err := os.WriteFile(mcpConfig, []byte(content), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "Created %s\n", mcpConfig)
+	}
+
+	fmt.Fprintf(os.Stderr, "Initialized DocGraph in %s\n", root)
+	return nil
+}
+
+func ensureGitignoreLine(path, line string) error {
+	data, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	lines := strings.Split(string(data), "\n")
+	for _, existing := range lines {
+		if strings.TrimSpace(existing) == line {
+			return nil
+		}
+	}
+	prefix := ""
+	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
+		prefix = "\n"
+	}
+	if err := os.WriteFile(path, append(data, []byte(prefix+line+"\n")...), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Updated %s\n", path)
+	return nil
+}
+
 func indexStore(root string, st *store.Store) error {
 	entries, err := scanner.ScanDirOpts(root, scanner.ScanOptions{NoGitignore: noGitignore})
 	if err != nil {
@@ -293,6 +386,7 @@ func indexStore(root string, st *store.Store) error {
 			continue
 		}
 		nodes := append([]store.Node{res.DocNode}, res.Headings...)
+		nodes = append(nodes, res.Defs...)
 		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := st.InsertNodes(nodes); err != nil {
@@ -327,7 +421,7 @@ func indexStore(root string, st *store.Store) error {
 		if err := resolver.Resolve(st); err != nil {
 			fmt.Fprintf(os.Stderr, "resolver: %v\n", err)
 		}
-		if err := similarity.ComputeSimilarity(st, 0); err != nil {
+		if err := similarity.ComputeSimilarity(st, similarityThreshold); err != nil {
 			fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
 		}
 	}

@@ -17,14 +17,17 @@ import (
 )
 
 type Project struct {
-	Name  string
-	Path  string
-	Store *store.Store
+	Name                string
+	Path                string
+	Store               *store.Store
+	NoGitignore         bool
+	SimilarityThreshold float64
 }
 type Workspace struct {
-	Root        string
-	Projects    []*Project
-	NoGitignore bool
+	Root                string
+	Projects            []*Project
+	NoGitignore         bool
+	SimilarityThreshold float64
 }
 
 func Open(root string) (*Workspace, error) {
@@ -70,7 +73,9 @@ func (w *Workspace) Close() error {
 }
 func (w *Workspace) IndexAll() error {
 	for _, p := range w.Projects {
-		if err := indexProjectOpts(p, w.NoGitignore); err != nil {
+		p.NoGitignore = w.NoGitignore
+		p.SimilarityThreshold = w.SimilarityThreshold
+		if err := indexProjectOpts(p, w.NoGitignore, w.SimilarityThreshold); err != nil {
 			fmt.Fprintf(os.Stderr, "index %s: %v\n", p.Name, err)
 		}
 	}
@@ -159,14 +164,14 @@ func ReindexProject(p *Project) {
 }
 
 func indexProjectNoGitignore(p *Project, noGitignore bool) error {
-	return indexProjectOpts(p, noGitignore)
+	return indexProjectOpts(p, noGitignore, p.SimilarityThreshold)
 }
 
 func indexProject(p *Project) error {
-	return indexProjectOpts(p, false)
+	return indexProjectOpts(p, p.NoGitignore, p.SimilarityThreshold)
 }
 
-func indexProjectOpts(p *Project, noGitignore bool) error {
+func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	entries, err := scanner.ScanDirOpts(p.Path, scanner.ScanOptions{NoGitignore: noGitignore})
 	if err != nil {
 		return err
@@ -190,7 +195,9 @@ func indexProjectOpts(p *Project, noGitignore bool) error {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
 			continue
 		}
-		nodes := append(append([]store.Node{res.DocNode}, res.Headings...), res.Tags...)
+		nodes := append([]store.Node{res.DocNode}, res.Headings...)
+		nodes = append(nodes, res.Defs...)
+		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := p.Store.InsertNodes(nodes); err != nil {
 			return err
@@ -219,7 +226,7 @@ func indexProjectOpts(p *Project, noGitignore bool) error {
 		if err := resolver.Resolve(p.Store); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] resolver: %v\n", p.Name, err)
 		}
-		if err := similarity.ComputeSimilarity(p.Store, 0); err != nil {
+		if err := similarity.ComputeSimilarity(p.Store, threshold); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
 		}
 	}

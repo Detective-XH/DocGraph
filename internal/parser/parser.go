@@ -39,6 +39,7 @@ type ParseResult struct {
 }
 
 var inlineWikilinkRe = regexp.MustCompile(`(!?)\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
+var definitionLineRe = regexp.MustCompile(`^\s*\*\*([^*:\n][^*\n]{0,120}?):\*\*\s*(.*)$`)
 
 // ParseFile parses a markdown file and extracts nodes, edges, and raw links.
 func ParseFile(absPath string, relPath string, source []byte, contentHash string) (*ParseResult, error) {
@@ -168,6 +169,8 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 
 	// 6. Create containment edges
 	edges := buildContainmentEdges(docNode.ID, headings)
+	defs, defEdges := extractDefinitions(body, bodyStartLine, relPath, docNode.ID, headings)
+	edges = append(edges, defEdges...)
 
 	// 7. Create tag nodes and tagged edges
 	var tagNodes []store.Node
@@ -223,19 +226,96 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 		Size:           int64(len(source)),
 		ModifiedAt:     0, // caller sets this
 		IndexedAt:      time.Now().Unix(),
-		NodeCount:      1 + len(headings) + len(tagNodes),
+		NodeCount:      1 + len(headings) + len(defs) + len(tagNodes),
 		HasFrontmatter: fm != nil,
 	}
 
 	return &ParseResult{
 		DocNode:  docNode,
 		Headings: headings,
-		Defs:     nil, // reserved for future definition extraction
+		Defs:     defs,
 		Tags:     tagNodes,
 		Edges:    edges,
 		RawLinks: rawLinks,
 		FileInfo: fileInfo,
 	}, nil
+}
+
+func extractDefinitions(body []byte, bodyStartLine int, relPath, docID string, headings []store.Node) ([]store.Node, []store.Edge) {
+	var defs []store.Node
+	var edges []store.Edge
+	var inFence bool
+	var fenceMarker string
+	var inHTMLComment bool
+	slugCount := make(map[string]int)
+
+	for i, rawLine := range bytes.Split(body, []byte("\n")) {
+		lineNum := bodyStartLine + i
+		trimmed := bytes.TrimSpace(rawLine)
+
+		if marker, ok := fenceMarkerFromLine(trimmed); ok {
+			if !inFence {
+				inFence = true
+				fenceMarker = marker
+			} else if marker == fenceMarker {
+				inFence = false
+				fenceMarker = ""
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+
+		line := stripHTMLComments(rawLine, &inHTMLComment)
+		m := definitionLineRe.FindSubmatch(line)
+		if m == nil {
+			continue
+		}
+
+		term := strings.TrimSpace(string(m[1]))
+		definition := strings.TrimSpace(string(m[2]))
+		if term == "" || definition == "" {
+			continue
+		}
+
+		slug := "def-" + slugify(term)
+		slugCount[slug]++
+		if slugCount[slug] > 1 {
+			slug = fmt.Sprintf("%s-%d", slug, slugCount[slug])
+		}
+		id := relPath + "#" + slug
+		parentID := nearestHeadingID(headings, lineNum, docID)
+
+		defs = append(defs, store.Node{
+			ID:            id,
+			Kind:          "definition",
+			Name:          term,
+			QualifiedName: id,
+			FilePath:      relPath,
+			StartLine:     lineNum,
+			EndLine:       lineNum,
+			BodyExcerpt:   definition,
+			UpdatedAt:     time.Now().Unix(),
+		})
+		edges = append(edges, store.Edge{
+			Source: parentID,
+			Target: id,
+			Kind:   "contains",
+			Line:   lineNum,
+		})
+	}
+
+	return defs, edges
+}
+
+func nearestHeadingID(headings []store.Node, lineNum int, docID string) string {
+	for i := len(headings) - 1; i >= 0; i-- {
+		if headings[i].StartLine <= lineNum {
+			return headings[i].ID
+		}
+	}
+	return docID
 }
 
 func scanInlineWikilinks(body []byte, bodyStartLine int, relPath string) []RawLink {

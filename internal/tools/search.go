@@ -214,6 +214,18 @@ func getIntArg(args map[string]interface{}, key string, defaultVal int) int {
 	}
 }
 
+func getBoolArg(args map[string]interface{}, key string, defaultVal bool) bool {
+	v, ok := args[key]
+	if !ok || v == nil {
+		return defaultVal
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return defaultVal
+	}
+	return b
+}
+
 func formatSize(bytes int64) string {
 	switch {
 	case bytes >= 1024*1024:

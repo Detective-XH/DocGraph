@@ -376,6 +376,57 @@ A local link [text](path.md) and an external [text](https://url.com).
 	})
 }
 
+func TestDefinitionExtraction(t *testing.T) {
+	source := "# Glossary\n\n" +
+		"**Alpha:** First definition.\n\n" +
+		"```markdown\n" +
+		"**Ignored:** Inside code.\n" +
+		"```\n\n" +
+		"<!-- **Hidden:** Inside comment. -->\n\n" +
+		"## Terms\n\n" +
+		"**Beta:** Second definition.\n"
+	res := parseTestSource(t, source)
+
+	if len(res.Defs) != 2 {
+		t.Fatalf("expected 2 definitions, got %d", len(res.Defs))
+	}
+
+	defs := make(map[string]int)
+	for i, def := range res.Defs {
+		defs[def.Name] = i
+	}
+
+	alphaIdx, ok := defs["Alpha"]
+	if !ok {
+		t.Fatalf("expected Alpha definition, got %#v", defs)
+	}
+	alpha := res.Defs[alphaIdx]
+	if alpha.Kind != "definition" {
+		t.Errorf("expected Alpha kind=definition, got %q", alpha.Kind)
+	}
+	if alpha.BodyExcerpt != "First definition." {
+		t.Errorf("expected Alpha body excerpt, got %q", alpha.BodyExcerpt)
+	}
+	if _, ok := defs["Ignored"]; ok {
+		t.Error("did not expect definition inside fenced code block")
+	}
+	if _, ok := defs["Hidden"]; ok {
+		t.Error("did not expect definition inside HTML comment")
+	}
+
+	beta := res.Defs[defs["Beta"]]
+	var betaParent string
+	for _, edge := range res.Edges {
+		if edge.Target == beta.ID && edge.Kind == "contains" {
+			betaParent = edge.Source
+			break
+		}
+	}
+	if betaParent != "file.md#terms" {
+		t.Errorf("expected Beta parent file.md#terms, got %q", betaParent)
+	}
+}
+
 func TestEmptyFile(t *testing.T) {
 	res := parseTestSource(t, "")
 
