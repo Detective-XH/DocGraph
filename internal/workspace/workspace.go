@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
 	"github.com/Detective-XH/docgraph/internal/scanner"
@@ -229,6 +230,18 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		}
 		if err := p.Store.UpsertFile(res.FileInfo); err != nil {
 			return err
+		}
+		fh := git.CollectHistory(p.Path, e.RelPath)
+		if err := p.Store.UpsertFileHistory(store.FileHistory{
+			Path:          fh.Path,
+			CommitCount:   fh.CommitCount,
+			FirstCommitAt: fh.FirstCommitAt,
+			LastCommitAt:  fh.LastCommitAt,
+			AuthorCount:   fh.AuthorCount,
+			LastAuthor:    fh.LastAuthor,
+			LastSubject:   fh.LastSubject,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] history %s: %v\n", p.Name, e.RelPath, err)
 		}
 		nNew++
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)

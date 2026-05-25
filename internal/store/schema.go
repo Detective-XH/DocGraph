@@ -56,6 +56,16 @@ CREATE TABLE IF NOT EXISTS project_metadata (
     updated_at INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS file_history (
+    path TEXT PRIMARY KEY,
+    commit_count INTEGER NOT NULL DEFAULT 0,
+    first_commit_at INTEGER NOT NULL DEFAULT 0,
+    last_commit_at INTEGER NOT NULL DEFAULT 0,
+    author_count INTEGER NOT NULL DEFAULT 0,
+    last_author TEXT NOT NULL DEFAULT '',
+    last_subject TEXT NOT NULL DEFAULT ''
+);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
     name, qualified_name, body_excerpt, metadata_text,
     content='nodes', content_rowid='rowid',

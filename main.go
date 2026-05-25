@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/install"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
@@ -46,6 +47,7 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 | List indexed files | docgraph_files |
 | Find related docs (no explicit links needed) | docgraph_similar |
 | List/filter by tag | docgraph_tags |
+| Git change history for a doc | docgraph_history |
 | Index health check | docgraph_status |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
@@ -593,6 +595,18 @@ func indexStore(root string, st *store.Store) error {
 		}
 		if err := st.UpsertFile(res.FileInfo); err != nil {
 			return err
+		}
+		h := git.CollectHistory(root, e.RelPath)
+		if err := st.UpsertFileHistory(store.FileHistory{
+			Path:          h.Path,
+			CommitCount:   h.CommitCount,
+			FirstCommitAt: h.FirstCommitAt,
+			LastCommitAt:  h.LastCommitAt,
+			AuthorCount:   h.AuthorCount,
+			LastAuthor:    h.LastAuthor,
+			LastSubject:   h.LastSubject,
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "history %s: %v\n", e.RelPath, err)
 		}
 		nNew++
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)

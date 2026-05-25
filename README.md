@@ -4,7 +4,7 @@
 
 Documentation knowledge graph MCP server for LLM agents. Indexes Markdown
 files into SQLite, extracts cross-references and topic similarity, and
-exposes the graph through 12 MCP tools over stdio.
+exposes the graph through 13 MCP tools over stdio.
 
 DocGraph's value scales with **how connected your documents are**:
 
@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~5,290 lines of Go (+ ~4,550 lines of tests) |
+| Codebase | ~5,540 lines of Go (+ ~4,680 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -113,6 +113,7 @@ Available skills bundled in the binary:
 | 10 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
 | 11 | `docgraph_status` | Index health and per-project stats |
 | 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
+| 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools

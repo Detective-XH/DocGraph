@@ -90,6 +90,9 @@ Need to find related docs without knowing what to search for?
 Need to list all tags or find documents by tag?
   → docgraph_tags (lists all tags with counts, or filters documents by tag name)
 
+Need to know how many times a document was amended or who changed it?
+  → docgraph_history (git commit count, authors, first/last change dates)
+
 Need to know who depends on a document?
   → docgraph_references (direct) or docgraph_impact (transitive)
 

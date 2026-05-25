@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -259,6 +260,31 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		sb.WriteString("\n### Body Excerpt\n")
 		for _, line := range strings.Split(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
 			sb.WriteString(fmt.Sprintf("> %s\n", line))
+		}
+	}
+
+	if s := h.getStoreForNode(node.ID); s != nil {
+		if hist, err := s.GetFileHistory(node.FilePath); err == nil && hist != nil && hist.CommitCount > 0 {
+			sb.WriteString("\n### History\n")
+			amendWord := "time"
+			if hist.CommitCount != 1 {
+				amendWord = "times"
+			}
+			sb.WriteString(fmt.Sprintf("**Amended:** %d %s", hist.CommitCount, amendWord))
+			if hist.AuthorCount > 0 {
+				authorWord := "author"
+				if hist.AuthorCount != 1 {
+					authorWord = "authors"
+				}
+				sb.WriteString(fmt.Sprintf(" by %d %s", hist.AuthorCount, authorWord))
+			}
+			sb.WriteString("\n")
+			if hist.LastSubject != "" {
+				sb.WriteString(fmt.Sprintf("**Last commit:** %s\n", hist.LastSubject))
+			}
+			if hist.LastCommitAt > 0 {
+				sb.WriteString(fmt.Sprintf("**Last changed:** %s\n", time.Unix(hist.LastCommitAt, 0).UTC().Format("2006-01-02")))
+			}
 		}
 	}
 
