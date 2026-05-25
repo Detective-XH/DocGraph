@@ -68,7 +68,9 @@ To help a user configure exclusions:
    - Supports globs: *.draft.md, temp/, archive/**
    - ! prefix to negate (re-include)
 4. After editing, the file watcher will re-index automatically (in serve mode)
-   or the user can run: docgraph index <path>
+   or the user can run: docgraph sync <path>
+5. If the user needs a clean rebuild after parser/schema changes, run:
+   docgraph index --force <path>
 
 Example .docgraphignore:
 ` + "```" + `

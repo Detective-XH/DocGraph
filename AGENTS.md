@@ -122,8 +122,10 @@ The key question is not "what format are my docs in?" but **"do my documents ref
 
 ## Limitations to be aware of
 
-- **Inline `[[wikilinks]]` in Markdown body**: detected via pre-parse regex scan.
-  Wikilinks inside code blocks or HTML comments may be falsely detected.
+- **Inline `[[wikilinks]]` in Markdown body**: detected via a pre-parse scan
+  because goldmark can split `[[...]]` across text nodes. The scanner skips
+  fenced code blocks and HTML comments, but unusual inline HTML edge cases may
+  still need direct source verification.
 - **No nested .gitignore chain**: each directory's .gitignore is loaded
   independently, not inherited from parent directories.
 - **Similarity is TF-IDF, not neural**: conceptually related docs using
