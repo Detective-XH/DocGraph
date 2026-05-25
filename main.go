@@ -128,15 +128,20 @@ func main() {
 		cmdStatus(os.Args[2:])
 	case "serve":
 		cmdServe(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println(version)
+		os.Exit(0)
 	default:
 		usage()
 	}
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
 	os.Exit(1)
 }
+
+var version = "dev"
 
 var noGitignore bool
 var similarityThreshold float64
