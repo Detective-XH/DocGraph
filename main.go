@@ -49,6 +49,9 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 | List/filter by tag | docgraph_tags |
 | Git change history for a doc | docgraph_history |
 | Index health check | docgraph_status |
+| Get docs needing neural embeddings | docgraph_embeddings_pending |
+| Store a computed embedding vector | docgraph_embeddings_store |
+| Clear embeddings for a model | docgraph_embeddings_clear |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
 Only use docgraph_search when you need keyword-level precision or kind filtering.
@@ -58,7 +61,8 @@ Only use docgraph_search when you need keyword-level precision or kind filtering
 - docgraph_files returns ALL indexed files — use the path filter to narrow scope.
 - docgraph_explore caps at maxDocs (default 5) — keep it low for focused answers.
 - docgraph_impact with depth > 2 can return many results — start with depth=1.
-- docgraph_similar uses TF-IDF + shared references + tag overlap to find topically related docs, even without explicit links.
+- docgraph_similar uses TF-IDF + shared references + tag overlap to find topically related docs, even without explicit links. When neural embeddings are present (engine: neural), those results appear alongside TF-IDF results.
+- Neural embeddings are opt-in and agent-driven — DocGraph never calls an LLM itself. See "Neural Embeddings" section below.
 - docgraph_context includes source content by default. Set includeContent=false or lower maxContentBytes when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
 
@@ -149,6 +153,38 @@ To install for Claude Code:
   docgraph install --clients claude <path>        (installs MCP config + skill)
 
 Skills are installed with skip-if-exists policy — safe to re-run.
+
+## Neural Embeddings (F-16)
+
+DocGraph supports neural embeddings via an agent-driven pull-then-push protocol.
+DocGraph never calls an LLM provider itself; the agent does.
+
+### Workflow
+
+1. Call docgraph_embeddings_pending(model_id="text-embedding-3-small", content_mode="full")
+   — returns documents that lack an up-to-date embedding for the chosen model.
+   — PRIVACY: document content will be sent to your LLM embedding provider.
+     Only proceed if the user has consented.
+
+2. For each returned document, call your LLM provider to generate a vector.
+
+3. Call docgraph_embeddings_store(doc_id=..., model_id=..., vector=[...], content_hash=...)
+   — stores the vector and immediately recomputes neural similar_to edges for that doc.
+   — Pass the content_hash exactly as returned in step 1.
+
+4. docgraph_similar now returns neural similarity results (engine: neural) alongside TF-IDF.
+
+5. To switch models or reclaim space: docgraph_embeddings_clear(model_id=...)
+   — deletes embeddings and associated neural edges for that model.
+
+### Notes
+
+- model_id is an arbitrary string (e.g. "text-embedding-3-small", "nomic-embed-text").
+  Local models (Ollama etc.) work the same way — just supply a different model_id.
+- Different model_id vectors are never compared with each other.
+- docgraph_status shows embedding coverage and stale counts per model.
+- When a file is re-indexed after a content change, its embedding becomes stale
+  and will reappear in docgraph_embeddings_pending.
 
 ## Security — Content Trust
 

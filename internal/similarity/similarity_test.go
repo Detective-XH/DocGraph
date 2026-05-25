@@ -201,3 +201,100 @@ func TestComputeSimilaritySingleDoc(t *testing.T) {
 		t.Errorf("expected 0 edges with single doc, got %d", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Neural similarity tests
+// ---------------------------------------------------------------------------
+
+func TestDenseCosineSimilarity(t *testing.T) {
+	tests := []struct {
+		a, b []float64
+		want float64
+	}{
+		{[]float64{1, 0}, []float64{1, 0}, 1.0},
+		{[]float64{1, 0}, []float64{0, 1}, 0.0},
+		{[]float64{1, 1}, []float64{1, 1}, 1.0},
+		{[]float64{}, []float64{}, 0.0},
+		{[]float64{1}, []float64{1, 2}, 0.0}, // dim mismatch
+	}
+	for _, tc := range tests {
+		got := denseCosineSimilarity(tc.a, tc.b)
+		if tc.want == 1.0 && (got < 0.9999 || got > 1.0001) {
+			t.Errorf("denseCosineSimilarity(%v, %v) = %f, want ~%f", tc.a, tc.b, got, tc.want)
+		} else if tc.want == 0.0 && (got > 0.0001) {
+			t.Errorf("denseCosineSimilarity(%v, %v) = %f, want ~0", tc.a, tc.b, got)
+		}
+	}
+}
+
+func TestComputeNeuralSimilarityForDoc(t *testing.T) {
+	st := setupSimilarityStore(t)
+
+	// Store embeddings: governance and security are near-identical (high cosine),
+	// readme is orthogonal.
+	embs := []store.Embedding{
+		{DocID: "governance.md", ModelID: "test-model", Dim: 3, Vector: []float64{1, 1, 0}, ContentHash: "h"},
+		{DocID: "security.md", ModelID: "test-model", Dim: 3, Vector: []float64{1, 1, 0.1}, ContentHash: "h"},
+		{DocID: "readme.md", ModelID: "test-model", Dim: 3, Vector: []float64{0, 0, 1}, ContentHash: "h"},
+	}
+	for _, e := range embs {
+		if err := st.UpsertEmbedding(e); err != nil {
+			t.Fatalf("UpsertEmbedding %s: %v", e.DocID, err)
+		}
+	}
+
+	if err := ComputeNeuralSimilarityForDoc(st, "governance.md", "test-model", 0.25); err != nil {
+		t.Fatalf("ComputeNeuralSimilarityForDoc: %v", err)
+	}
+
+	// governance ↔ security should have a neural edge; governance ↔ readme should not.
+	allEdges, err := st.GetSimilarEdgesForDoc("governance.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var neuralEdge *store.Edge
+	for i, e := range allEdges {
+		var m map[string]interface{}
+		json.Unmarshal([]byte(e.Metadata), &m)
+		if eng, _ := m["engine"].(string); eng == "neural" {
+			neuralEdge = &allEdges[i]
+		}
+	}
+	if neuralEdge == nil {
+		t.Error("expected neural similar_to edge between governance and security, found none")
+	}
+	if neuralEdge != nil {
+		var m map[string]interface{}
+		json.Unmarshal([]byte(neuralEdge.Metadata), &m)
+		if m["model_id"] != "test-model" {
+			t.Errorf("expected model_id=test-model, got %v", m["model_id"])
+		}
+	}
+}
+
+func TestComputeNeuralSimilarityForDoc_Idempotent(t *testing.T) {
+	st := setupSimilarityStore(t)
+	embs := []store.Embedding{
+		{DocID: "governance.md", ModelID: "m", Dim: 2, Vector: []float64{1, 0}, ContentHash: "h"},
+		{DocID: "security.md", ModelID: "m", Dim: 2, Vector: []float64{1, 0}, ContentHash: "h"},
+	}
+	for _, e := range embs {
+		st.UpsertEmbedding(e)
+	}
+
+	// Run twice — should not create duplicate edges.
+	ComputeNeuralSimilarityForDoc(st, "governance.md", "m", 0.1)
+	ComputeNeuralSimilarityForDoc(st, "governance.md", "m", 0.1)
+
+	stats, _ := st.GetStats()
+	var neuralCount int
+	for kind, n := range stats.EdgesByKind {
+		if kind == "similar_to" {
+			neuralCount = n
+		}
+	}
+	if neuralCount > 1 {
+		t.Errorf("expected at most 1 neural edge, got %d", neuralCount)
+	}
+}

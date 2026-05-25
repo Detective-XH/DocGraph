@@ -30,6 +30,9 @@ func registerTools(s *server.MCPServer, h *handler) {
 	s.AddTool(similarTool, h.handleSimilar)
 	s.AddTool(tagsTool, h.handleTags)
 	s.AddTool(historyTool, h.handleHistory)
+	s.AddTool(embeddingsPendingTool, h.handleEmbeddingsPending)
+	s.AddTool(embeddingsStoreTool, h.handleEmbeddingsStore)
+	s.AddTool(embeddingsClearTool, h.handleEmbeddingsClear)
 }
 
 type handler struct {

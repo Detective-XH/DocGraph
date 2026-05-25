@@ -66,6 +66,19 @@ CREATE TABLE IF NOT EXISTS file_history (
     last_subject TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS embeddings (
+    doc_id       TEXT NOT NULL,
+    model_id     TEXT NOT NULL,
+    dim          INTEGER NOT NULL,
+    vector       BLOB NOT NULL,
+    content_hash TEXT NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    PRIMARY KEY (doc_id, model_id),
+    FOREIGN KEY (doc_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
     name, qualified_name, body_excerpt, metadata_text,
     content='nodes', content_rowid='rowid',

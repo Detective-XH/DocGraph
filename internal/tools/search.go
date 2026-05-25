@@ -146,6 +146,27 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %d | %s |\n",
 				name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes)))
 		}
+
+		// Neural embeddings — fan-out across all projects.
+		var allEmbStats []store.EmbeddingModelStat
+		modelTotals := make(map[string]*store.EmbeddingModelStat)
+		for _, p := range h.workspace.Projects {
+			if embStats, err := p.Store.GetEmbeddingModelStats(); err == nil {
+				for _, es := range embStats {
+					if m, ok := modelTotals[es.ModelID]; ok {
+						m.Total += es.Total
+						m.Stale += es.Stale
+					} else {
+						cp := es
+						modelTotals[es.ModelID] = &cp
+					}
+				}
+			}
+		}
+		for _, s := range modelTotals {
+			allEmbStats = append(allEmbStats, *s)
+		}
+		appendEmbeddingStats(&sb, allEmbStats)
 	} else {
 		stats, err := h.store.GetStats()
 		if err != nil {
@@ -165,9 +186,24 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 				sb.WriteString(fmt.Sprintf("| %s | %d |\n", kind, count))
 			}
 		}
+
+		embStats, err := h.store.GetEmbeddingModelStats()
+		if err == nil {
+			appendEmbeddingStats(&sb, embStats)
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func appendEmbeddingStats(sb *strings.Builder, stats []store.EmbeddingModelStat) {
+	if len(stats) == 0 {
+		return
+	}
+	sb.WriteString("\n### Neural Embeddings\n| Model | Total | Stale |\n|-------|-------|-------|\n")
+	for _, s := range stats {
+		sb.WriteString(fmt.Sprintf("| %s | %d | %d |\n", s.ModelID, s.Total, s.Stale))
+	}
 }
 
 // ---------------------------------------------------------------------------

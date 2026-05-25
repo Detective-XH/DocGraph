@@ -4,7 +4,7 @@
 
 Documentation knowledge graph MCP server for LLM agents. Indexes Markdown
 files into SQLite, extracts cross-references and topic similarity, and
-exposes the graph through 13 MCP tools over stdio.
+exposes the graph through 16 MCP tools over stdio.
 
 DocGraph's value scales with **how connected your documents are**:
 
@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~5,540 lines of Go (+ ~4,680 lines of tests) |
+| Codebase | ~6,210 lines of Go (+ ~5,260 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -114,6 +114,9 @@ Available skills bundled in the binary:
 | 11 | `docgraph_status` | Index health and per-project stats |
 | 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
+| 14 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |
+| 15 | `docgraph_embeddings_store` | Store a neural embedding vector for a document and recompute neural similarity edges |
+| 16 | `docgraph_embeddings_clear` | Delete all stored embeddings for a model and their associated neural similarity edges |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
@@ -140,6 +143,20 @@ Similarity is computed automatically during indexing. Query with
 `docgraph_similar`. Tune sensitivity with `--threshold N` on `index`, `sync`,
 or `serve`; lower values create more `similar_to` edges.
 
+### Neural Embeddings (agent-driven)
+
+DocGraph never calls an LLM itself. Instead, your agent computes embeddings
+with any provider and pushes the vectors back:
+
+1. `docgraph_embeddings_pending(model_id="text-embedding-3-small")` — returns docs without up-to-date embeddings
+2. Your agent computes vectors with its own provider
+3. `docgraph_embeddings_store(doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges
+4. `docgraph_similar` automatically surfaces neural results alongside TF-IDF results
+
+**Privacy**: `docgraph_embeddings_pending` returns document content that your agent will send to an external provider. User consent is required before proceeding.
+
+Use `docgraph_embeddings_clear(model_id)` to delete all vectors for a model and reclaim space. `docgraph_status` shows a Neural Embeddings table listing stored models, total vectors, and stale count.
+
 ## Node and Edge Kinds
 
 **Nodes:** `document`, `heading`, `definition`, `tag`
@@ -152,7 +169,7 @@ or `serve`; lower values create more `similar_to` edges.
 | `references` | `[text](path.md)` Markdown link |
 | `wikilinks_to` | `[[target]]` wikilink |
 | `related_to` | Frontmatter wikilink (e.g., `related_to: "[[target]]"`) |
-| `similar_to` | Topic similarity (TF-IDF + shared refs + tags) |
+| `similar_to` | Topic similarity (TF-IDF + shared refs + tags; or neural if embeddings stored) |
 | `tagged` | Frontmatter tag association |
 | `embeds` | `![[embed]]` transclusion |
 | `links_external` | URL to external resource |

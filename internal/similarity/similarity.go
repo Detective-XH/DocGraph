@@ -391,3 +391,98 @@ func roundTo(v float64, decimals int) float64 {
 	p := math.Pow(10, float64(decimals))
 	return math.Round(v*p) / p
 }
+
+// denseCosineSimilarity computes cosine similarity between two dense float64 vectors.
+func denseCosineSimilarity(a, b []float64) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var dot, normA, normB float64
+	for i := range a {
+		dot += a[i] * b[i]
+		normA += a[i] * a[i]
+		normB += b[i] * b[i]
+	}
+	denom := math.Sqrt(normA) * math.Sqrt(normB)
+	if denom == 0 {
+		return 0
+	}
+	return dot / denom
+}
+
+// ComputeNeuralSimilarityForDoc recomputes neural similar_to edges for a single
+// document against all other documents that share the same model_id embedding.
+// Existing neural edges for docID are replaced. Uses the stored similarity
+// threshold from project_metadata (default 0.25).
+func ComputeNeuralSimilarityForDoc(st *store.Store, docID, modelID string, threshold float64) error {
+	if threshold <= 0 {
+		stored, ok, _ := st.GetProjectMeta("similarity_threshold")
+		if ok {
+			if v, err := strconv.ParseFloat(stored, 64); err == nil {
+				threshold = v
+			}
+		}
+		if threshold <= 0 {
+			threshold = 0.25
+		}
+	}
+
+	embs, err := st.GetEmbeddingsByModel(modelID)
+	if err != nil {
+		return fmt.Errorf("get embeddings: %w", err)
+	}
+	if len(embs) < 2 {
+		return nil
+	}
+
+	// Find this doc's vector.
+	var docVec []float64
+	for _, e := range embs {
+		if e.DocID == docID {
+			docVec = e.Vector
+			break
+		}
+	}
+	if docVec == nil {
+		return nil
+	}
+
+	// Clear existing neural edges for this doc before recomputing.
+	if err := st.DeleteNeuralSimilarityEdgesForDoc(docID); err != nil {
+		return fmt.Errorf("delete neural edges: %w", err)
+	}
+
+	var edges []store.Edge
+	for _, e := range embs {
+		if e.DocID == docID {
+			continue
+		}
+		score := denseCosineSimilarity(docVec, e.Vector)
+		if score < threshold {
+			continue
+		}
+		// Store canonical order (lower ID first) to avoid duplicate edges.
+		src, tgt := docID, e.DocID
+		if src > tgt {
+			src, tgt = tgt, src
+		}
+		meta, _ := json.Marshal(map[string]interface{}{
+			"engine":   "neural",
+			"model_id": modelID,
+			"score":    roundTo(score, 4),
+		})
+		edges = append(edges, store.Edge{
+			Source:   src,
+			Target:   tgt,
+			Kind:     "similar_to",
+			Metadata: string(meta),
+		})
+	}
+
+	if len(edges) > 0 {
+		if err := st.InsertEdges(edges); err != nil {
+			return fmt.Errorf("insert neural edges: %w", err)
+		}
+	}
+	return nil
+}

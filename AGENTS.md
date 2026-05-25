@@ -93,6 +93,11 @@ Need to list all tags or find documents by tag?
 Need to know how many times a document was amended or who changed it?
   → docgraph_history (git commit count, authors, first/last change dates)
 
+Need neural embedding coverage or want to push computed vectors?
+  → docgraph_embeddings_pending (list docs needing embeddings)
+  → docgraph_embeddings_store (push a computed vector back)
+  → docgraph_embeddings_clear (delete all vectors for a model)
+
 Need to know who depends on a document?
   → docgraph_references (direct) or docgraph_impact (transitive)
 
