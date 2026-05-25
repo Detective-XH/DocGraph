@@ -1,4 +1,6 @@
 .docgraph/
+.codegraph/*
+!.codegraph/.gitignore
 .claude/
 CLAUDE.md
 plans/

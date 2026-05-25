@@ -196,6 +196,17 @@ func cmdServe(args []string) {
 		st := indexPath(path)
 		defer st.Close()
 		tools.Register(srv, st, absRoot)
+		go func() {
+			err := watcher.Watch([]string{absRoot}, func(projectPath string, _ []string) {
+				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
+				if err := indexStore(projectPath, st); err != nil {
+					fmt.Fprintf(os.Stderr, "[watcher] re-index %s: %v\n", projectPath, err)
+				}
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "[watcher] %v\n", err)
+			}
+		}()
 	}
 
 	stdio := mcp.NewStdioServer(srv)
@@ -216,9 +227,16 @@ func indexPath(dir string) *store.Store {
 	if err != nil {
 		log.Fatal(err)
 	}
+	if err := indexStore(root, st); err != nil {
+		log.Fatal(err)
+	}
+	return st
+}
+
+func indexStore(root string, st *store.Store) error {
 	entries, err := scanner.ScanDirOpts(root, scanner.ScanOptions{NoGitignore: noGitignore})
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	var nNew, nSkip int
 	for _, e := range entries {
@@ -242,10 +260,10 @@ func indexPath(dir string) *store.Store {
 		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := st.InsertNodes(nodes); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		if err := st.InsertEdges(res.Edges); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		if len(res.RawLinks) > 0 {
 			refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
@@ -260,11 +278,11 @@ func indexPath(dir string) *store.Store {
 				})
 			}
 			if err := st.InsertUnresolvedRefs(refs); err != nil {
-				log.Fatal(err)
+				return err
 			}
 		}
 		if err := st.UpsertFile(res.FileInfo); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		nNew++
 	}
@@ -280,7 +298,7 @@ func indexPath(dir string) *store.Store {
 			}
 		}
 	}
-	return st
+	return nil
 }
 
 func sha256Hex(d []byte) string {

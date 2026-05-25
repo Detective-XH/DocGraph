@@ -304,6 +304,44 @@ An embed: ![[embedded-doc]]
 	})
 }
 
+func TestInlineWikilinksIgnoreCodeBlocksAndComments(t *testing.T) {
+	source := "# Title\n\n" +
+		"This real link should count: [[real-doc]].\n\n" +
+		"```markdown\n" +
+		"[[fenced-doc]]\n" +
+		"```\n\n" +
+		"~~~\n" +
+		"![[tilde-fenced-doc]]\n" +
+		"~~~\n\n" +
+		"<!-- [[comment-doc]] -->\n" +
+		"Visible [[visible-doc]] <!-- [[inline-comment-doc]] --> still visible [[after-comment-doc]].\n" +
+		"<!--\n" +
+		"[[multiline-comment-doc]]\n" +
+		"-->\n" +
+		"Final ![[real-embed]].\n"
+
+	res := parseTestSource(t, source)
+
+	linkMap := make(map[string]string)
+	for _, rl := range res.RawLinks {
+		linkMap[rl.Target] = rl.Kind
+	}
+
+	for _, target := range []string{"real-doc", "visible-doc", "after-comment-doc", "real-embed"} {
+		if _, ok := linkMap[target]; !ok {
+			t.Errorf("expected visible wikilink %q, got links: %v", target, linkMap)
+		}
+	}
+	for _, target := range []string{"fenced-doc", "tilde-fenced-doc", "comment-doc", "inline-comment-doc", "multiline-comment-doc"} {
+		if _, ok := linkMap[target]; ok {
+			t.Errorf("did not expect wikilink %q from code/comment content", target)
+		}
+	}
+	if kind := linkMap["real-embed"]; kind != "embed" {
+		t.Errorf("expected real-embed kind=embed, got %q", kind)
+	}
+}
+
 func TestMarkdownLinkDetection(t *testing.T) {
 	source := `# Links
 

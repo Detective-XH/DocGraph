@@ -73,25 +73,10 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 		UpdatedAt:     time.Now().Unix(),
 	}
 
-	// Pre-parse: scan raw source for [[wikilinks]] (goldmark splits [[ across nodes)
-	var preLinks []RawLink
+	// Pre-parse: scan raw source for [[wikilinks]] (goldmark splits [[ across nodes).
 	body := bodyAfterFrontmatter(source)
 	bodyStartLine := docEndLine - bytes.Count(body, []byte("\n"))
-	for i, line := range bytes.Split(body, []byte("\n")) {
-		lineNum := bodyStartLine + i
-		for _, m := range inlineWikilinkRe.FindAllSubmatch(line, -1) {
-			prefix := string(m[1])
-			target := string(m[2])
-			kind := "wikilink"
-			if prefix == "!" {
-				kind = "embed"
-			}
-			preLinks = append(preLinks, RawLink{
-				Text: target, Target: target, Kind: kind,
-				Line: lineNum, FromNodeID: relPath,
-			})
-		}
-	}
+	preLinks := scanInlineWikilinks(body, bodyStartLine, relPath)
 
 	// 4. Walk AST
 	var headings []store.Node
@@ -154,10 +139,10 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 		case *ast.AutoLink:
 			url := string(v.URL(source))
 			rawLinks = append(rawLinks, RawLink{
-				Text:   url,
-				Target: url,
-				Kind:   "external",
-				Line:   currentBlockLine,
+				Text:       url,
+				Target:     url,
+				Kind:       "external",
+				Line:       currentBlockLine,
 				FromNodeID: currentHeadingID,
 			})
 
@@ -251,6 +236,83 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 		RawLinks: rawLinks,
 		FileInfo: fileInfo,
 	}, nil
+}
+
+func scanInlineWikilinks(body []byte, bodyStartLine int, relPath string) []RawLink {
+	var links []RawLink
+	var inFence bool
+	var fenceMarker string
+	var inHTMLComment bool
+
+	for i, rawLine := range bytes.Split(body, []byte("\n")) {
+		lineNum := bodyStartLine + i
+		trimmed := bytes.TrimSpace(rawLine)
+
+		if marker, ok := fenceMarkerFromLine(trimmed); ok {
+			if !inFence {
+				inFence = true
+				fenceMarker = marker
+			} else if marker == fenceMarker {
+				inFence = false
+				fenceMarker = ""
+			}
+			continue
+		}
+		if inFence {
+			continue
+		}
+
+		line := stripHTMLComments(rawLine, &inHTMLComment)
+		for _, m := range inlineWikilinkRe.FindAllSubmatch(line, -1) {
+			prefix := string(m[1])
+			target := string(m[2])
+			kind := "wikilink"
+			if prefix == "!" {
+				kind = "embed"
+			}
+			links = append(links, RawLink{
+				Text: target, Target: target, Kind: kind,
+				Line: lineNum, FromNodeID: relPath,
+			})
+		}
+	}
+
+	return links
+}
+
+func fenceMarkerFromLine(line []byte) (string, bool) {
+	if bytes.HasPrefix(line, []byte("```")) {
+		return "```", true
+	}
+	if bytes.HasPrefix(line, []byte("~~~")) {
+		return "~~~", true
+	}
+	return "", false
+}
+
+func stripHTMLComments(line []byte, inComment *bool) []byte {
+	var out []byte
+	for len(line) > 0 {
+		if *inComment {
+			end := bytes.Index(line, []byte("-->"))
+			if end == -1 {
+				return out
+			}
+			line = line[end+len("-->"):]
+			*inComment = false
+			continue
+		}
+
+		start := bytes.Index(line, []byte("<!--"))
+		if start == -1 {
+			out = append(out, line...)
+			return out
+		}
+		out = append(out, line[:start]...)
+		line = line[start+len("<!--"):]
+		*inComment = true
+	}
+	return out
 }
 
 // buildLineOffsets returns a slice where index i is the byte offset of line i+1.
