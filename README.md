@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~4,690 lines of Go (+ ~3,860 lines of tests) |
+| Codebase | ~4,740 lines of Go (+ ~3,860 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -47,7 +47,7 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [path] # Create local config; optionally install MCP clients
+docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [path] # Create local config; optionally install MCP clients and bundled skills
 docgraph install [--clients auto|all|LIST] [--workspace] [--scope user] [path]      # Configure MCP clients without re-initializing
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
@@ -61,6 +61,30 @@ docgraph version                             # Print build version
 `auto` always writes project-local Claude Code config and also writes Codex,
 Hermes, and OpenCode config when their config directories already exist.
 `all` creates config files for every supported client.
+
+## Bundled Skills
+
+`docgraph init --with-skills <path>` installs the `docgraph-drift-audit` skill
+into `.claude/skills/docgraph-drift-audit/SKILL.md` in your project:
+
+```bash
+docgraph init --with-skills /path/to/project
+```
+
+The skill audits all indexed `.md` files for DocGraph compatibility: missing
+frontmatter, isolated docs (no outgoing links), broken wikilinks, headings, and
+similarity islands. It runs against the live index via `docgraph_status` and
+direct SQLite queries, then reports PASS/FAIL per category and offers auto-fix.
+
+**Install behaviour:** skips any skill directory that already exists — safe to
+re-run after a fresh `docgraph init`. To update an existing skill to the latest
+version, delete the skill directory first.
+
+Available skills bundled in the binary:
+
+| Skill | Purpose |
+|-------|---------|
+| `docgraph-drift-audit` | Audit `.md` files for DocGraph compatibility |
 
 ## MCP Tools
 

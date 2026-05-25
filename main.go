@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"embed"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
 	"path/filepath"
@@ -91,6 +93,7 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 
 - docgraph init <path>: creates .docgraphignore, ensures .gitignore ignores .docgraph/, and creates a local .mcp.json when missing.
 - docgraph init --install-clients auto <path>: after local setup, auto-detects Claude Code, Codex, Hermes, and OpenCode config locations and writes DocGraph MCP entries where detected.
+- docgraph init --with-skills <path>: after local setup, installs bundled skills into .claude/skills/ (skip-if-exists). Currently ships docgraph-drift-audit for auditing .md file DocGraph compatibility.
 - docgraph install --clients all <path>: non-interactive installer for Claude Code, Codex, Hermes, and OpenCode. Use --workspace to configure workspace mode instead of single-project mode.
 
 ## Installing for Claude Code — ask the user first
@@ -154,9 +157,12 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
 	os.Exit(1)
 }
+
+//go:embed all:skills
+var skillsFS embed.FS
 
 var version = "dev"
 
@@ -164,14 +170,15 @@ var noGitignore bool
 var similarityThreshold float64
 
 func cmdInit(args []string) {
-	fs := flag.NewFlagSet("init", flag.ExitOnError)
-	installClients := fs.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
-	workspaceMode := fs.Bool("workspace", false, "Configure installed clients to use serve --workspace")
-	scope := fs.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
-	fs.Parse(args)
+	fset := flag.NewFlagSet("init", flag.ExitOnError)
+	installClients := fset.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
+	workspaceMode := fset.Bool("workspace", false, "Configure installed clients to use serve --workspace")
+	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
+	withSkills := fset.Bool("with-skills", false, "Copy bundled skills to .claude/skills/ (skips existing directories)")
+	fset.Parse(args)
 	dir := "."
-	if fs.NArg() > 0 {
-		dir = fs.Arg(0)
+	if fset.NArg() > 0 {
+		dir = fset.Arg(0)
 	}
 	root, err := filepath.Abs(dir)
 	if err != nil {
@@ -180,6 +187,11 @@ func cmdInit(args []string) {
 	if err := initProject(root); err != nil {
 		log.Fatal(err)
 	}
+	if *withSkills {
+		if err := installSkills(root); err != nil {
+			log.Fatal(err)
+		}
+	}
 	if *installClients != "" {
 		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope})
 		if err != nil {
@@ -187,6 +199,41 @@ func cmdInit(args []string) {
 		}
 		printInstallResults(results)
 	}
+}
+
+func installSkills(root string) error {
+	entries, err := fs.ReadDir(skillsFS, "skills")
+	if err != nil {
+		return fmt.Errorf("read embedded skills: %w", err)
+	}
+	dest := filepath.Join(root, ".claude", "skills")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return fmt.Errorf("create .claude/skills: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		skillDir := filepath.Join(dest, e.Name())
+		if _, statErr := os.Stat(skillDir); statErr == nil {
+			fmt.Fprintf(os.Stderr, "  skip (exists): .claude/skills/%s/\n", e.Name())
+			continue
+		}
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			return fmt.Errorf("create skill dir %s: %w", e.Name(), err)
+		}
+		srcPath := "skills/" + e.Name() + "/SKILL.md"
+		data, err := fs.ReadFile(skillsFS, srcPath)
+		if err != nil {
+			return fmt.Errorf("read embedded %s: %w", srcPath, err)
+		}
+		destPath := filepath.Join(skillDir, "SKILL.md")
+		if err := os.WriteFile(destPath, data, 0o644); err != nil {
+			return fmt.Errorf("write %s: %w", destPath, err)
+		}
+		fmt.Fprintf(os.Stderr, "  installed: .claude/skills/%s/SKILL.md\n", e.Name())
+	}
+	return nil
 }
 
 func cmdInstall(args []string) {

@@ -28,6 +28,10 @@ Run `docgraph init --install-clients auto <path>` for a single project, or
 `docgraph install --clients all --workspace <path>` for a multi-project workspace.
 See README.md for full installation options including user-scope (global) Claude Code config.
 
+Add `--with-skills` to install the bundled `docgraph-drift-audit` skill into
+`.claude/skills/` (skip-if-exists, idempotent). The skill audits `.md` files for
+DocGraph compatibility — frontmatter, wikilinks, broken refs, and similarity islands.
+
 ## What DocGraph is good at
 
 1. **Cross-reference tracking** — "Who references ADR-001?" requires scanning
