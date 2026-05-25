@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,10 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// ErrCorruptDB is returned by validateDB when core tables are absent from a
+// non-empty database file — indicating a corrupt or truncated DB.
+var ErrCorruptDB = errors.New("docgraph: database file is corrupt or missing core tables")
 
 type Node struct {
 	ID            string
@@ -73,10 +78,18 @@ type Store struct {
 }
 
 func Open(dbPath string) (*Store, error) {
-	if err := validateDB(dbPath); err != nil {
+	switch err := validateDB(dbPath); {
+	case err == nil:
+		// healthy or fresh file — proceed
+	case errors.Is(err, ErrFutureSchema):
+		return nil, err // do NOT remove the file
+	case errors.Is(err, ErrCorruptDB):
 		os.Remove(dbPath)
 		os.Remove(dbPath + "-wal")
 		os.Remove(dbPath + "-shm")
+		// fall through and open a fresh DB
+	default:
+		return nil, err
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
@@ -98,33 +111,58 @@ func Open(dbPath string) (*Store, error) {
 		}
 	}
 
-	if err := initSchema(db); err != nil {
+	if err := RunMigrations(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
+		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 
 	return &Store{db: db}, nil
 }
 
 func validateDB(dbPath string) error {
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
+	// 1. Fresh file — nothing to validate.
+	fi, err := os.Stat(dbPath)
+	if os.IsNotExist(err) {
 		return nil
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return err
+	}
+
+	// 2. Open read-only for inspection.
+	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	var count int
-	err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('nodes','edges','files')`).Scan(&count)
-	if err != nil || count != 3 {
-		return fmt.Errorf("invalid schema")
+
+	// 3. Check for future schema (DB was created by a newer binary).
+	var hasMigrationsTable int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`).Scan(&hasMigrationsTable)
+	if hasMigrationsTable > 0 {
+		// Determine the highest known version in this binary.
+		highestKnown := 0
+		for _, m := range migrations {
+			if m.Version > highestKnown {
+				highestKnown = m.Version
+			}
+		}
+		var maxApplied int
+		if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&maxApplied); err == nil {
+			if maxApplied > highestKnown {
+				return ErrFutureSchema
+			}
+		}
 	}
-	var triggerCount int
-	db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='trigger'`).Scan(&triggerCount)
-	if triggerCount > 10 {
-		return fmt.Errorf("suspicious trigger count: %d", triggerCount)
+
+	// 4. Core tables missing in a non-empty file → corrupt.
+	var coreCount int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('nodes','edges','files')`).Scan(&coreCount)
+	if coreCount != 3 && fi.Size() > 0 {
+		return ErrCorruptDB
 	}
+
+	// 5. Otherwise healthy (old pre-migration DB, fresh empty file, or already-migrated DB).
 	return nil
 }
 
@@ -426,6 +464,21 @@ func (s *Store) GetProjectMeta(key string) (string, bool, error) {
 		return "", false, err
 	}
 	return v, true, nil
+}
+
+// SchemaVersion returns the latest applied migration version and name.
+// Returns (0, "", nil) if schema_migrations table is empty or missing.
+func (s *Store) SchemaVersion() (version int, name string, err error) {
+	row := s.db.QueryRow(`SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1`)
+	err = row.Scan(&version, &name)
+	if err == sql.ErrNoRows {
+		return 0, "", nil
+	}
+	if err != nil {
+		// Table may not exist yet (pre-migration DB that hasn't been opened since F-18).
+		return 0, "", nil
+	}
+	return version, name, nil
 }
 
 // ReadSectionContent reads the content of a section from its source file.

@@ -3,6 +3,7 @@ package workspace
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -56,6 +57,10 @@ func Open(root string) (*Workspace, error) {
 		}
 		st, err := store.Open(filepath.Join(dir, ".docgraph", "docgraph.db"))
 		if err != nil {
+			if errors.Is(err, store.ErrFutureSchema) {
+				fmt.Fprintf(os.Stderr, "[workspace] project %s: future schema, skipping — upgrade your docgraph binary\n", e.Name())
+				continue
+			}
 			return nil, err
 		}
 		w.Projects = append(w.Projects, &Project{Name: e.Name(), Path: dir, Store: st})

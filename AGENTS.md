@@ -108,7 +108,7 @@ Need a keyword search with filtering?
   → docgraph_search (with kind= filter for precision)
 
 Don't know if DocGraph has the file indexed?
-  → docgraph_status (check counts) or docgraph_files (list files)
+  → docgraph_status (check counts, schema version, reindex state) or docgraph_files (list files)
 ```
 
 ## When DocGraph adds real value

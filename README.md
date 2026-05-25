@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~6,290 lines of Go (+ ~5,260 lines of tests) |
+| Codebase | ~6,750 lines of Go (+ ~5,630 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -111,7 +111,7 @@ Available skills bundled in the binary:
 | 8 | `docgraph_trace` | Shortest reference path between two docs (BFS, max 10 hops) |
 | 9 | `docgraph_files` | Indexed file tree |
 | 10 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
-| 11 | `docgraph_status` | Index health and per-project stats |
+| 11 | `docgraph_status` | Index health, per-project stats, schema version, and pending reindex/migration state |
 | 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
 | 14 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |

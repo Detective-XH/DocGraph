@@ -2,6 +2,9 @@ package store
 
 import "database/sql"
 
+// SchemaSQL is retained for reference and backward compatibility.
+// The canonical DDL lives in the migration SQL strings in migrations.go.
+// store.Open calls initSchema which now delegates to RunMigrations.
 const SchemaSQL = `
 CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,
@@ -94,39 +97,9 @@ CREATE INDEX IF NOT EXISTS idx_edges_target_kind ON edges(target, kind);
 CREATE INDEX IF NOT EXISTS idx_unresolved_refs_from_node ON unresolved_refs(from_node_id);
 `
 
+// initSchema initialises the schema by running all pending migrations.
+// store.Open calls this; the internals now delegate to RunMigrations so that
+// schema evolution is managed through the versioned migration list.
 func initSchema(db *sql.DB) error {
-	if _, err := db.Exec(SchemaSQL); err != nil {
-		return err
-	}
-
-	// Triggers cannot use IF NOT EXISTS, so drop before creating.
-	triggers := []string{
-		`DROP TRIGGER IF EXISTS nodes_fts_insert`,
-		`CREATE TRIGGER nodes_fts_insert AFTER INSERT ON nodes BEGIN
-			INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata_text)
-			VALUES (NEW.rowid, NEW.name, NEW.qualified_name, NEW.body_excerpt, NEW.metadata);
-		END`,
-
-		`DROP TRIGGER IF EXISTS nodes_fts_update`,
-		`CREATE TRIGGER nodes_fts_update AFTER UPDATE ON nodes BEGIN
-			INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, body_excerpt, metadata_text)
-			VALUES ('delete', OLD.rowid, OLD.name, OLD.qualified_name, OLD.body_excerpt, OLD.metadata);
-			INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata_text)
-			VALUES (NEW.rowid, NEW.name, NEW.qualified_name, NEW.body_excerpt, NEW.metadata);
-		END`,
-
-		`DROP TRIGGER IF EXISTS nodes_fts_delete`,
-		`CREATE TRIGGER nodes_fts_delete AFTER DELETE ON nodes BEGIN
-			INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, body_excerpt, metadata_text)
-			VALUES ('delete', OLD.rowid, OLD.name, OLD.qualified_name, OLD.body_excerpt, OLD.metadata);
-		END`,
-	}
-
-	for _, t := range triggers {
-		if _, err := db.Exec(t); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return RunMigrations(db)
 }

@@ -140,11 +140,70 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err)), nil
 		}
 		sb.WriteString("## DocGraph Workspace Status\n\n")
-		sb.WriteString("| Project | Files | Nodes | Edges | Unresolved | DB Size |\n")
-		sb.WriteString("|---------|-------|-------|-------|------------|--------|\n")
-		for name, s := range allStats {
-			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %d | %s |\n",
-				name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes)))
+		sb.WriteString("| Project | Files | Nodes | Edges | Unresolved | DB Size | Schema Version |\n")
+		sb.WriteString("|---------|-------|-------|-------|------------|--------|----------------|\n")
+
+		// Collect per-project schema info for warnings below.
+		type projectWarning struct {
+			name          string
+			reindexReason string
+			reindexScope  string
+			lastFailure   string
+		}
+		var warnings []projectWarning
+
+		for _, p := range h.workspace.Projects {
+			s, ok := allStats[p.Name]
+			if !ok {
+				continue
+			}
+			schemaVer, schemaName, _ := p.Store.SchemaVersion()
+			var schemaCol string
+			if schemaVer == 0 {
+				schemaCol = "none"
+			} else {
+				schemaCol = fmt.Sprintf("v%d (%s)", schemaVer, schemaName)
+			}
+			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %d | %s | %s |\n",
+				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes), schemaCol))
+
+			// Collect warnings.
+			reindexVal, reindexFound, _ := p.Store.GetProjectMeta(store.MetaKeyReindexRequired)
+			lastFailure, failureFound, _ := p.Store.GetProjectMeta(store.MetaKeyMigrationLastFailure)
+			if (reindexFound && reindexVal == "true") || (failureFound && lastFailure != "") {
+				w := projectWarning{name: p.Name}
+				if reindexFound && reindexVal == "true" {
+					w.reindexReason, _, _ = p.Store.GetProjectMeta(store.MetaKeyReindexReason)
+					w.reindexScope, _, _ = p.Store.GetProjectMeta(store.MetaKeyReindexScope)
+				}
+				if failureFound {
+					w.lastFailure = lastFailure
+				}
+				warnings = append(warnings, w)
+			}
+		}
+
+		// Append warnings if any projects need attention.
+		if len(warnings) > 0 {
+			sb.WriteString("\n### Warnings\n")
+			for _, w := range warnings {
+				sb.WriteString(fmt.Sprintf("\n**%s**\n", w.name))
+				if w.reindexReason != "" || w.reindexScope != "" {
+					sb.WriteString("Reindex required: yes\n")
+					if w.reindexReason != "" {
+						sb.WriteString(fmt.Sprintf("  Reason: %s\n", w.reindexReason))
+					}
+					if w.reindexScope != "" {
+						sb.WriteString(fmt.Sprintf("  Scope: %s\n", w.reindexScope))
+					}
+				} else if w.lastFailure == "" {
+					// reindex_required=true but no reason/scope
+					sb.WriteString("Reindex required: yes\n")
+				}
+				if w.lastFailure != "" {
+					sb.WriteString(fmt.Sprintf("Last migration failure: %s\n", w.lastFailure))
+				}
+			}
 		}
 
 		// Neural embeddings — fan-out across all projects.
@@ -190,6 +249,33 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		embStats, err := h.store.GetEmbeddingModelStats()
 		if err == nil {
 			appendEmbeddingStats(&sb, embStats)
+		}
+
+		// Schema / migration section.
+		schemaVer, schemaName, _ := h.store.SchemaVersion()
+		reindexVal, reindexFound, _ := h.store.GetProjectMeta(store.MetaKeyReindexRequired)
+		lastFailure, failureFound, _ := h.store.GetProjectMeta(store.MetaKeyMigrationLastFailure)
+
+		sb.WriteString("\n### Schema\n")
+		if schemaVer == 0 {
+			sb.WriteString("Schema version: none (pre-migration DB)\n")
+		} else {
+			sb.WriteString(fmt.Sprintf("Schema version: v%d (%s)\n", schemaVer, schemaName))
+		}
+		reindexRequired := reindexFound && reindexVal == "true"
+		if reindexRequired {
+			sb.WriteString("Reindex required: yes\n")
+			if reason, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexReason); reason != "" {
+				sb.WriteString(fmt.Sprintf("  Reason: %s\n", reason))
+			}
+			if scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope); scope != "" {
+				sb.WriteString(fmt.Sprintf("  Scope: %s\n", scope))
+			}
+		} else {
+			sb.WriteString("Reindex required: no\n")
+		}
+		if failureFound && lastFailure != "" {
+			sb.WriteString(fmt.Sprintf("Last migration failure: %s\n", lastFailure))
 		}
 	}
 

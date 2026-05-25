@@ -20,7 +20,7 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 | Find related docs (no explicit links needed) | docgraph_similar |
 | List/filter by tag | docgraph_tags |
 | Git change history for a doc | docgraph_history |
-| Index health check | docgraph_status |
+| Index health + schema version + reindex state + migration failures | docgraph_status |
 | Get docs needing neural embeddings | docgraph_embeddings_pending |
 | Store a computed embedding vector | docgraph_embeddings_store |
 | Clear embeddings for a model | docgraph_embeddings_clear |
