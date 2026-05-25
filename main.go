@@ -93,6 +93,23 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 - docgraph init --install-clients auto <path>: after local setup, auto-detects Claude Code, Codex, Hermes, and OpenCode config locations and writes DocGraph MCP entries where detected.
 - docgraph install --clients all <path>: non-interactive installer for Claude Code, Codex, Hermes, and OpenCode. Use --workspace to configure workspace mode instead of single-project mode.
 
+## Installing for Claude Code — ask the user first
+
+Claude Code supports two installation scopes. Before installing, ask the user:
+"Do you want DocGraph available in ALL your projects (global), or just this project (local)?"
+
+Global (user-scope) — writes to ~/.claude.json via the claude CLI:
+  claude mcp add --scope user docgraph -- /path/to/docgraph serve --workspace /path/to/workspace
+
+Project-local — writes .mcp.json in the project root:
+  docgraph init --install-clients claude /path/to/project
+
+After installing, verify the connection: claude mcp list
+
+WARNING: ~/.claude/mcp.json is NOT read by Claude Code. Only ~/.claude.json (user-scope)
+and project-level .mcp.json (project-scope) are valid. Manually editing ~/.claude/mcp.json
+has no effect.
+
 - Default: respects both .gitignore and .docgraphignore
 - --no-gitignore flag: ignores .gitignore rules, indexes ALL .md files
   (still respects .docgraphignore). Useful when important docs are gitignored

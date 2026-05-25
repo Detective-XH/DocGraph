@@ -202,7 +202,13 @@ The installer writes:
 
 ### Claude Code
 
-Add to `.mcp.json` in your project root:
+**Project-level** (this project only) — add to `.mcp.json` in your project root, or run:
+
+```bash
+docgraph init --install-clients claude /path/to/project
+```
+
+Manual `.mcp.json`:
 
 ```json
 {
@@ -214,6 +220,22 @@ Add to `.mcp.json` in your project root:
   }
 }
 ```
+
+**User-level (global)** — available across all projects. Uses `claude mcp add`, which writes to `~/.claude.json`:
+
+```bash
+claude mcp add --scope user docgraph -- docgraph serve --workspace /path/to/workspace
+```
+
+Verify the connection:
+
+```bash
+claude mcp list
+```
+
+> **Important:** Claude Code stores user-scope MCP config in `~/.claude.json`, **not** `~/.claude/mcp.json`. Manually editing `~/.claude/mcp.json` has no effect — use `claude mcp add --scope user` or the project-level `.mcp.json` approach instead.
+
+> **PATH note:** `docgraph` must be on your PATH. For `go install` builds, ensure `$GOPATH/bin` is in your PATH (run `go env GOPATH` to find the location). If not, use the absolute path to the binary.
 
 ### Codex (OpenAI)
 
