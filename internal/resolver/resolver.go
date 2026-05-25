@@ -10,6 +10,133 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
+// ProjectRef is a lightweight project descriptor used by ResolveWorkspace
+// to avoid a circular import between resolver and workspace packages.
+type ProjectRef struct {
+	Name  string
+	Store *store.Store
+}
+
+// ResolveWorkspace performs a second-pass cross-project wikilink resolution
+// after all per-project Resolve() calls have completed.
+// It handles [[project/doc-name]] formatted wikilinks that could not be
+// resolved within a single project.
+// Because edges.target has a FOREIGN KEY constraint that references nodes in
+// the same DB, cross-project edges use the same self-edge-with-metadata
+// pattern as links_external: Source == Target == ref.FromNodeID, with
+// {"cross_project": true, "target_project": "...", "target_node_id": "..."}
+// stored in Metadata.
+func ResolveWorkspace(projects []ProjectRef) error {
+	// Build global lookup: byProject[projectName][basename] = nodeID
+	type byBasenameMap = map[string]string
+	byProject := make(map[string]byBasenameMap, len(projects))
+
+	for _, p := range projects {
+		docs, err := p.Store.GetAllDocumentNodes()
+		if err != nil {
+			return fmt.Errorf("load docs for project %q: %w", p.Name, err)
+		}
+		m := make(byBasenameMap, len(docs))
+		for _, d := range docs {
+			base := strings.ToLower(strings.TrimSuffix(filepath.Base(d.FilePath), ".md"))
+			// Last writer wins on collision — same disambiguation heuristic as fuzzyResolve
+			if _, exists := m[base]; !exists {
+				m[base] = d.ID
+			}
+		}
+		byProject[p.Name] = m
+	}
+
+	var totalResolved int
+
+	for _, p := range projects {
+		refs, err := p.Store.GetUnresolvedRefs()
+		if err != nil {
+			return fmt.Errorf("get unresolved refs for project %q: %w", p.Name, err)
+		}
+
+		var edges []store.Edge
+		var stillUnresolved []store.UnresolvedRef
+
+		for _, ref := range refs {
+			// Only handle cross-project wikilinks (contain a slash after pipe/anchor stripping)
+			if ref.ReferenceKind != "wikilink" {
+				stillUnresolved = append(stillUnresolved, ref)
+				continue
+			}
+
+			target := ref.ReferenceText
+			// Strip pipe alias and anchor
+			if idx := strings.Index(target, "|"); idx >= 0 {
+				target = target[:idx]
+			}
+			if idx := strings.Index(target, "#"); idx >= 0 {
+				target = target[:idx]
+			}
+			target = strings.TrimSpace(target)
+
+			slashIdx := strings.Index(target, "/")
+			if slashIdx < 0 || slashIdx == 0 || slashIdx == len(target)-1 {
+				// Not a cross-project reference — leave for intra-project pass
+				stillUnresolved = append(stillUnresolved, ref)
+				continue
+			}
+
+			parts := strings.SplitN(target, "/", 2)
+			targetProject := parts[0]
+			docName := strings.ToLower(strings.TrimSuffix(parts[1], ".md"))
+
+			projectDocs, ok := byProject[targetProject]
+			if !ok {
+				// Referenced project doesn't exist
+				stillUnresolved = append(stillUnresolved, ref)
+				continue
+			}
+
+			targetNodeID, ok := projectDocs[docName]
+			if !ok {
+				// Document not found in target project
+				stillUnresolved = append(stillUnresolved, ref)
+				continue
+			}
+
+			meta, _ := json.Marshal(map[string]string{
+				"cross_project":  "true",
+				"target_project": targetProject,
+				"target_node_id": targetNodeID,
+			})
+			edges = append(edges, store.Edge{
+				Source:   ref.FromNodeID,
+				Target:   ref.FromNodeID,
+				Kind:     "wikilinks_to",
+				Metadata: string(meta),
+				Line:     ref.Line,
+			})
+		}
+
+		if len(edges) > 0 {
+			if err := p.Store.InsertEdges(edges); err != nil {
+				return fmt.Errorf("insert cross-project edges for project %q: %w", p.Name, err)
+			}
+		}
+
+		resolved := len(refs) - len(stillUnresolved)
+		totalResolved += resolved
+
+		if err := p.Store.DeleteAllUnresolvedRefs(); err != nil {
+			return fmt.Errorf("delete unresolved refs for project %q: %w", p.Name, err)
+		}
+		if len(stillUnresolved) > 0 {
+			if err := p.Store.InsertUnresolvedRefs(stillUnresolved); err != nil {
+				return fmt.Errorf("re-insert unresolved refs for project %q: %w", p.Name, err)
+			}
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "[workspace] cross-project resolve: %d cross-project wikilinks resolved\n", totalResolved)
+	return nil
+}
+
 func Resolve(st *store.Store) error {
 	docs, err := st.GetAllDocumentNodes()
 	if err != nil {

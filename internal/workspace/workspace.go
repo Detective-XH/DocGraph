@@ -79,6 +79,16 @@ func (w *Workspace) IndexAll() error {
 			fmt.Fprintf(os.Stderr, "index %s: %v\n", p.Name, err)
 		}
 	}
+
+	// Second-pass: resolve cross-project [[project/doc-name]] wikilinks
+	crossRefs := make([]resolver.ProjectRef, 0, len(w.Projects))
+	for _, p := range w.Projects {
+		crossRefs = append(crossRefs, resolver.ProjectRef{Name: p.Name, Store: p.Store})
+	}
+	if err := resolver.ResolveWorkspace(crossRefs); err != nil {
+		fmt.Fprintf(os.Stderr, "[workspace] cross-project resolve: %v\n", err)
+	}
+
 	return nil
 }
 func (w *Workspace) Search(query, kind string, limit int) ([]store.SearchResult, error) {
