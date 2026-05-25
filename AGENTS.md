@@ -28,9 +28,11 @@ Run `docgraph init --install-clients auto <path>` for a single project, or
 `docgraph install --clients all --workspace <path>` for a multi-project workspace.
 See README.md for full installation options including user-scope (global) Claude Code config.
 
-Add `--with-skills` to install the bundled `docgraph-drift-audit` skill into
-`.claude/skills/` (skip-if-exists, idempotent). The skill audits `.md` files for
-DocGraph compatibility — frontmatter, wikilinks, broken refs, and similarity islands.
+When configuring Claude Code as a client, DocGraph automatically installs the
+bundled `docgraph-drift-audit` skill to `.claude/skills/` alongside the MCP config
+(skip-if-exists). No extra flag needed — skills are included in the default install.
+Use `docgraph init --with-skills <path>` to install skills on a project that was
+already initialized without `--install-clients`.
 
 ## What DocGraph is good at
 

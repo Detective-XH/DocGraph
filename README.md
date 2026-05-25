@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~4,740 lines of Go (+ ~3,860 lines of tests) |
+| Codebase | ~4,780 lines of Go (+ ~3,860 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -64,21 +64,27 @@ Hermes, and OpenCode config when their config directories already exist.
 
 ## Bundled Skills
 
-`docgraph init --with-skills <path>` installs the `docgraph-drift-audit` skill
-into `.claude/skills/docgraph-drift-audit/SKILL.md` in your project:
+When installing for Claude Code, DocGraph automatically installs companion skills
+into `.claude/skills/` alongside the MCP config — no extra flag needed:
+
+```bash
+docgraph init --install-clients claude /path/to/project  # MCP config + skill
+docgraph install --clients claude /path/to/project       # MCP config + skill
+```
+
+To install skills on a project that was already initialized without `--install-clients`:
 
 ```bash
 docgraph init --with-skills /path/to/project
 ```
 
-The skill audits all indexed `.md` files for DocGraph compatibility: missing
-frontmatter, isolated docs (no outgoing links), broken wikilinks, headings, and
-similarity islands. It runs against the live index via `docgraph_status` and
-direct SQLite queries, then reports PASS/FAIL per category and offers auto-fix.
+Skills are installed with skip-if-exists policy — safe to re-run. To update an
+existing skill to the latest version, delete its directory first.
 
-**Install behaviour:** skips any skill directory that already exists — safe to
-re-run after a fresh `docgraph init`. To update an existing skill to the latest
-version, delete the skill directory first.
+The `docgraph-drift-audit` skill audits all indexed `.md` files for DocGraph
+compatibility: missing frontmatter, isolated docs (no outgoing links), broken
+wikilinks, headings, and similarity islands. Reports PASS/FAIL per category and
+offers auto-fix via `docgraph_files` and `docgraph_similar`.
 
 Available skills bundled in the binary:
 
