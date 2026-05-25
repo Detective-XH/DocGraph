@@ -98,8 +98,8 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 Claude Code supports two installation scopes. Before installing, ask the user:
 "Do you want DocGraph available in ALL your projects (global), or just this project (local)?"
 
-Global (user-scope) — writes to ~/.claude.json via the claude CLI:
-  claude mcp add --scope user docgraph -- /path/to/docgraph serve --workspace /path/to/workspace
+Global (user-scope) — available across all projects, writes to ~/.claude.json:
+  docgraph install --clients claude --scope user --workspace /path/to/workspace
 
 Project-local — writes .mcp.json in the project root:
   docgraph init --install-clients claude /path/to/project
@@ -154,7 +154,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
 	os.Exit(1)
 }
 
@@ -167,6 +167,7 @@ func cmdInit(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	installClients := fs.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fs.Bool("workspace", false, "Configure installed clients to use serve --workspace")
+	scope := fs.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
 	fs.Parse(args)
 	dir := "."
 	if fs.NArg() > 0 {
@@ -180,7 +181,7 @@ func cmdInit(args []string) {
 		log.Fatal(err)
 	}
 	if *installClients != "" {
-		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode})
+		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -192,6 +193,7 @@ func cmdInstall(args []string) {
 	fs := flag.NewFlagSet("install", flag.ExitOnError)
 	clients := fs.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fs.Bool("workspace", false, "Configure clients to use serve --workspace")
+	scope := fs.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
 	fs.Parse(args)
 	dir := "."
 	if fs.NArg() > 0 {
@@ -201,7 +203,7 @@ func cmdInstall(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	results, err := install.Apply(root, install.Options{Clients: *clients, Workspace: *workspaceMode})
+	results, err := install.Apply(root, install.Options{Clients: *clients, Workspace: *workspaceMode, Scope: *scope})
 	if err != nil {
 		log.Fatal(err)
 	}

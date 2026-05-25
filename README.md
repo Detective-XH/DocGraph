@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~4,660 lines of Go (+ ~3,860 lines of tests) |
+| Codebase | ~4,690 lines of Go (+ ~3,860 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -47,8 +47,8 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [--install-clients auto|all|LIST] [--workspace] [path] # Create local config; optionally install MCP clients
-docgraph install [--clients auto|all|LIST] [--workspace] [path]      # Configure MCP clients without re-initializing
+docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [path] # Create local config; optionally install MCP clients
+docgraph install [--clients auto|all|LIST] [--workspace] [--scope user] [path]      # Configure MCP clients without re-initializing
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
@@ -221,7 +221,13 @@ Manual `.mcp.json`:
 }
 ```
 
-**User-level (global)** — available across all projects. Uses `claude mcp add`, which writes to `~/.claude.json`:
+**User-level (global)** — available across all projects. Writes to `~/.claude.json` via the `claude` CLI:
+
+```bash
+docgraph install --clients claude --scope user --workspace /path/to/workspace
+```
+
+Or manually with the `claude` CLI:
 
 ```bash
 claude mcp add --scope user docgraph -- docgraph serve --workspace /path/to/workspace

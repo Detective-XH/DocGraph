@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -22,9 +23,12 @@ const (
 
 // Options controls non-interactive MCP client configuration.
 // Clients accepts "auto", "all", or a comma-separated client list.
+// Scope applies only to the Claude client: "user" invokes "claude mcp add --scope user"
+// to register in ~/.claude.json; any other value writes a project-local .mcp.json.
 type Options struct {
 	Clients   string
 	Workspace bool
+	Scope     string
 }
 
 // Result records one client configuration file updated by the installer.
@@ -57,8 +61,15 @@ func Apply(root string, opts Options) ([]Result, error) {
 		var err error
 		switch client {
 		case clientClaude:
-			path = filepath.Join(absRoot, ".mcp.json")
-			err = writeJSONMCP(path, localServer(absRoot, opts.Workspace))
+			if opts.Scope == "user" {
+				err = invokeClaudeMCPAdd(absRoot, opts.Workspace)
+				if err == nil {
+					path = "~/.claude.json"
+				}
+			} else {
+				path = filepath.Join(absRoot, ".mcp.json")
+				err = writeJSONMCP(path, localServer(absRoot, opts.Workspace))
+			}
 		case clientCodex:
 			path, err = codexConfigPath()
 			if err == nil {
@@ -306,6 +317,26 @@ func pathExistsOrParentExists(path string) bool {
 		return true
 	}
 	return false
+}
+
+// invokeClaudeMCPAdd registers DocGraph with Claude Code at user scope by
+// running "claude mcp add --scope user". This avoids direct writes to
+// ~/.claude.json, which contains auth tokens and has a complex structure.
+func invokeClaudeMCPAdd(root string, workspace bool) error {
+	absBin, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("cannot locate docgraph binary: %w", err)
+	}
+	server := globalServer(root, workspace)
+	cmdArgs := []string{"mcp", "add", "--scope", "user", "docgraph", "--", absBin}
+	cmdArgs = append(cmdArgs, server.Args...)
+	cmd := exec.Command("claude", cmdArgs...)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("claude mcp add failed: %w\n(Is 'claude' on your PATH? Run: claude mcp list to verify)", err)
+	}
+	return nil
 }
 
 func writeFile(path string, data []byte, perm os.FileMode) error {
