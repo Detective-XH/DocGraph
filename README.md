@@ -45,11 +45,11 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph index [--no-gitignore] <path>       # Full index of a project
+docgraph index [--force] [--no-gitignore] <path>     # Index a project
+docgraph sync [--no-gitignore] <path>                # Incremental hash-based update
 docgraph status <path>                       # Print index stats
 docgraph serve [--no-gitignore] --path <path>        # MCP stdio server (single project)
 docgraph serve [--no-gitignore] --workspace <dir>    # MCP stdio server (auto-discover all child dirs)
-docgraph sync <path>                         # Incremental update (planned)
 ```
 
 ## MCP Tools
@@ -162,6 +162,7 @@ directories), use the `--no-gitignore` flag:
 
 ```bash
 docgraph index --no-gitignore <path>
+docgraph sync --no-gitignore <path>
 docgraph serve --no-gitignore --workspace <dir>
 ```
 

@@ -1,6 +1,7 @@
 package watcher
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"log"
@@ -22,6 +23,10 @@ var skipDirs = map[string]bool{
 }
 
 func Watch(paths []string, onChange OnChangeFunc) error {
+	return WatchWithContext(context.Background(), paths, 2*time.Second, onChange)
+}
+
+func WatchWithContext(ctx context.Context, paths []string, debounce time.Duration, onChange OnChangeFunc) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
@@ -48,6 +53,8 @@ func Watch(paths []string, onChange OnChangeFunc) error {
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case event, ok := <-w.Events:
 			if !ok {
 				return nil
@@ -77,7 +84,7 @@ func Watch(paths []string, onChange OnChangeFunc) error {
 			if timer != nil {
 				timer.Stop()
 			}
-			timer = time.AfterFunc(2*time.Second, func() {
+			timer = time.AfterFunc(debounce, func() {
 				mu.Lock()
 				batch := pending
 				pending = make(map[string][]string)
@@ -96,8 +103,13 @@ func Watch(paths []string, onChange OnChangeFunc) error {
 }
 
 func findProjectRoot(filePath string, roots []string) string {
+	absFile, err := filepath.Abs(filePath)
+	if err != nil {
+		return ""
+	}
 	for _, root := range roots {
-		if strings.HasPrefix(filePath, root) {
+		rel, err := filepath.Rel(root, absFile)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return root
 		}
 	}

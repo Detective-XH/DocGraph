@@ -105,6 +105,8 @@ func main() {
 	switch os.Args[1] {
 	case "index":
 		cmdIndex(os.Args[2:])
+	case "sync":
+		cmdSync(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
 	case "serve":
@@ -115,7 +117,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  index [--force] <path>\n  status <path>\n  serve --path <path>\n  serve --workspace <dir>\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  index [--force] <path>\n  sync <path>\n  status <path>\n  serve --path <path>\n  serve --workspace <dir>\n")
 	os.Exit(1)
 }
 
@@ -130,6 +132,16 @@ func cmdIndex(args []string) {
 		log.Fatal("usage: docgraph index [--force] <path>")
 	}
 	indexPathOpts(fs.Arg(0), *force).Close()
+}
+
+func cmdSync(args []string) {
+	fs := flag.NewFlagSet("sync", flag.ExitOnError)
+	fs.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fs.Parse(args)
+	if fs.NArg() < 1 {
+		log.Fatal("usage: docgraph sync <path>")
+	}
+	indexPath(fs.Arg(0)).Close()
 }
 
 func cmdStatus(args []string) {
@@ -313,11 +325,8 @@ func indexStore(root string, st *store.Store) error {
 		if err := resolver.Resolve(st); err != nil {
 			fmt.Fprintf(os.Stderr, "resolver: %v\n", err)
 		}
-		// Only recompute similarity on bulk changes (>5 files) to avoid O(N²) on every save
-		if nNew > 5 {
-			if err := similarity.ComputeSimilarity(st, 0); err != nil {
-				fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
-			}
+		if err := similarity.ComputeSimilarity(st, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
 		}
 	}
 	return nil

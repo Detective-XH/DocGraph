@@ -220,6 +220,75 @@ func TestIndexPathForceRebuildsDatabase(t *testing.T) {
 	}
 }
 
+func TestIndexPathRefreshesSimilarityAfterSingleFileChange(t *testing.T) {
+	projectDir := t.TempDir()
+	docA := filepath.Join(projectDir, "a.md")
+	docB := filepath.Join(projectDir, "b.md")
+	docC := filepath.Join(projectDir, "c.md")
+	glossary := filepath.Join(projectDir, "glossary.md")
+	if err := os.WriteFile(docA, []byte("---\ntags: [shared]\n---\n# Alpha\n\nAlpha links to [terms](glossary.md).\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(docB, []byte("---\ntags: [shared]\n---\n# Beta\n\nBeta links to [terms](glossary.md).\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(docC, []byte("# Quantum\n\nneutrino entropy lattice\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(glossary, []byte("# Glossary\n\nterms definitions\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st := indexPath(projectDir)
+	if err := st.InsertEdges([]store.Edge{{Source: "a.md", Target: "b.md", Kind: "similar_to"}}); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.EdgesByKind["similar_to"] == 0 {
+		t.Fatalf("expected test setup to contain a stale similar_to edge, got stats: %+v", stats.EdgesByKind)
+	}
+	st.Close()
+
+	if err := os.WriteFile(docB, []byte("# Volcano\n\nmagma basalt caldera\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st = indexPath(projectDir)
+	defer st.Close()
+	stats, err = st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stats.EdgesByKind["similar_to"]; got != 0 {
+		t.Fatalf("expected single-file change to refresh stale similar_to edges, got %d", got)
+	}
+}
+
+func TestCmdSyncIndexesProject(t *testing.T) {
+	projectDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(projectDir, "doc.md"), []byte("# Synced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmdSync([]string{projectDir})
+
+	st, err := store.Open(filepath.Join(projectDir, ".docgraph", "docgraph.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	stats, err := st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.FileCount != 1 {
+		t.Fatalf("expected sync to index 1 file, got %d", stats.FileCount)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: Full pipeline single project
 // ---------------------------------------------------------------------------

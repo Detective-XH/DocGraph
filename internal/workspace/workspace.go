@@ -15,6 +15,7 @@ import (
 	"github.com/Detective-XH/docgraph/internal/similarity"
 	"github.com/Detective-XH/docgraph/internal/store"
 )
+
 type Project struct {
 	Name  string
 	Path  string
@@ -218,11 +219,8 @@ func indexProjectOpts(p *Project, noGitignore bool) error {
 		if err := resolver.Resolve(p.Store); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] resolver: %v\n", p.Name, err)
 		}
-		// Only recompute similarity on bulk changes (>5 files) to avoid O(N²) on every save
-		if nNew > 5 {
-			if err := similarity.ComputeSimilarity(p.Store, 0); err != nil {
-				fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
-			}
+		if err := similarity.ComputeSimilarity(p.Store, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
 		}
 	}
 	return nil
