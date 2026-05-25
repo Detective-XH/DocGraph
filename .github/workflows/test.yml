@@ -35,3 +35,18 @@ jobs:
           go-version: 'stable'
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
+
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+      - run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
+      - run: cyclonedx-gomod mod -licenses -type library -json -output docgraph.cdx.json .
+      - uses: actions/upload-artifact@v6
+        with:
+          name: docgraph-sbom
+          path: docgraph.cdx.json
+          if-no-files-found: error

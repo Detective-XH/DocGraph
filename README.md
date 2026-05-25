@@ -288,6 +288,13 @@ FTS5 uses the trigram tokenizer for mixed CJK and Latin full-text search.
 | [fsnotify](https://github.com/fsnotify/fsnotify) | Cross-platform file watcher |
 | stdlib | `.gitignore` + `.docgraphignore` rule matching (no external dep) |
 
+## Supply Chain
+
+CI verifies module checksums with `go mod verify`, runs `govulncheck`, and
+generates a CycloneDX JSON SBOM artifact named `docgraph-sbom` with
+`cyclonedx-gomod`. The SBOM is generated from `go.mod` during GitHub Actions
+runs; generated SBOM files are not checked into the repository.
+
 ## Inspired By
 
 DocGraph is inspired by [CodeGraph](https://github.com/colbymchenry/codegraph),

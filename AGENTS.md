@@ -142,6 +142,9 @@ The key question is not "what format are my docs in?" but **"do my documents ref
 - `docgraph_context` caps included source content per result; lower
   maxContentBytes or set includeContent=false when structure is enough.
 - DocGraph never executes file content — it only reads and indexes.
+- Supply-chain checks run in GitHub Actions: `go mod verify`, `govulncheck`,
+  and CycloneDX SBOM generation via `cyclonedx-gomod`. The SBOM is uploaded as
+  the `docgraph-sbom` workflow artifact, not committed to the repository.
 
 ## Limitations to be aware of
 
