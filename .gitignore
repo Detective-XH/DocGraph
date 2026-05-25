@@ -1,5 +1,6 @@
 .docgraph/
 .codegraph/
+scripts/
 .claude/
 CLAUDE.md
 plans/
