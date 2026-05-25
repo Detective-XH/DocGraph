@@ -4,7 +4,7 @@
 
 Documentation knowledge graph MCP server for LLM agents. Indexes Markdown
 files into SQLite, extracts cross-references and topic similarity, and
-exposes the graph through 11 MCP tools over stdio.
+exposes the graph through 12 MCP tools over stdio.
 
 DocGraph's value scales with **how connected your documents are**:
 
@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~4,800 lines of Go (+ ~4,010 lines of tests) |
+| Codebase | ~4,970 lines of Go (+ ~4,130 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -112,6 +112,7 @@ Available skills bundled in the binary:
 | 9 | `docgraph_files` | Indexed file tree |
 | 10 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
 | 11 | `docgraph_status` | Index health and per-project stats |
+| 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
@@ -374,9 +375,9 @@ and SQLite. DocGraph adopts the same core design:
 - **Two-phase resolution**: raw links are extracted during parsing, then
   resolved in a separate pass after all files are indexed — identical to
   CodeGraph's `UnresolvedReference` → `ReferenceResolver` pattern.
-- **MCP tool surface**: the 11 tools (`_context`, `_search`, `_callers`/
+- **MCP tool surface**: the 12 tools (`_context`, `_search`, `_callers`/
   `_references`, `_callees`/`_links`, `_impact`, `_trace`, `_node`,
-  `_explore`, `_similar`, `_files`, `_status`) mirror CodeGraph's names
+  `_explore`, `_similar`, `_files`, `_status`, `_tags`) mirror CodeGraph's names
   and semantics so that agents already familiar with one can use the other
   without learning a new interface.
 

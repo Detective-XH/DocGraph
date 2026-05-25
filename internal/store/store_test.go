@@ -401,3 +401,116 @@ func TestNullAndEmptySearch(t *testing.T) {
 		_ = err
 	})
 }
+
+func TestGetAllTags_Empty(t *testing.T) {
+	st := tempStore(t)
+	tags, err := st.GetAllTags()
+	if err != nil {
+		t.Fatalf("GetAllTags on empty DB failed: %v", err)
+	}
+	if len(tags) != 0 {
+		t.Errorf("expected 0 tags, got %d", len(tags))
+	}
+}
+
+func TestGetAllTags_CountsAndOrder(t *testing.T) {
+	st := tempStore(t)
+
+	// Two documents tagged with "roadmap", one with "api".
+	nodes := []Node{
+		testNode("doc1.md", "document", "Doc One", "doc1.md"),
+		testNode("doc2.md", "document", "Doc Two", "doc2.md"),
+		testNode("doc3.md", "document", "Doc Three", "doc3.md"),
+		// tag nodes — one per (doc, tag) pair
+		testNode("doc1.md#tag:roadmap", "tag", "roadmap", "doc1.md"),
+		testNode("doc2.md#tag:roadmap", "tag", "roadmap", "doc2.md"),
+		testNode("doc3.md#tag:api", "tag", "api", "doc3.md"),
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	edges := []Edge{
+		{Source: "doc1.md", Target: "doc1.md#tag:roadmap", Kind: "tagged"},
+		{Source: "doc2.md", Target: "doc2.md#tag:roadmap", Kind: "tagged"},
+		{Source: "doc3.md", Target: "doc3.md#tag:api", Kind: "tagged"},
+	}
+	if err := st.InsertEdges(edges); err != nil {
+		t.Fatalf("InsertEdges failed: %v", err)
+	}
+
+	tags, err := st.GetAllTags()
+	if err != nil {
+		t.Fatalf("GetAllTags failed: %v", err)
+	}
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d", len(tags))
+	}
+	// "roadmap" should come first (count=2), then "api" (count=1).
+	if tags[0].Name != "roadmap" || tags[0].Count != 2 {
+		t.Errorf("expected first tag roadmap/2, got %s/%d", tags[0].Name, tags[0].Count)
+	}
+	if tags[1].Name != "api" || tags[1].Count != 1 {
+		t.Errorf("expected second tag api/1, got %s/%d", tags[1].Name, tags[1].Count)
+	}
+}
+
+func TestGetDocumentsByTag(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		testNode("doc1.md", "document", "Doc One", "doc1.md"),
+		testNode("doc2.md", "document", "Doc Two", "doc2.md"),
+		testNode("doc3.md", "document", "Doc Three", "doc3.md"),
+		testNode("doc1.md#tag:roadmap", "tag", "roadmap", "doc1.md"),
+		testNode("doc2.md#tag:roadmap", "tag", "roadmap", "doc2.md"),
+		testNode("doc3.md#tag:api", "tag", "api", "doc3.md"),
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	edges := []Edge{
+		{Source: "doc1.md", Target: "doc1.md#tag:roadmap", Kind: "tagged"},
+		{Source: "doc2.md", Target: "doc2.md#tag:roadmap", Kind: "tagged"},
+		{Source: "doc3.md", Target: "doc3.md#tag:api", Kind: "tagged"},
+	}
+	if err := st.InsertEdges(edges); err != nil {
+		t.Fatalf("InsertEdges failed: %v", err)
+	}
+
+	t.Run("exact match", func(t *testing.T) {
+		docs, err := st.GetDocumentsByTag("roadmap")
+		if err != nil {
+			t.Fatalf("GetDocumentsByTag failed: %v", err)
+		}
+		if len(docs) != 2 {
+			t.Fatalf("expected 2 docs for tag 'roadmap', got %d", len(docs))
+		}
+		paths := map[string]bool{}
+		for _, d := range docs {
+			paths[d.FilePath] = true
+		}
+		if !paths["doc1.md"] || !paths["doc2.md"] {
+			t.Errorf("expected doc1.md and doc2.md, got %v", paths)
+		}
+	})
+
+	t.Run("case insensitive", func(t *testing.T) {
+		docs, err := st.GetDocumentsByTag("ROADMAP")
+		if err != nil {
+			t.Fatalf("GetDocumentsByTag case-insensitive failed: %v", err)
+		}
+		if len(docs) != 2 {
+			t.Errorf("expected 2 docs for tag 'ROADMAP' (case-insensitive), got %d", len(docs))
+		}
+	})
+
+	t.Run("missing tag", func(t *testing.T) {
+		docs, err := st.GetDocumentsByTag("nonexistent")
+		if err != nil {
+			t.Fatalf("GetDocumentsByTag for missing tag failed: %v", err)
+		}
+		if len(docs) != 0 {
+			t.Errorf("expected 0 docs for nonexistent tag, got %d", len(docs))
+		}
+	})
+}

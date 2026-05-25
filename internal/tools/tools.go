@@ -28,6 +28,7 @@ func registerTools(s *server.MCPServer, h *handler) {
 	s.AddTool(impactTool, h.handleImpact)
 	s.AddTool(traceTool, h.handleTrace)
 	s.AddTool(similarTool, h.handleSimilar)
+	s.AddTool(tagsTool, h.handleTags)
 }
 
 type handler struct {

@@ -87,6 +87,9 @@ Need details on ONE specific document?
 Need to find related docs without knowing what to search for?
   → docgraph_similar (TF-IDF + shared refs + tags)
 
+Need to list all tags or find documents by tag?
+  → docgraph_tags (lists all tags with counts, or filters documents by tag name)
+
 Need to know who depends on a document?
   → docgraph_references (direct) or docgraph_impact (transitive)
 

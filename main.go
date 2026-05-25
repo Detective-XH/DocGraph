@@ -45,6 +45,7 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 | Path between two docs | docgraph_trace |
 | List indexed files | docgraph_files |
 | Find related docs (no explicit links needed) | docgraph_similar |
+| List/filter by tag | docgraph_tags |
 | Index health check | docgraph_status |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
