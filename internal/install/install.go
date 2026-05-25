@@ -346,6 +346,9 @@ func writeFile(path string, data []byte, perm os.FileMode) error {
 	return os.WriteFile(path, data, perm)
 }
 
+// IsClaudeResult reports whether r is a Claude Code installation result.
+func IsClaudeResult(r Result) bool { return r.Client == clientClaude }
+
 // Clients returns the supported client names in stable display order.
 func Clients() []string {
 	clients := []string{clientClaude, clientCodex, clientHermes, clientOpenCode}

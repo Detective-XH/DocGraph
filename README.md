@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~4,780 lines of Go (+ ~3,860 lines of tests) |
+| Codebase | ~4,800 lines of Go (+ ~4,010 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -47,8 +47,8 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [path] # Create local config; optionally install MCP clients and bundled skills
-docgraph install [--clients auto|all|LIST] [--workspace] [--scope user] [path]      # Configure MCP clients without re-initializing
+docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
+docgraph install [--clients auto|all|LIST] [--workspace] [--scope user] [--update-skills] [path]      # Configure MCP clients without re-initializing
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
@@ -79,7 +79,12 @@ docgraph init --with-skills /path/to/project
 ```
 
 Skills are installed with skip-if-exists policy — safe to re-run. To update an
-existing skill to the latest version, delete its directory first.
+existing skill to the latest bundled version:
+
+```bash
+docgraph init --update-skills /path/to/project
+docgraph install --clients claude --update-skills /path/to/project
+```
 
 The `docgraph-drift-audit` skill audits all indexed `.md` files for DocGraph
 compatibility: missing frontmatter, isolated docs (no outgoing links), broken

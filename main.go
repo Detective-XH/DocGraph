@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -181,7 +182,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [--update-skills] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--update-skills] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
 	os.Exit(1)
 }
 
@@ -199,6 +200,7 @@ func cmdInit(args []string) {
 	workspaceMode := fset.Bool("workspace", false, "Configure installed clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
 	withSkills := fset.Bool("with-skills", false, "Copy bundled skills to .claude/skills/ (skips existing directories)")
+	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	fset.Parse(args)
 	dir := "."
 	if fset.NArg() > 0 {
@@ -212,7 +214,7 @@ func cmdInit(args []string) {
 		log.Fatal(err)
 	}
 	if *withSkills {
-		if err := installSkills(root); err != nil {
+		if err := installSkills(root, false); err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -223,14 +225,19 @@ func cmdInit(args []string) {
 		}
 		printInstallResults(results)
 		if claudeInstalled(results) {
-			if err := installSkills(root); err != nil {
+			if err := installSkills(root, false); err != nil {
 				log.Printf("warning: skills install: %v", err)
 			}
 		}
 	}
+	if *updateSkills {
+		if err := installSkills(root, true); err != nil {
+			log.Fatal(err)
+		}
+	}
 }
 
-func installSkills(root string) error {
+func installSkills(root string, overwrite bool) error {
 	entries, err := fs.ReadDir(skillsFS, "skills")
 	if err != nil {
 		return fmt.Errorf("read embedded skills: %w", err)
@@ -245,8 +252,14 @@ func installSkills(root string) error {
 		}
 		skillDir := filepath.Join(dest, e.Name())
 		if _, statErr := os.Stat(skillDir); statErr == nil {
-			fmt.Fprintf(os.Stderr, "  skip (exists): .claude/skills/%s/\n", e.Name())
-			continue
+			if overwrite {
+				if err := os.RemoveAll(skillDir); err != nil {
+					return fmt.Errorf("remove skill dir %s: %w", e.Name(), err)
+				}
+			} else {
+				fmt.Fprintf(os.Stderr, "  skip (exists): .claude/skills/%s/\n", e.Name())
+				continue
+			}
 		}
 		if err := os.MkdirAll(skillDir, 0o755); err != nil {
 			return fmt.Errorf("create skill dir %s: %w", e.Name(), err)
@@ -270,6 +283,7 @@ func cmdInstall(args []string) {
 	clients := fset.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
+	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	fset.Parse(args)
 	dir := "."
 	if fset.NArg() > 0 {
@@ -285,16 +299,22 @@ func cmdInstall(args []string) {
 	}
 	printInstallResults(results)
 	if claudeInstalled(results) {
-		if err := installSkills(root); err != nil {
+		if err := installSkills(root, false); err != nil {
 			log.Printf("warning: skills install: %v", err)
+		}
+	}
+	if *updateSkills {
+		if err := installSkills(root, true); err != nil {
+			log.Fatal(err)
 		}
 	}
 }
 
 func claudeInstalled(results []install.Result) bool {
 	for _, r := range results {
-		if r.Client == "claude" {
-			return true
+		if install.IsClaudeResult(r) {
+			_, err := exec.LookPath("claude")
+			return err == nil
 		}
 	}
 	return false
