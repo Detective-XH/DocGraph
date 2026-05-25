@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -503,6 +504,49 @@ func (s *Store) DeleteAllUnresolvedRefs() error {
 func (s *Store) DeleteEdgesByKind(kind string) error {
 	_, err := s.db.Exec(`DELETE FROM edges WHERE kind = ?`, kind)
 	return err
+}
+
+// DeleteSimilarityEdgesForDocs removes similar_to edges where source or target
+// is in nodeIDs. Used by incremental similarity to clear stale edges before
+// recomputing only the affected pairs.
+func (s *Store) DeleteSimilarityEdgesForDocs(nodeIDs []string) error {
+	if len(nodeIDs) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(nodeIDs))
+	args := make([]interface{}, 0, len(nodeIDs)*2+1)
+	args = append(args, "similar_to")
+	for i, id := range nodeIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	ph := strings.Join(placeholders, ",")
+	for _, id := range nodeIDs {
+		args = append(args, id)
+	}
+	q := "DELETE FROM edges WHERE kind=? AND (source IN (" + ph + ") OR target IN (" + ph + "))"
+	_, err := s.db.Exec(q, args...)
+	return err
+}
+
+func (s *Store) UpsertProjectMeta(key, value string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO project_metadata(key,value,updated_at) VALUES(?,?,?)
+		 ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		key, value, time.Now().Unix())
+	return err
+}
+
+func (s *Store) GetProjectMeta(key string) (string, bool, error) {
+	var v string
+	err := s.db.QueryRow(`SELECT value FROM project_metadata WHERE key=?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return v, true, nil
 }
 
 func (s *Store) GetIncomingEdges(nodeID string) ([]Edge, error) {

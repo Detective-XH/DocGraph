@@ -547,6 +547,7 @@ func indexStore(root string, st *store.Store) error {
 		return err
 	}
 	var nNew, nSkip int
+	var changedDocIDs []string
 	for _, e := range entries {
 		src, err := os.ReadFile(e.Path)
 		if err != nil {
@@ -594,13 +595,14 @@ func indexStore(root string, st *store.Store) error {
 			return err
 		}
 		nNew++
+		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
 	}
 	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", len(entries), nNew, nSkip)
 	if nNew > 0 {
 		if err := resolver.Resolve(st); err != nil {
 			fmt.Fprintf(os.Stderr, "resolver: %v\n", err)
 		}
-		if err := similarity.ComputeSimilarity(st, similarityThreshold); err != nil {
+		if err := similarity.ComputeSimilarityIncremental(st, changedDocIDs, similarityThreshold); err != nil {
 			fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
 		}
 	}

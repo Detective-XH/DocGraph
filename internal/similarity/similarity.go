@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -146,6 +147,143 @@ func ComputeSimilarity(st *store.Store, threshold float64) error {
 		}
 	}
 	fmt.Fprintf(os.Stderr, "Computed similarity: %d similar_to edges (threshold=%.2f)\n", len(edges), threshold)
+	return nil
+}
+
+// ComputeSimilarityIncremental recomputes similar_to edges for docs in
+// changedDocIDs only, leaving other pairs untouched. Falls back to a full
+// rebuild when: changedDocIDs is empty, k > n/2, or the threshold changed.
+//
+// IDF drift note: adding a new doc shifts IDF for its terms, which can
+// slightly alter scores for unchanged pairs. These pairs are corrected on
+// their next change or a forced full rebuild (--force on index).
+func ComputeSimilarityIncremental(st *store.Store, changedDocIDs []string, threshold float64) error {
+	if len(changedDocIDs) == 0 {
+		return nil
+	}
+	if threshold <= 0 {
+		threshold = 0.25
+	}
+
+	// Full rebuild when threshold changed since last run.
+	threshKey := "similarity_threshold"
+	stored, ok, _ := st.GetProjectMeta(threshKey)
+	if ok && stored != strconv.FormatFloat(threshold, 'f', 4, 64) {
+		return ComputeSimilarity(st, threshold)
+	}
+
+	docs, err := st.GetAllDocumentNodes()
+	if err != nil {
+		return fmt.Errorf("get documents: %w", err)
+	}
+	if len(docs) < 2 {
+		return nil
+	}
+
+	// Bail out when more than half the corpus changed — full rebuild wins.
+	if len(changedDocIDs) > len(docs)/2 {
+		return ComputeSimilarity(st, threshold)
+	}
+
+	changed := make(map[string]bool, len(changedDocIDs))
+	for _, id := range changedDocIDs {
+		changed[id] = true
+	}
+
+	// Build per-doc raw features and global IDF from all docs (O(n)).
+	type rawDoc struct {
+		id      string
+		tokens  []string
+		targets map[string]bool
+		tags    map[string]bool
+	}
+	raw := make([]rawDoc, len(docs))
+	df := make(map[string]int)
+	for i, d := range docs {
+		tokens := tokenize(d.Name + " " + d.BodyExcerpt)
+		targets := make(map[string]bool)
+		edges, err := st.GetEdgesBySource(d.ID)
+		if err != nil {
+			return fmt.Errorf("get edges for %s: %w", d.ID, err)
+		}
+		for _, e := range edges {
+			targets[e.Target] = true
+		}
+		raw[i] = rawDoc{id: d.ID, tokens: tokens, targets: targets, tags: extractTagSet(d.Metadata)}
+		seen := make(map[string]bool)
+		for _, t := range tokens {
+			if !seen[t] {
+				df[t]++
+				seen[t] = true
+			}
+		}
+	}
+
+	n := float64(len(docs))
+	features := make([]docFeatures, len(raw))
+	for i, rd := range raw {
+		tf := make(map[string]float64)
+		total := float64(len(rd.tokens))
+		if total == 0 {
+			features[i] = docFeatures{tfidf: tf, targets: rd.targets, tags: rd.tags}
+			continue
+		}
+		for _, t := range rd.tokens {
+			tf[t]++
+		}
+		tfidf := make(map[string]float64, len(tf))
+		for term, count := range tf {
+			tfidf[term] = (count / total) * math.Log(n/float64(df[term]))
+		}
+		features[i] = docFeatures{tfidf: tfidf, targets: rd.targets, tags: rd.tags}
+	}
+
+	// Remove stale edges involving changed docs.
+	if err := st.DeleteSimilarityEdgesForDocs(changedDocIDs); err != nil {
+		return fmt.Errorf("clean similarity edges: %w", err)
+	}
+
+	// Recompute only pairs where at least one doc is changed (O(k×n)).
+	var edges []store.Edge
+	for i := 0; i < len(docs); i++ {
+		for j := i + 1; j < len(docs); j++ {
+			if !changed[raw[i].id] && !changed[raw[j].id] {
+				continue
+			}
+			idA, idB := raw[i].id, raw[j].id
+			if idA > idB {
+				idA, idB = idB, idA
+			}
+			ts := cosineSimilarity(features[i].tfidf, features[j].tfidf)
+			rs := jaccard(features[i].targets, features[j].targets)
+			gs := jaccard(features[i].tags, features[j].tags)
+			score := 0.5*ts + 0.3*rs + 0.2*gs
+			if score >= threshold {
+				meta, _ := json.Marshal(map[string]float64{
+					"score": roundTo(score, 2),
+					"tfidf": roundTo(ts, 2),
+					"refs":  roundTo(rs, 2),
+					"tags":  roundTo(gs, 2),
+				})
+				edges = append(edges, store.Edge{
+					Source:   idA,
+					Target:   idB,
+					Kind:     "similar_to",
+					Metadata: string(meta),
+				})
+			}
+		}
+	}
+
+	if len(edges) > 0 {
+		if err := st.InsertEdges(edges); err != nil {
+			return fmt.Errorf("insert similarity edges: %w", err)
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Incremental similarity: %d similar_to edges recomputed (%d changed docs, threshold=%.2f)\n",
+		len(edges), len(changedDocIDs), threshold)
+
+	_ = st.UpsertProjectMeta(threshKey, strconv.FormatFloat(threshold, 'f', 4, 64))
 	return nil
 }
 

@@ -187,6 +187,7 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		return err
 	}
 	var nNew, nSkip int
+	var changedDocIDs []string
 	for _, e := range entries {
 		src, err := os.ReadFile(e.Path)
 		if err != nil {
@@ -230,13 +231,14 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 			return err
 		}
 		nNew++
+		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
 	}
 	fmt.Fprintf(os.Stderr, "[%s] Indexed %d files (%d new, %d unchanged)\n", p.Name, len(entries), nNew, nSkip)
 	if nNew > 0 {
 		if err := resolver.Resolve(p.Store); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] resolver: %v\n", p.Name, err)
 		}
-		if err := similarity.ComputeSimilarity(p.Store, threshold); err != nil {
+		if err := similarity.ComputeSimilarityIncremental(p.Store, changedDocIDs, threshold); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
 		}
 	}
