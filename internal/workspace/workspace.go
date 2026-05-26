@@ -3,7 +3,6 @@ package workspace
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -59,10 +58,6 @@ func Open(root string) (*Workspace, error) {
 		}
 		st, err := store.Open(filepath.Join(dir, ".docgraph", "docgraph.db"))
 		if err != nil {
-			if errors.Is(err, store.ErrFutureSchema) {
-				fmt.Fprintf(os.Stderr, "[workspace] project %s: future schema, skipping — upgrade your docgraph binary\n", e.Name())
-				continue
-			}
 			return nil, err
 		}
 		w.Projects = append(w.Projects, &Project{Name: e.Name(), Path: dir, Store: st})
@@ -304,19 +299,6 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 			fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
 		}
 
-		// Clear schema reindex markers only after a full parse pass for this project.
-		if nSkip == 0 {
-			scope, _, _ := p.Store.GetProjectMeta(store.MetaKeyReindexScope)
-			if scope == "sections" || scope == "metadata" {
-				if err := p.Store.DeleteProjectMeta(
-					store.MetaKeyReindexRequired,
-					store.MetaKeyReindexScope,
-					store.MetaKeyReindexReason,
-				); err != nil {
-					fmt.Fprintf(os.Stderr, "[%s] clear reindex marker: %v\n", p.Name, err)
-				}
-			}
-		}
 	}
 	return nil
 }

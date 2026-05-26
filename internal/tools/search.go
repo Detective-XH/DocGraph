@@ -106,9 +106,6 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	if useMetadataFilters {
 		sb.WriteString(fmt.Sprintf("## Search Results for %q [metadata filter: %s]\n\nFound %d results.\n",
 			query, describeSearchFilters(opts), len(results)))
-		if len(results) == 0 && h.metadataReindexPending() {
-			sb.WriteString("\n> **Note:** metadata reindex pending — run `docgraph index --force` to populate governance filters.\n")
-		}
 	} else {
 		sb.WriteString(fmt.Sprintf("## Search Results for %q\n\nFound %d results.\n", query, len(results)))
 	}
@@ -195,22 +192,6 @@ func describeSearchFilters(opts store.SearchOptions) string {
 		fmt.Sprintf("analyst_status=%q", opts.Research.AnalystStatus),
 	}
 	return strings.Join(parts, " ")
-}
-
-func (h *handler) metadataReindexPending() bool {
-	if h.store != nil {
-		reindexVal, reindexFound, _ := h.store.GetProjectMeta(store.MetaKeyReindexRequired)
-		return reindexFound && reindexVal == "true"
-	}
-	if h.workspace != nil {
-		for _, p := range h.workspace.Projects {
-			reindexVal, reindexFound, _ := p.Store.GetProjectMeta(store.MetaKeyReindexRequired)
-			if reindexFound && reindexVal == "true" {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func (h *handler) getMetadataFilteredNodes(st *store.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) ([]store.Node, error) {
@@ -316,69 +297,16 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err)), nil
 		}
 		sb.WriteString("## DocGraph Workspace Status\n\n")
-		sb.WriteString("| Project | Files | Nodes | Edges | Unresolved | DB Size | Schema Version |\n")
-		sb.WriteString("|---------|-------|-------|-------|------------|--------|----------------|\n")
-
-		// Collect per-project schema info for warnings below.
-		type projectWarning struct {
-			name          string
-			reindexReason string
-			reindexScope  string
-			lastFailure   string
-		}
-		var warnings []projectWarning
+		sb.WriteString("| Project | Files | Nodes | Edges | Unresolved | DB Size |\n")
+		sb.WriteString("|---------|-------|-------|-------|------------|--------|\n")
 
 		for _, p := range h.workspace.Projects {
 			s, ok := allStats[p.Name]
 			if !ok {
 				continue
 			}
-			schemaVer, schemaName, _ := p.Store.SchemaVersion()
-			var schemaCol string
-			if schemaVer == 0 {
-				schemaCol = "none"
-			} else {
-				schemaCol = fmt.Sprintf("v%d (%s)", schemaVer, schemaName)
-			}
-			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %d | %s | %s |\n",
-				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes), schemaCol))
-
-			// Collect warnings.
-			reindexVal, reindexFound, _ := p.Store.GetProjectMeta(store.MetaKeyReindexRequired)
-			lastFailure, failureFound, _ := p.Store.GetProjectMeta(store.MetaKeyMigrationLastFailure)
-			if (reindexFound && reindexVal == "true") || (failureFound && lastFailure != "") {
-				w := projectWarning{name: p.Name}
-				if reindexFound && reindexVal == "true" {
-					w.reindexReason, _, _ = p.Store.GetProjectMeta(store.MetaKeyReindexReason)
-					w.reindexScope, _, _ = p.Store.GetProjectMeta(store.MetaKeyReindexScope)
-				}
-				if failureFound {
-					w.lastFailure = lastFailure
-				}
-				warnings = append(warnings, w)
-			}
-		}
-
-		// Append warnings if any projects need attention.
-		if len(warnings) > 0 {
-			sb.WriteString("\n### Warnings\n")
-			for _, w := range warnings {
-				sb.WriteString(fmt.Sprintf("\n**%s**\n", w.name))
-				if w.reindexReason != "" || w.reindexScope != "" || w.lastFailure == "" {
-					sb.WriteString("Reindex required: yes\n")
-					if w.reindexReason != "" {
-						sb.WriteString(fmt.Sprintf("  Reason: %s\n", w.reindexReason))
-					}
-					scope := w.reindexScope
-					if scope == "" {
-						scope = "unknown"
-					}
-					sb.WriteString(fmt.Sprintf("  Scope: %s\n", scope))
-				}
-				if w.lastFailure != "" {
-					sb.WriteString(fmt.Sprintf("Last migration failure: %s\n", w.lastFailure))
-				}
-			}
+			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %d | %s |\n",
+				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes)))
 		}
 
 		// Neural embeddings — fan-out across all projects.
@@ -428,46 +356,11 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			appendEmbeddingStats(&sb, embStats)
 		}
 
-		// Schema / migration section.
-		schemaVer, schemaName, _ := h.store.SchemaVersion()
-		reindexVal, reindexFound, _ := h.store.GetProjectMeta(store.MetaKeyReindexRequired)
-		lastFailure, failureFound, _ := h.store.GetProjectMeta(store.MetaKeyMigrationLastFailure)
-
-		sb.WriteString("\n### Schema\n")
-		if schemaVer == 0 {
-			sb.WriteString("Schema version: none (pre-migration DB)\n")
-		} else {
-			sb.WriteString(fmt.Sprintf("Schema version: v%d (%s)\n", schemaVer, schemaName))
-		}
-		reindexRequired := reindexFound && reindexVal == "true"
-		if reindexRequired {
-			sb.WriteString("Reindex required: yes\n")
-			if reason, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexReason); reason != "" {
-				sb.WriteString(fmt.Sprintf("  Reason: %s\n", reason))
-			}
-			scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope)
-			if scope == "" {
-				scope = "unknown"
-			}
-			sb.WriteString(fmt.Sprintf("  Scope: %s\n", scope))
-		} else {
-			sb.WriteString("Reindex required: no\n")
-		}
-		if failureFound && lastFailure != "" {
-			sb.WriteString(fmt.Sprintf("Last migration failure: %s\n", lastFailure))
-		}
-
 		// Metadata index stats.
 		if metaStats, err := h.store.GetMetadataStats(); err == nil {
 			sb.WriteString("\n### Metadata Index\n")
 			sb.WriteString(fmt.Sprintf("Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs))
 			sb.WriteString(fmt.Sprintf("Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs))
-			if reindexRequired {
-				scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope)
-				if scope == "metadata" {
-					sb.WriteString("> metadata reindex pending — run `docgraph index --force`\n")
-				}
-			}
 		}
 
 		if qualityStats, err := h.store.GetMetadataQualityStats(time.Time{}); err == nil {

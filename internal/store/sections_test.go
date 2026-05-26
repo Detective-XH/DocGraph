@@ -19,67 +19,7 @@ func sectionChunk(nodeID, filePath, contentHash, sectionHash, headingPath, text 
 	}
 }
 
-func getMetaValue(t *testing.T, st *Store, key string) (string, bool) {
-	t.Helper()
-	var val string
-	err := st.db.QueryRow(`SELECT value FROM project_metadata WHERE key = ?`, key).Scan(&val)
-	if err != nil {
-		return "", false
-	}
-	return val, true
-}
-
-// ── Test 1: Migration 004 applies on fresh DB; idempotent on second open ─────
-
-func TestMigration004_FreshDB(t *testing.T) {
-	db := openRawDB(t)
-
-	if err := RunMigrations(db); err != nil {
-		t.Fatalf("RunMigrations on fresh DB: %v", err)
-	}
-
-	// 10 migration rows (001–010).
-	if n := countMigrationRows(db); n != 10 {
-		t.Errorf("expected 10 migration rows, got %d", n)
-	}
-
-	// PRAGMA user_version = 10.
-	if v := getUserVersion(db); v != 10 {
-		t.Errorf("expected user_version=10, got %d", v)
-	}
-
-	// section_chunks table must exist.
-	if !tableExists(db, "section_chunks") {
-		t.Error("section_chunks table not found after migration 004")
-	}
-
-	// document_metadata and governance_metadata tables must exist.
-	if !tableExists(db, "document_metadata") {
-		t.Error("document_metadata table not found after migration 005")
-	}
-	if !tableExists(db, "governance_metadata") {
-		t.Error("governance_metadata table not found after migration 006")
-	}
-	if !tableExists(db, "research_metadata") {
-		t.Error("research_metadata table not found after migration 007")
-	}
-	if !tableExists(db, "domain_packs") {
-		t.Error("domain_packs table not found after migration 008")
-	}
-	if !tableExists(db, "section_chunks_fts") {
-		t.Error("section_chunks_fts table not found after migration 009")
-	}
-
-	// Idempotent: run again, still 10 rows, no error.
-	if err := RunMigrations(db); err != nil {
-		t.Fatalf("second RunMigrations: %v", err)
-	}
-	if n := countMigrationRows(db); n != 10 {
-		t.Errorf("expected 10 migration rows after double run, got %d", n)
-	}
-}
-
-// ── Test 2: FK cascade: delete node → chunk disappears ───────────────────────
+// ── Test 1: FK cascade: delete node → chunk disappears ───────────────────────
 
 func TestMigration004_FKCascade(t *testing.T) {
 	st := tempStore(t)
@@ -269,40 +209,7 @@ func TestDeleteSectionChunksByFile(t *testing.T) {
 	}
 }
 
-// ── Test 7: Reindex markers present in project_metadata after all migrations ──
-// Migration 005 runs after 004 and overwrites reindex_scope to "metadata", so
-// a full RunMigrations (all 6) will show scope="metadata" not "sections".
-
-func TestMigration004_ReindexMarkers(t *testing.T) {
-	st := tempStore(t)
-
-	val, found := getMetaValue(t, st, MetaKeyReindexRequired)
-	if !found {
-		t.Fatal("reindex_required marker not found in project_metadata")
-	}
-	if val != "true" {
-		t.Errorf("reindex_required: got %q want %q", val, "true")
-	}
-
-	// Migration 005 overwrites the scope written by 004 ("sections" → "metadata").
-	scope, found := getMetaValue(t, st, MetaKeyReindexScope)
-	if !found {
-		t.Fatal("reindex_scope marker not found in project_metadata")
-	}
-	if scope != "metadata" {
-		t.Errorf("reindex_scope: got %q want %q", scope, "metadata")
-	}
-
-	reason, found := getMetaValue(t, st, MetaKeyReindexReason)
-	if !found {
-		t.Fatal("reindex_reason marker not found in project_metadata")
-	}
-	if reason == "" {
-		t.Error("reindex_reason should not be empty")
-	}
-}
-
-// ── Test 8: UpsertSectionChunks with empty slice is a no-op ──────────────────
+// ── Test 7: UpsertSectionChunks with empty slice is a no-op ──────────────────
 
 func TestUpsertSectionChunks_Empty(t *testing.T) {
 	st := tempStore(t)

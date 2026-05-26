@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,10 +12,6 @@ import (
 
 	_ "modernc.org/sqlite"
 )
-
-// ErrCorruptDB is returned by validateDB when core tables are absent from a
-// non-empty database file — indicating a corrupt or truncated DB.
-var ErrCorruptDB = errors.New("docgraph: database file is corrupt or missing core tables")
 
 type Node struct {
 	ID            string
@@ -82,20 +77,6 @@ type Store struct {
 }
 
 func Open(dbPath string) (*Store, error) {
-	switch err := validateDB(dbPath); {
-	case err == nil:
-		// healthy or fresh file — proceed
-	case errors.Is(err, ErrFutureSchema):
-		return nil, err // do NOT remove the file
-	case errors.Is(err, ErrCorruptDB):
-		os.Remove(dbPath)
-		os.Remove(dbPath + "-wal")
-		os.Remove(dbPath + "-shm")
-		// fall through and open a fresh DB
-	default:
-		return nil, err
-	}
-
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
@@ -115,9 +96,9 @@ func Open(dbPath string) (*Store, error) {
 		}
 	}
 
-	if err := RunMigrations(db); err != nil {
+	if err := bootstrapSchema(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate schema: %w", err)
+		return nil, fmt.Errorf("bootstrap schema: %w", err)
 	}
 
 	st := &Store{db: db}
@@ -127,53 +108,6 @@ func Open(dbPath string) (*Store, error) {
 	}
 
 	return st, nil
-}
-
-func validateDB(dbPath string) error {
-	// 1. Fresh file — nothing to validate.
-	fi, err := os.Stat(dbPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	// 2. Open read-only for inspection.
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro")
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-
-	// 3. Check for future schema (DB was created by a newer binary).
-	var hasMigrationsTable int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_migrations'`).Scan(&hasMigrationsTable)
-	if hasMigrationsTable > 0 {
-		// Determine the highest known version in this binary.
-		highestKnown := 0
-		for _, m := range migrations {
-			if m.Version > highestKnown {
-				highestKnown = m.Version
-			}
-		}
-		var maxApplied int
-		if err := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&maxApplied); err == nil {
-			if maxApplied > highestKnown {
-				return ErrFutureSchema
-			}
-		}
-	}
-
-	// 4. Core tables missing in a non-empty file → corrupt.
-	var coreCount int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('nodes','edges','files')`).Scan(&coreCount)
-	if coreCount != 3 && fi.Size() > 0 {
-		return ErrCorruptDB
-	}
-
-	// 5. Otherwise healthy (old pre-migration DB, fresh empty file, or already-migrated DB).
-	return nil
 }
 
 func (s *Store) Close() error {
@@ -487,21 +421,6 @@ func (s *Store) DeleteProjectMeta(keys ...string) error {
 	return nil
 }
 
-// SchemaVersion returns the latest applied migration version and name.
-// Returns (0, "", nil) if schema_migrations table is empty or missing.
-func (s *Store) SchemaVersion() (version int, name string, err error) {
-	row := s.db.QueryRow(`SELECT version, name FROM schema_migrations ORDER BY version DESC LIMIT 1`)
-	err = row.Scan(&version, &name)
-	if err == sql.ErrNoRows {
-		return 0, "", nil
-	}
-	if err != nil {
-		// Table may not exist yet for a legacy DB that has not been migrated.
-		return 0, "", nil
-	}
-	return version, name, nil
-}
-
 // ReadSectionContent reads the content of a section from its source file.
 // filePath is relative to projectRoot. startLine and endLine are 1-based.
 // If the result exceeds maxBytes, it is truncated with a marker.
@@ -548,14 +467,8 @@ func ReadSectionContent(filePath string, startLine, endLine int, projectRoot str
 	lines := strings.Split(string(data), "\n")
 
 	// Clamp to valid range (1-based to 0-based).
-	start := startLine - 1
-	if start < 0 {
-		start = 0
-	}
-	end := endLine
-	if end > len(lines) {
-		end = len(lines)
-	}
+	start := max(startLine-1, 0)
+	end := min(endLine, len(lines))
 	if start >= end {
 		return "", nil
 	}

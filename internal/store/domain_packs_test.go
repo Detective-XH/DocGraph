@@ -114,15 +114,13 @@ func TestSyncDomainPacksAcceptsOptionalPack(t *testing.T) {
 	}
 }
 
-func TestMigration008CreatesDomainPackTables(t *testing.T) {
-	db := openRawDB(t)
-	if err := RunMigrations(db); err != nil {
-		t.Fatalf("RunMigrations: %v", err)
-	}
-
+func TestDomainPackTablesExist(t *testing.T) {
+	st := openTestStore(t)
 	for _, tbl := range []string{"domain_packs", "domain_pack_fields"} {
-		if !tableExists(db, tbl) {
-			t.Fatalf("table %q not found after migration 008", tbl)
+		var n int
+		err := st.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&n)
+		if err != nil || n == 0 {
+			t.Fatalf("table %q not found in schema", tbl)
 		}
 	}
 }

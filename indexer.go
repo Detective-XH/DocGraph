@@ -186,22 +186,6 @@ func indexStore(root string, st *store.Store) error {
 			fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
 		}
 
-		// Clear reindex_required marker only when every file was fully reparsed
-		// (nSkip == 0), meaning section_chunks and document_metadata are complete.
-		// If any files were skipped, the marker stays so the user knows a
-		// --force reindex is still needed.
-		if nSkip == 0 {
-			scope, _, _ := st.GetProjectMeta(store.MetaKeyReindexScope)
-			if scope == "sections" || scope == "metadata" {
-				if err := st.DeleteProjectMeta(
-					store.MetaKeyReindexRequired,
-					store.MetaKeyReindexScope,
-					store.MetaKeyReindexReason,
-				); err != nil {
-					fmt.Fprintf(os.Stderr, "clear reindex marker: %v\n", err)
-				}
-			}
-		}
 	}
 	return nil
 }
