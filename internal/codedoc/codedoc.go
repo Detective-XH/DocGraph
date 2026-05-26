@@ -32,7 +32,7 @@ const (
 	FileTypeSource = "source"
 	FileTypeTest   = "test"
 
-	maxTextBytes = 10_240 // H-19 10 KB cap (matches section_chunks cap)
+	maxTextBytes = 10_240 // 10 KB cap to bound memory per section chunk
 	maxEntries   = 500    // max comment blocks per file
 )
 

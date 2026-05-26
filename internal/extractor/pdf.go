@@ -17,8 +17,8 @@ import (
 
 const (
 	pdfMaxPages    = 500
-	pdfMaxTextLen  = 10 * 1024 // H-19: 10 KB per section chunk
-	pdfExcerptLen  = 500       // H-3
+	pdfMaxTextLen  = 10 * 1024 // 10 KB per section chunk
+	pdfExcerptLen  = 500       // 500 byte body excerpt cap
 	pdfScannedThreshold = 50   // avg chars/page below which we flag as image-only
 )
 
@@ -95,7 +95,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 	}
 	isScanned := numPages > 0 && avgChars < pdfScannedThreshold
 
-	// --- Body excerpt from page 1 text (H-3) ---
+	// --- Body excerpt from page 1 text (500 byte cap) ---
 	var bodyExcerpt string
 	if len(pageTexts) > 0 {
 		t := strings.TrimSpace(pageTexts[0])

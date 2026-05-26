@@ -280,7 +280,7 @@ func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, max
 			if text == "" {
 				return
 			}
-			// Enforce the caller's maxBytes contract (chunk is bounded by H-19 ~10KB).
+			// Enforce the caller's maxBytes contract (chunks are bounded at ~10KB by the indexer).
 			if len(text) > maxBytes {
 				text = text[:maxBytes] + fmt.Sprintf("\n[content truncated at %d bytes, use Read tool for full text]", maxBytes)
 			}

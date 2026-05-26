@@ -188,4 +188,4 @@ ask the user before running `codegraph init -i`.
 | Code docs are shallow | `code_doc` indexes documentation surfaces, not type resolution, dataflow, or call graphs. |
 | Scanned PDFs | Image-only PDFs are flagged, not OCR'd. |
 | Short CJK queries | Queries under 3 characters fall back to LIKE. |
-| `code.*` drift findings require `code_doc` enabled | Zero findings on projects where `code_doc` is disabled; `findUnanchoredFeature` also requires F-21 governance metadata. |
+| `code.*` drift findings require `code_doc` enabled | Zero findings on projects where `code_doc` is disabled; `findUnanchoredFeature` also requires governance metadata (frontmatter `status` field). |

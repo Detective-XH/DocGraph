@@ -115,7 +115,7 @@ func docxSectionHash(text string) string {
 }
 
 // capText truncates s to at most max bytes, appending a truncation marker.
-// Used for SectionChunk.Text (H-19). Not used for BodyExcerpt.
+// Used for SectionChunk.Text (10 KB cap). Not used for BodyExcerpt.
 func capText(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -124,7 +124,7 @@ func capText(s string, max int) string {
 }
 
 // truncateExcerpt truncates s to at most max bytes without a marker.
-// Used for BodyExcerpt (H-3 cap 500 bytes).
+// Used for BodyExcerpt (500 byte cap).
 func truncateExcerpt(s string, max int) string {
 	if len(s) <= max {
 		return s
@@ -441,7 +441,7 @@ func buildDocxContainmentEdges(docID string, headings []store.Node) []store.Edge
 // as the concatenation of all body text for the document chunk, and heading name
 // for heading chunks.
 func buildDocxSectionChunks(docNode store.Node, headings []store.Node, contentHash string, bodyExcerpt string, bodyParts []string) []store.SectionChunk {
-	// Document chunk: full body text (capped at H-19).
+	// Document chunk: full body text (10 KB cap).
 	docText := capText(strings.Join(bodyParts, "\n"), docxSectionTextCap)
 	chunks := []store.SectionChunk{
 		{

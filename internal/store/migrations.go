@@ -454,7 +454,7 @@ func runMigrationsList(db *sql.DB, migs []Migration) error {
 		var storedChecksum string
 		err := db.QueryRow(`SELECT checksum FROM schema_migrations WHERE version = ?`, m.Version).Scan(&storedChecksum)
 		if err == nil {
-			// Already recorded — verify checksum (H-13 silent drift detection).
+			// Already recorded — verify checksum to detect silent migration drift.
 			if storedChecksum != m.Checksum {
 				return fmt.Errorf("%w: version %d (%s)", ErrChecksumMismatch, m.Version, m.Name)
 			}

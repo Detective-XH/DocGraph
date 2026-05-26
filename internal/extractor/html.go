@@ -14,7 +14,7 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
-const htmlSectionMaxBytes = 10240 // H-19
+const htmlSectionMaxBytes = 10240 // 10 KB section text cap
 
 func extractHTML(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
 	_ = absPath

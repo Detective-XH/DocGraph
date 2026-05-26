@@ -55,7 +55,7 @@ func (s *Store) collectEntityFilteredCandidates(
 }
 
 // nodeIDsByEntityID returns the distinct node_ids mentioned by a given entity.
-// Capped at 1000 rows (consistent with H-2 FTS5 query cap).
+// Capped at 1000 rows to match the FTS5 query result cap.
 func (s *Store) nodeIDsByEntityID(entityID string) ([]string, error) {
 	rows, err := s.db.Query(
 		`SELECT DISTINCT node_id FROM entity_mentions WHERE entity_id = ? LIMIT 1000`,
@@ -77,7 +77,7 @@ func (s *Store) nodeIDsByEntityID(entityID string) ([]string, error) {
 }
 
 // entityIDsByType returns entity UUIDs for a given entity_type.
-// Capped at 1000 rows (consistent with H-2 FTS5 query cap).
+// Capped at 1000 rows to match the FTS5 query result cap.
 func (s *Store) entityIDsByType(entityType string) ([]string, error) {
 	rows, err := s.db.Query(
 		`SELECT id FROM entities WHERE entity_type = ? LIMIT 1000`,

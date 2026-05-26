@@ -6,7 +6,7 @@ import (
 )
 
 // SectionChunk is an indexed snapshot of a section's content captured at index time.
-// It backs reads and diffs without live file I/O (resolves TOCTOU limitation L-8).
+// It backs reads and diffs without live file I/O, eliminating the TOCTOU race on line ranges.
 //
 // start_line and end_line are -1 for non-line-based sources.
 type SectionChunk struct {
@@ -17,7 +17,7 @@ type SectionChunk struct {
 	ContentHash string // file-level SHA-256 at index time
 	SectionHash string // SHA-256 of section text; drift/diff primitive
 	HeadingPath string // breadcrumb "Parent > Child"; "" for document nodes
-	Text        string // bounded section content (≤ 10KB, H-19)
+	Text        string // bounded section content (≤ 10KB)
 }
 
 // UpsertSectionChunks inserts or replaces all chunks in a single transaction.
