@@ -198,6 +198,150 @@ func TestSearchGraphRerankingIncomingReferences(t *testing.T) {
 	}
 }
 
+func TestSearchGovernanceAwareRanking(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{ID: "draft.md", Kind: "document", Name: "Incident Policy", QualifiedName: "draft.md", FilePath: "draft.md", StartLine: 1, EndLine: 5, BodyExcerpt: "incident response policy", UpdatedAt: 1},
+		{ID: "approved.md", Kind: "document", Name: "Incident Policy", QualifiedName: "approved.md", FilePath: "approved.md", StartLine: 1, EndLine: 5, BodyExcerpt: "incident response policy", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	if err := st.UpsertGovernanceMetadata("draft.md", []MetadataTuple{
+		{Key: "status", Value: "draft", ValueType: "string", Source: "frontmatter"},
+		{Key: "sensitivity", Value: "restricted", ValueType: "string", Source: "frontmatter"},
+		{Key: "canonical_source", Value: "false", ValueType: "bool", Source: "frontmatter"},
+		{Key: "review_due", Value: "2020-01-01", ValueType: "date", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertGovernanceMetadata draft: %v", err)
+	}
+	if err := st.UpsertGovernanceMetadata("approved.md", []MetadataTuple{
+		{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
+		{Key: "sensitivity", Value: "public", ValueType: "string", Source: "frontmatter"},
+		{Key: "canonical_source", Value: "true", ValueType: "bool", Source: "frontmatter"},
+		{Key: "effective_date", Value: "2025-01-01", ValueType: "date", Source: "frontmatter"},
+		{Key: "review_due", Value: "2099-01-01", ValueType: "date", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertGovernanceMetadata approved: %v", err)
+	}
+
+	results, err := st.SearchWithOptions(SearchOptions{
+		Query: "incident response policy",
+		Kind:  "document",
+		Limit: 10,
+		Governance: GovernanceSearchOptions{
+			AsOfDate: "2026-05-26",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchWithOptions failed: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected two results, got %d", len(results))
+	}
+	if results[0].Node.ID != "approved.md" {
+		t.Fatalf("expected approved canonical document first, got %q", results[0].Node.ID)
+	}
+}
+
+func TestSearchGovernanceFiltersAudienceAndEffectiveDate(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{ID: "future.md", Kind: "document", Name: "Access Policy", QualifiedName: "future.md", FilePath: "future.md", StartLine: 1, EndLine: 5, BodyExcerpt: "access policy", UpdatedAt: 1},
+		{ID: "restricted.md", Kind: "document", Name: "Access Policy", QualifiedName: "restricted.md", FilePath: "restricted.md", StartLine: 1, EndLine: 5, BodyExcerpt: "access policy", UpdatedAt: 1},
+		{ID: "analyst.md", Kind: "document", Name: "Access Policy", QualifiedName: "analyst.md", FilePath: "analyst.md", StartLine: 1, EndLine: 5, BodyExcerpt: "access policy", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	fixtures := map[string][]MetadataTuple{
+		"future.md": {
+			{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
+			{Key: "effective_date", Value: "2030-01-01", ValueType: "date", Source: "frontmatter"},
+			{Key: "allowed_audience", Value: "analyst", ValueType: "list", Source: "frontmatter"},
+		},
+		"restricted.md": {
+			{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
+			{Key: "effective_date", Value: "2024-01-01", ValueType: "date", Source: "frontmatter"},
+			{Key: "allowed_audience", Value: "executive", ValueType: "list", Source: "frontmatter"},
+		},
+		"analyst.md": {
+			{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
+			{Key: "effective_date", Value: "2024-01-01", ValueType: "date", Source: "frontmatter"},
+			{Key: "allowed_audience", Value: "analyst,security", ValueType: "list", Source: "frontmatter"},
+		},
+	}
+	for id, tuples := range fixtures {
+		if err := st.UpsertGovernanceMetadata(id, tuples); err != nil {
+			t.Fatalf("UpsertGovernanceMetadata %s: %v", id, err)
+		}
+	}
+
+	results, err := st.SearchWithOptions(SearchOptions{
+		Query: "access policy",
+		Kind:  "document",
+		Limit: 10,
+		Governance: GovernanceSearchOptions{
+			AllowedAudience: "analyst",
+			AsOfDate:        "2026-05-26",
+		},
+	})
+	if err != nil {
+		t.Fatalf("SearchWithOptions failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one audience/effective-date result, got %d: %#v", len(results), results)
+	}
+	if results[0].Node.ID != "analyst.md" {
+		t.Fatalf("expected analyst.md, got %q", results[0].Node.ID)
+	}
+}
+
+func TestSearchResearchAwareRanking(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{ID: "low.md", Kind: "document", Name: "Supply Assessment", QualifiedName: "low.md", FilePath: "low.md", StartLine: 1, EndLine: 5, BodyExcerpt: "supply chain assessment", UpdatedAt: 1},
+		{ID: "high.md", Kind: "document", Name: "Supply Assessment", QualifiedName: "high.md", FilePath: "high.md", StartLine: 1, EndLine: 5, BodyExcerpt: "supply chain assessment", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	if err := st.UpsertResearchMetadata("low.md", []MetadataTuple{
+		{Key: "source_type", Value: "social", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "low", ValueType: "string", Source: "frontmatter"},
+		{Key: "analyst_status", Value: "draft", ValueType: "string", Source: "frontmatter"},
+		{Key: "valid_until", Value: "2020-01-01", ValueType: "date", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertResearchMetadata low: %v", err)
+	}
+	if err := st.UpsertResearchMetadata("high.md", []MetadataTuple{
+		{Key: "source_type", Value: "primary", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+		{Key: "analyst_status", Value: "verified", ValueType: "string", Source: "frontmatter"},
+		{Key: "valid_until", Value: "2099-01-01", ValueType: "date", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertResearchMetadata high: %v", err)
+	}
+
+	results, err := st.SearchWithOptions(SearchOptions{
+		Query: "supply chain assessment",
+		Kind:  "document",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("SearchWithOptions failed: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected two results, got %d", len(results))
+	}
+	if results[0].Node.ID != "high.md" {
+		t.Fatalf("expected high-confidence primary source first, got %q", results[0].Node.ID)
+	}
+}
+
 func TestSearchTagExpansionReturnsTaggedDocument(t *testing.T) {
 	st := tempStore(t)
 

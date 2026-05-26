@@ -16,12 +16,15 @@ import (
 // ---------------------------------------------------------------------------
 
 var searchTool = mcp.NewTool("docgraph_search",
-	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use status/sensitivity for governance filters and claim_id/source_type/confidence/analyst_status for research provenance filters."),
+	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use governance and research filters to constrain retrieval without adding separate tools."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms")),
 	mcp.WithString("kind", mcp.Description("Filter by node kind: document, heading, definition, tag")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
 	mcp.WithString("status", mcp.Description("Filter by governance status (e.g. approved, draft, superseded). Requires metadata reindex.")),
 	mcp.WithString("sensitivity", mcp.Description("Filter by sensitivity (e.g. public, internal, confidential, restricted). Requires metadata reindex.")),
+	mcp.WithString("canonical_source", mcp.Description("Filter by canonical source marker or value. Requires metadata reindex.")),
+	mcp.WithString("allowed_audience", mcp.Description("Filter to documents available to an audience label. Public documents are included.")),
+	mcp.WithString("as_of_date", mcp.Description("Evaluate effective_date and valid_until against YYYY-MM-DD.")),
 	mcp.WithString("claim_id", mcp.Description("Filter by research claim_id. Requires metadata reindex.")),
 	mcp.WithString("source_type", mcp.Description("Filter by research source_type (e.g. primary, secondary, internal). Requires metadata reindex.")),
 	mcp.WithString("confidence", mcp.Description("Filter by research confidence (e.g. high, medium, low). Requires metadata reindex.")),
@@ -54,81 +57,56 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	limit := getIntArg(args, "limit", 10)
 	statusFilter := sanitizeArg(getStringArg(args, "status", ""), 100)
 	sensitivityFilter := sanitizeArg(getStringArg(args, "sensitivity", ""), 100)
+	canonicalSourceFilter := sanitizeArg(getStringArg(args, "canonical_source", ""), 300)
+	allowedAudienceFilter := sanitizeArg(getStringArg(args, "allowed_audience", ""), 100)
+	asOfDateFilter := sanitizeArg(getStringArg(args, "as_of_date", ""), 20)
 	claimIDFilter := sanitizeArg(getStringArg(args, "claim_id", ""), 100)
 	sourceTypeFilter := sanitizeArg(getStringArg(args, "source_type", ""), 100)
 	confidenceFilter := sanitizeArg(getStringArg(args, "confidence", ""), 100)
 	analystStatusFilter := sanitizeArg(getStringArg(args, "analyst_status", ""), 100)
 
-	useGovernanceFilter := statusFilter != "" || sensitivityFilter != ""
-	useResearchFilter := claimIDFilter != "" || sourceTypeFilter != "" || confidenceFilter != "" || analystStatusFilter != ""
+	opts := store.SearchOptions{
+		Query: query,
+		Kind:  kind,
+		Limit: limit,
+		Governance: store.GovernanceSearchOptions{
+			Status:          statusFilter,
+			Sensitivity:     sensitivityFilter,
+			CanonicalSource: canonicalSourceFilter,
+			AllowedAudience: allowedAudienceFilter,
+			AsOfDate:        asOfDateFilter,
+		},
+		Research: store.ResearchSearchOptions{
+			ClaimID:       claimIDFilter,
+			SourceType:    sourceTypeFilter,
+			Confidence:    confidenceFilter,
+			AnalystStatus: analystStatusFilter,
+		},
+	}
+	useMetadataFilters := opts.HasMetadataFilters()
 
 	var sb strings.Builder
 
-	if useGovernanceFilter || useResearchFilter {
-		var candidateNodes []store.Node
-		if h.workspace != nil {
-			candidateNodes = h.getWorkspaceMetadataFilteredNodes(statusFilter, sensitivityFilter, claimIDFilter, sourceTypeFilter, confidenceFilter, analystStatusFilter, 0)
-		} else {
-			ns, err := h.getMetadataFilteredNodes(h.store, statusFilter, sensitivityFilter, claimIDFilter, sourceTypeFilter, confidenceFilter, analystStatusFilter, 0)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("metadata filter failed: %v", err)), nil
-			}
-			candidateNodes = ns
-		}
-
-		// Metadata filters are applied before the text query so a low-ranked but
-		// valid metadata hit cannot disappear behind an arbitrary FTS cap.
-		var filtered []store.Node
-		for _, n := range candidateNodes {
-			if nodeMatchesSearchQuery(n, query, kind) {
-				filtered = append(filtered, n)
-			}
-		}
-		if len(filtered) > limit {
-			filtered = filtered[:limit]
-		}
-
-		filters := fmt.Sprintf("status=%q sensitivity=%q claim_id=%q source_type=%q confidence=%q analyst_status=%q",
-			statusFilter, sensitivityFilter, claimIDFilter, sourceTypeFilter, confidenceFilter, analystStatusFilter)
-		sb.WriteString(fmt.Sprintf("## Search Results for %q [metadata filter: %s]\n\nFound %d results.\n", query, filters, len(filtered)))
-		if len(filtered) == 0 {
-			reindexVal, reindexFound, _ := func() (string, bool, error) {
-				if h.store != nil {
-					return h.store.GetProjectMeta(store.MetaKeyReindexRequired)
-				}
-				return "", false, nil
-			}()
-			if reindexFound && reindexVal == "true" {
-				sb.WriteString("\n> **Note:** metadata reindex pending — run `docgraph index --force` to populate governance filters.\n")
-			}
-		}
-		for i, n := range filtered {
-			path := formatNodePath(n)
-			sb.WriteString(fmt.Sprintf("\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine))
-			if n.BodyExcerpt != "" {
-				firstLine := strings.SplitN(strings.TrimRight(n.BodyExcerpt, "\n"), "\n", 2)[0]
-				if len(firstLine) > 100 {
-					firstLine = firstLine[:100] + "..."
-				}
-				sb.WriteString(fmt.Sprintf("   > %s\n", firstLine))
-			}
-		}
-		return mcp.NewToolResultText(sb.String()), nil
-	}
-
-	// Standard FTS path.
 	var results []store.SearchResult
 	var err error
 	if h.workspace != nil {
-		results, err = h.workspace.Search(query, kind, limit)
+		results, err = h.workspace.SearchWithOptions(opts)
 	} else {
-		results, err = h.store.Search(query, kind, limit)
+		results, err = h.store.SearchWithOptions(opts)
 	}
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	sb.WriteString(fmt.Sprintf("## Search Results for %q\n\nFound %d results.\n", query, len(results)))
+	if useMetadataFilters {
+		sb.WriteString(fmt.Sprintf("## Search Results for %q [metadata filter: %s]\n\nFound %d results.\n",
+			query, describeSearchFilters(opts), len(results)))
+		if len(results) == 0 && h.metadataReindexPending() {
+			sb.WriteString("\n> **Note:** metadata reindex pending — run `docgraph index --force` to populate governance filters.\n")
+		}
+	} else {
+		sb.WriteString(fmt.Sprintf("## Search Results for %q\n\nFound %d results.\n", query, len(results)))
+	}
 
 	for i, sr := range results {
 		n := sr.Node
@@ -191,6 +169,37 @@ func formatNodePath(n store.Node) string {
 		return n.FilePath
 	}
 	return "[" + n.ProjectName + "] " + n.FilePath
+}
+
+func describeSearchFilters(opts store.SearchOptions) string {
+	parts := []string{
+		fmt.Sprintf("status=%q", opts.Governance.Status),
+		fmt.Sprintf("sensitivity=%q", opts.Governance.Sensitivity),
+		fmt.Sprintf("canonical_source=%q", opts.Governance.CanonicalSource),
+		fmt.Sprintf("allowed_audience=%q", opts.Governance.AllowedAudience),
+		fmt.Sprintf("as_of_date=%q", opts.Governance.AsOfDate),
+		fmt.Sprintf("claim_id=%q", opts.Research.ClaimID),
+		fmt.Sprintf("source_type=%q", opts.Research.SourceType),
+		fmt.Sprintf("confidence=%q", opts.Research.Confidence),
+		fmt.Sprintf("analyst_status=%q", opts.Research.AnalystStatus),
+	}
+	return strings.Join(parts, " ")
+}
+
+func (h *handler) metadataReindexPending() bool {
+	if h.store != nil {
+		reindexVal, reindexFound, _ := h.store.GetProjectMeta(store.MetaKeyReindexRequired)
+		return reindexFound && reindexVal == "true"
+	}
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			reindexVal, reindexFound, _ := p.Store.GetProjectMeta(store.MetaKeyReindexRequired)
+			if reindexFound && reindexVal == "true" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (h *handler) getMetadataFilteredNodes(st *store.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) ([]store.Node, error) {

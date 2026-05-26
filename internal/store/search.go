@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -23,10 +24,47 @@ const (
 // new MCP tools. F-25 can add governance-aware ranking inputs here while the
 // existing tool surface continues to call Store.Search.
 type SearchOptions struct {
-	Query  string
-	Kind   string
-	Limit  int
-	Intent SearchIntent
+	Query      string
+	Kind       string
+	Limit      int
+	Intent     SearchIntent
+	Governance GovernanceSearchOptions
+	Research   ResearchSearchOptions
+}
+
+// GovernanceSearchOptions carries F-25 governance retrieval constraints. Empty
+// fields are ignored so existing callers keep the pre-F-25 behavior while newer
+// tools can opt into policy-aware filtering without adding a top-level MCP tool.
+type GovernanceSearchOptions struct {
+	Status          string
+	Sensitivity     string
+	CanonicalSource string
+	AllowedAudience string
+	AsOfDate        string
+}
+
+// ResearchSearchOptions carries F-25 research provenance constraints. These
+// fields intentionally mirror the typed projection columns so future domain
+// packs can map their own fields into the same retrieval policy layer.
+type ResearchSearchOptions struct {
+	ClaimID       string
+	SourceType    string
+	Confidence    string
+	AnalystStatus string
+}
+
+// HasMetadataFilters reports whether SearchWithOptions must enforce typed
+// metadata constraints in addition to relevance ranking.
+func (opts SearchOptions) HasMetadataFilters() bool {
+	return opts.Governance.Status != "" ||
+		opts.Governance.Sensitivity != "" ||
+		opts.Governance.CanonicalSource != "" ||
+		opts.Governance.AllowedAudience != "" ||
+		opts.Governance.AsOfDate != "" ||
+		opts.Research.ClaimID != "" ||
+		opts.Research.SourceType != "" ||
+		opts.Research.Confidence != "" ||
+		opts.Research.AnalystStatus != ""
 }
 
 type searchRequest struct {
@@ -38,6 +76,10 @@ type searchRequest struct {
 	ExpandedTerms  []string
 	Short          bool
 	CandidateLimit int
+	Governance     GovernanceSearchOptions
+	Research       ResearchSearchOptions
+	HasFilters     bool
+	AsOf           time.Time
 }
 
 type searchCandidate struct {
@@ -47,6 +89,8 @@ type searchCandidate struct {
 	Sources     map[string]bool
 	HeadingPath string
 	SectionText string
+	Governance  *GovernanceRecord
+	Research    *ResearchRecord
 }
 
 func (s *Store) Search(query string, kind string, limit int) ([]SearchResult, error) {
@@ -84,13 +128,25 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 	if err := s.collectDefinitionContextCandidates(req, candidates); err != nil {
 		return nil, err
 	}
+	if req.HasFilters {
+		if err := s.collectMetadataFilteredCandidates(req, candidates); err != nil {
+			return nil, err
+		}
+	}
 
 	results := make([]SearchResult, 0, len(candidates))
 	for _, c := range candidates {
+		if err := s.loadRetrievalMetadata(c); err != nil {
+			return nil, err
+		}
+		if !metadataMatchesRequest(req, c) {
+			continue
+		}
 		s.applyFieldRanking(req, c)
 		if err := s.applyGraphReranking(req, c); err != nil {
 			return nil, err
 		}
+		s.applyMetadataReranking(req, c)
 		results = append(results, SearchResult{Node: c.Node, Rank: -c.Score})
 	}
 
@@ -121,12 +177,48 @@ func newSearchRequest(opts SearchOptions) searchRequest {
 	if candidateLimit > 200 {
 		candidateLimit = 200
 	}
+	governance := trimGovernanceOptions(opts.Governance)
+	research := trimResearchOptions(opts.Research)
+	asOf := time.Now().UTC()
+	if governance.AsOfDate != "" {
+		if parsed, ok := parseSearchDate(governance.AsOfDate); ok {
+			asOf = parsed
+		} else {
+			governance.AsOfDate = ""
+		}
+	}
 	return searchRequest{
 		Query:          strings.TrimSpace(opts.Query),
 		Kind:           strings.TrimSpace(opts.Kind),
 		Limit:          limit,
 		Intent:         opts.Intent,
 		CandidateLimit: candidateLimit,
+		Governance:     governance,
+		Research:       research,
+		HasFilters: SearchOptions{
+			Governance: governance,
+			Research:   research,
+		}.HasMetadataFilters(),
+		AsOf: dateOnly(asOf),
+	}
+}
+
+func trimGovernanceOptions(opts GovernanceSearchOptions) GovernanceSearchOptions {
+	return GovernanceSearchOptions{
+		Status:          strings.TrimSpace(opts.Status),
+		Sensitivity:     strings.TrimSpace(opts.Sensitivity),
+		CanonicalSource: strings.TrimSpace(opts.CanonicalSource),
+		AllowedAudience: strings.TrimSpace(opts.AllowedAudience),
+		AsOfDate:        strings.TrimSpace(opts.AsOfDate),
+	}
+}
+
+func trimResearchOptions(opts ResearchSearchOptions) ResearchSearchOptions {
+	return ResearchSearchOptions{
+		ClaimID:       strings.TrimSpace(opts.ClaimID),
+		SourceType:    strings.TrimSpace(opts.SourceType),
+		Confidence:    strings.TrimSpace(opts.Confidence),
+		AnalystStatus: strings.TrimSpace(opts.AnalystStatus),
 	}
 }
 
@@ -435,6 +527,120 @@ func (s *Store) collectDefinitionContextCandidates(req searchRequest, candidates
 	return nil
 }
 
+func (s *Store) collectMetadataFilteredCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+	nodes, err := s.getNodesByRetrievalFilters(req)
+	if err != nil {
+		return err
+	}
+	for _, n := range nodes {
+		matches, headingPath, sectionText, err := s.nodeMatchesRetrievalQuery(req, n)
+		if err != nil {
+			return err
+		}
+		if !matches {
+			continue
+		}
+		c := addCandidate(candidates, n, "metadata_filter", 0)
+		c.Score += 16
+		c.HeadingPath = headingPath
+		c.SectionText = sectionText
+	}
+	return nil
+}
+
+func (s *Store) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
+	args := []interface{}{}
+	where := []string{"n.kind = 'document'"}
+	if req.Governance.Status != "" ||
+		req.Governance.Sensitivity != "" ||
+		req.Governance.CanonicalSource != "" ||
+		req.Governance.AllowedAudience != "" {
+		where = append(where, "gm.node_id IS NOT NULL")
+	}
+	if req.Research.ClaimID != "" ||
+		req.Research.SourceType != "" ||
+		req.Research.Confidence != "" ||
+		req.Research.AnalystStatus != "" {
+		where = append(where, "rm.node_id IS NOT NULL")
+	}
+	if req.Governance.Status != "" {
+		where = append(where, "lower(gm.status) = lower(?)")
+		args = append(args, req.Governance.Status)
+	}
+	if req.Governance.Sensitivity != "" {
+		where = append(where, "lower(gm.sensitivity) = lower(?)")
+		args = append(args, req.Governance.Sensitivity)
+	}
+	if req.Governance.CanonicalSource != "" {
+		where = append(where, "lower(gm.canonical_source) = lower(?)")
+		args = append(args, req.Governance.CanonicalSource)
+	}
+	if req.Governance.AsOfDate != "" {
+		where = append(where, "(gm.node_id IS NULL OR gm.effective_date = '' OR date(gm.effective_date) <= date(?))")
+		args = append(args, req.Governance.AsOfDate)
+		where = append(where, "(rm.node_id IS NULL OR rm.valid_until = '' OR date(rm.valid_until) >= date(?))")
+		args = append(args, req.Governance.AsOfDate)
+	}
+	if req.Research.ClaimID != "" {
+		where = append(where, "lower(rm.claim_id) = lower(?)")
+		args = append(args, req.Research.ClaimID)
+	}
+	if req.Research.SourceType != "" {
+		where = append(where, "lower(rm.source_type) = lower(?)")
+		args = append(args, req.Research.SourceType)
+	}
+	if req.Research.Confidence != "" {
+		where = append(where, "lower(rm.confidence) = lower(?)")
+		args = append(args, req.Research.Confidence)
+	}
+	if req.Research.AnalystStatus != "" {
+		where = append(where, "lower(rm.analyst_status) = lower(?)")
+		args = append(args, req.Research.AnalystStatus)
+	}
+
+	q := `
+		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
+		       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at
+		FROM nodes n
+		LEFT JOIN governance_metadata gm ON gm.node_id = n.id
+		LEFT JOIN research_metadata rm ON rm.node_id = n.id
+		WHERE ` + strings.Join(where, " AND ") + `
+		ORDER BY n.id`
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) nodeMatchesRetrievalQuery(req searchRequest, n Node) (bool, string, string, error) {
+	if req.Kind != "" && n.Kind != req.Kind {
+		return false, "", "", nil
+	}
+	text := strings.Join([]string{n.Name, n.QualifiedName, n.Metadata, n.BodyExcerpt}, "\n")
+	if queryMatchesText(req, text) {
+		return true, "", "", nil
+	}
+	chunk, ok, err := s.GetSectionChunk(n.ID)
+	if err != nil {
+		return false, "", "", err
+	}
+	if ok && queryMatchesText(req, chunk.HeadingPath+"\n"+chunk.Text) {
+		return true, chunk.HeadingPath, chunk.Text, nil
+	}
+	return false, "", "", nil
+}
+
 func (s *Store) applyFieldRanking(req searchRequest, c *searchCandidate) {
 	c.Score += weightedTextScore(req.Query, req.Terms, c.Node.Name, 12)
 	c.Score += weightedTextScore(req.Query, req.Terms, c.HeadingPath, 10)
@@ -478,6 +684,15 @@ func (s *Store) applyGraphReranking(req searchRequest, c *searchCandidate) error
 	c.Score += math.Min(math.Log1p(float64(outgoing))*1.25, 5)
 	c.Score += float64(tagMatches) * 8
 	return nil
+}
+
+func (s *Store) applyMetadataReranking(req searchRequest, c *searchCandidate) {
+	if c.Governance != nil {
+		c.Score += governanceRetrievalScore(c.Governance, req.Governance.AllowedAudience, req.AsOf)
+	}
+	if c.Research != nil {
+		c.Score += researchRetrievalScore(c.Research, req.AsOf)
+	}
 }
 
 func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tagMatches int, err error) {
@@ -562,6 +777,248 @@ func weightedTermScore(terms []string, text string, weight float64) float64 {
 		}
 	}
 	return score
+}
+
+func (s *Store) loadRetrievalMetadata(c *searchCandidate) error {
+	docID := c.Node.ID
+	if c.Node.Kind != "document" {
+		docID = c.Node.FilePath
+	}
+	gov, err := s.GetGovernanceMetadata(docID)
+	if err != nil {
+		return err
+	}
+	research, err := s.GetResearchMetadata(docID)
+	if err != nil {
+		return err
+	}
+	c.Governance = gov
+	c.Research = research
+	return nil
+}
+
+func metadataMatchesRequest(req searchRequest, c *searchCandidate) bool {
+	gov := c.Governance
+	research := c.Research
+	if req.Governance.Status != "" && (gov == nil || !equalFold(gov.Status, req.Governance.Status)) {
+		return false
+	}
+	if req.Governance.Sensitivity != "" && (gov == nil || !equalFold(gov.Sensitivity, req.Governance.Sensitivity)) {
+		return false
+	}
+	if req.Governance.CanonicalSource != "" && (gov == nil || !equalFold(gov.CanonicalSource, req.Governance.CanonicalSource)) {
+		return false
+	}
+	if req.Governance.AllowedAudience != "" && !audienceAllowed(gov, req.Governance.AllowedAudience) {
+		return false
+	}
+	if req.Governance.AsOfDate != "" {
+		if gov != nil && dateAfter(gov.EffectiveDate, req.AsOf) {
+			return false
+		}
+		if research != nil && dateBefore(research.ValidUntil, req.AsOf) {
+			return false
+		}
+	}
+	if req.Research.ClaimID != "" && (research == nil || !equalFold(research.ClaimID, req.Research.ClaimID)) {
+		return false
+	}
+	if req.Research.SourceType != "" && (research == nil || !equalFold(research.SourceType, req.Research.SourceType)) {
+		return false
+	}
+	if req.Research.Confidence != "" && (research == nil || !equalFold(research.Confidence, req.Research.Confidence)) {
+		return false
+	}
+	if req.Research.AnalystStatus != "" && (research == nil || !equalFold(research.AnalystStatus, req.Research.AnalystStatus)) {
+		return false
+	}
+	return true
+}
+
+func governanceRetrievalScore(gov *GovernanceRecord, audience string, asOf time.Time) float64 {
+	score := 0.0
+	switch normalizedSignal(gov.Status) {
+	case "approved", "accepted", "active", "current", "final", "ratified":
+		score += 12
+	case "draft", "proposal", "provisional", "review":
+		score -= 4
+	case "archived", "deprecated", "rejected", "retired", "superseded":
+		score -= 14
+	}
+	switch normalizedSignal(gov.Sensitivity) {
+	case "", "public":
+		score += 3
+	case "internal", "team":
+		score += 1
+	case "confidential", "restricted", "secret":
+		score -= 8
+	}
+	switch normalizedSignal(gov.CanonicalSource) {
+	case "true", "yes", "canonical", "official", "primary":
+		score += 8
+	case "false", "no", "duplicate", "non-canonical", "noncanonical":
+		score -= 10
+	default:
+		if strings.TrimSpace(gov.CanonicalSource) != "" {
+			score += 4
+		}
+	}
+	if audience != "" {
+		if audienceAllowed(gov, audience) {
+			score += 4
+		} else {
+			score -= 16
+		}
+	}
+	if dateAfter(gov.EffectiveDate, asOf) {
+		score -= 12
+	} else if strings.TrimSpace(gov.EffectiveDate) != "" {
+		score += 3
+	}
+	if dateBefore(gov.ReviewDue, asOf) {
+		score -= 8
+	} else if strings.TrimSpace(gov.ReviewDue) != "" {
+		score += 2
+	}
+	if strings.TrimSpace(gov.SupersededBy) != "" {
+		score -= 16
+	}
+	return score
+}
+
+func researchRetrievalScore(research *ResearchRecord, asOf time.Time) float64 {
+	score := 0.0
+	switch normalizedSignal(research.Confidence) {
+	case "very-high", "very_high", "high":
+		score += 10
+	case "medium", "moderate":
+		score += 4
+	case "low", "weak":
+		score -= 8
+	}
+	switch normalizedSignal(research.SourceType) {
+	case "primary", "official":
+		score += 6
+	case "internal", "expert", "verified":
+		score += 4
+	case "secondary":
+		score += 1
+	case "social", "rumor", "unverified":
+		score -= 6
+	}
+	switch normalizedSignal(research.AnalystStatus) {
+	case "approved", "verified", "peer-reviewed", "reviewed", "final":
+		score += 6
+	case "draft", "open", "unverified":
+		score -= 4
+	case "rejected", "superseded", "withdrawn":
+		score -= 10
+	}
+	if dateBefore(research.ValidUntil, asOf) {
+		score -= 12
+	} else if strings.TrimSpace(research.ValidUntil) != "" {
+		score += 3
+	}
+	if lastVerifiedFresh(research.LastVerified, asOf) {
+		score += 2
+	} else if dateBefore(research.LastVerified, asOf.AddDate(-1, 0, 0)) {
+		score -= 3
+	}
+	return score
+}
+
+func queryMatchesText(req searchRequest, text string) bool {
+	text = strings.ToLower(text)
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, strings.ToLower(req.Query)) {
+		return true
+	}
+	for _, term := range req.Terms {
+		if term == "" {
+			continue
+		}
+		if !strings.Contains(text, strings.ToLower(term)) {
+			return false
+		}
+	}
+	return len(req.Terms) > 0
+}
+
+func audienceAllowed(gov *GovernanceRecord, requested string) bool {
+	requested = normalizedSignal(requested)
+	if requested == "" {
+		return true
+	}
+	if gov == nil {
+		return false
+	}
+	if normalizedSignal(gov.Sensitivity) == "public" {
+		return true
+	}
+	audience := strings.TrimSpace(gov.AllowedAudience)
+	if audience == "" {
+		return false
+	}
+	for _, part := range splitMetadataList(audience) {
+		part = normalizedSignal(part)
+		if part == requested || part == "all" || part == "*" || part == "public" {
+			return true
+		}
+	}
+	return false
+}
+
+func splitMetadataList(value string) []string {
+	replacer := strings.NewReplacer("[", " ", "]", " ", "\"", " ", "'", " ", ",", " ", ";", " ", "\n", " ")
+	return strings.Fields(replacer.Replace(value))
+}
+
+func parseSearchDate(value string) (time.Time, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	if len(value) >= len("2006-01-02") {
+		value = value[:len("2006-01-02")]
+	}
+	t, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return dateOnly(t), true
+}
+
+func dateAfter(value string, ref time.Time) bool {
+	t, ok := parseSearchDate(value)
+	return ok && t.After(dateOnly(ref))
+}
+
+func dateBefore(value string, ref time.Time) bool {
+	t, ok := parseSearchDate(value)
+	return ok && t.Before(dateOnly(ref))
+}
+
+func lastVerifiedFresh(value string, ref time.Time) bool {
+	t, ok := parseSearchDate(value)
+	if !ok {
+		return false
+	}
+	return !t.Before(dateOnly(ref).AddDate(-1, 0, 0)) && !t.After(dateOnly(ref))
+}
+
+func dateOnly(t time.Time) time.Time {
+	y, m, d := t.UTC().Date()
+	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
+}
+
+func normalizedSignal(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func equalFold(a, b string) bool {
+	return strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(b))
 }
 
 func ftsRankBoost(rank float64) float64 {

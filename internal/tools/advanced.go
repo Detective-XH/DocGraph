@@ -12,11 +12,20 @@ import (
 )
 
 var contextTool = mcp.NewTool("docgraph_context",
-	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead."),
+	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes governance-aware search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead."),
 	mcp.WithString("task", mcp.Required(), mcp.Description("Description of the task/topic to find context for")),
 	mcp.WithNumber("maxNodes", mcp.Description("Max documents to return (default 10)")),
 	mcp.WithBoolean("includeContent", mcp.Description("Include bounded source content for each result (default true)")),
 	mcp.WithNumber("maxContentBytes", mcp.Description("Max source bytes per result (default 2000, hard cap 6000)")),
+	mcp.WithString("status", mcp.Description("Filter by governance status.")),
+	mcp.WithString("sensitivity", mcp.Description("Filter by sensitivity.")),
+	mcp.WithString("canonical_source", mcp.Description("Filter by canonical source marker or value.")),
+	mcp.WithString("allowed_audience", mcp.Description("Filter to documents available to an audience label. Public documents are included.")),
+	mcp.WithString("as_of_date", mcp.Description("Evaluate effective_date and valid_until against YYYY-MM-DD.")),
+	mcp.WithString("claim_id", mcp.Description("Filter by research claim_id.")),
+	mcp.WithString("source_type", mcp.Description("Filter by research source_type.")),
+	mcp.WithString("confidence", mcp.Description("Filter by research confidence.")),
+	mcp.WithString("analyst_status", mcp.Description("Filter by research analyst_status.")),
 )
 
 var nodeTool = mcp.NewTool("docgraph_node",
@@ -167,13 +176,30 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 	if maxContentBytes > 6000 {
 		maxContentBytes = 6000
 	}
+	opts := store.SearchOptions{
+		Query: task,
+		Limit: maxNodes,
+		Governance: store.GovernanceSearchOptions{
+			Status:          sanitizeArg(getStringArg(args, "status", ""), 100),
+			Sensitivity:     sanitizeArg(getStringArg(args, "sensitivity", ""), 100),
+			CanonicalSource: sanitizeArg(getStringArg(args, "canonical_source", ""), 300),
+			AllowedAudience: sanitizeArg(getStringArg(args, "allowed_audience", ""), 100),
+			AsOfDate:        sanitizeArg(getStringArg(args, "as_of_date", ""), 20),
+		},
+		Research: store.ResearchSearchOptions{
+			ClaimID:       sanitizeArg(getStringArg(args, "claim_id", ""), 100),
+			SourceType:    sanitizeArg(getStringArg(args, "source_type", ""), 100),
+			Confidence:    sanitizeArg(getStringArg(args, "confidence", ""), 100),
+			AnalystStatus: sanitizeArg(getStringArg(args, "analyst_status", ""), 100),
+		},
+	}
 
 	var results []store.SearchResult
 	var err error
 	if h.workspace != nil {
-		results, err = h.workspace.Search(task, "", maxNodes)
+		results, err = h.workspace.SearchWithOptions(opts)
 	} else {
-		results, err = h.store.Search(task, "", maxNodes)
+		results, err = h.store.SearchWithOptions(opts)
 	}
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil

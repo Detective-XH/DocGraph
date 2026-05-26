@@ -98,13 +98,19 @@ func (w *Workspace) IndexAll() error {
 	return nil
 }
 func (w *Workspace) Search(query, kind string, limit int) ([]store.SearchResult, error) {
+	return w.SearchWithOptions(store.SearchOptions{Query: query, Kind: kind, Limit: limit})
+}
+func (w *Workspace) SearchWithOptions(opts store.SearchOptions) ([]store.SearchResult, error) {
+	limit := opts.Limit
 	if limit <= 0 {
 		limit = 20
 	}
 	var all []store.SearchResult
 	for _, p := range w.Projects {
 		perProjectCap := limit * 2
-		results, err := p.Store.Search(query, kind, perProjectCap)
+		projectOpts := opts
+		projectOpts.Limit = perProjectCap
+		results, err := p.Store.SearchWithOptions(projectOpts)
 		if err != nil {
 			continue
 		}
