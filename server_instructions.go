@@ -74,7 +74,7 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 
 - docgraph init <path>: creates .docgraphignore, ensures .gitignore ignores .docgraph/, and creates a local .mcp.json when missing.
 - docgraph init --install-clients auto <path>: after local setup, auto-detects Claude Code, Codex, Hermes, and OpenCode config locations and writes DocGraph MCP entries where detected.
-- docgraph init --with-skills <path>: after local setup, installs bundled skills into .claude/skills/ (skip-if-exists). Currently ships docgraph-drift-audit for auditing .md file DocGraph compatibility.
+- docgraph init --with-skills <path>: after local setup, installs bundled skills into .claude/skills/ (skip-if-exists). Ships docgraph-drift-audit, policy-drift-audit, assessment-drift-audit, and code-doc-drift-audit.
 - docgraph install --clients all <path>: non-interactive installer for Claude Code, Codex, Hermes, and OpenCode. Use --workspace to configure workspace mode instead of single-project mode.
 - Use --dry-run on init/install to review create/update/unchanged actions without writes. Use --interactive to show the same review and ask before writing.
 - docgraph pack list <path>: lists domain packs and enabled state.
