@@ -466,6 +466,17 @@ func (s *Store) GetProjectMeta(key string) (string, bool, error) {
 	return v, true, nil
 }
 
+// DeleteProjectMeta removes one or more keys from project_metadata.
+// Missing keys are silently ignored.
+func (s *Store) DeleteProjectMeta(keys ...string) error {
+	for _, k := range keys {
+		if _, err := s.db.Exec(`DELETE FROM project_metadata WHERE key=?`, k); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // SchemaVersion returns the latest applied migration version and name.
 // Returns (0, "", nil) if schema_migrations table is empty or missing.
 func (s *Store) SchemaVersion() (version int, name string, err error) {

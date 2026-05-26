@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -502,4 +503,289 @@ Final thoughts.
 			t.Errorf("expected document name='情報分析報告', got %q", res.DocNode.Name)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Section chunk tests (F-19 Phase 1B)
+// ---------------------------------------------------------------------------
+
+func TestSectionChunksDocumentLevel(t *testing.T) {
+	source := `# Title
+
+Some body text.
+`
+	res := parseTestSource(t, source)
+
+	// There must be a document-level chunk with HeadingPath = "".
+	var found bool
+	for _, c := range res.SectionChunks {
+		if c.NodeID != "file.md" {
+			continue
+		}
+		found = true
+		if c.HeadingPath != "" {
+			t.Errorf("document chunk HeadingPath: expected '', got %q", c.HeadingPath)
+		}
+		if c.SectionHash == "" {
+			t.Error("document chunk SectionHash must not be empty")
+		}
+		if c.FilePath != "file.md" {
+			t.Errorf("document chunk FilePath: expected 'file.md', got %q", c.FilePath)
+		}
+		if c.ContentHash != "abc123" {
+			t.Errorf("document chunk ContentHash: expected 'abc123', got %q", c.ContentHash)
+		}
+		if !strings.Contains(c.Text, "Title") {
+			t.Errorf("document chunk Text should contain source content, got %q", c.Text)
+		}
+	}
+	if !found {
+		t.Fatal("expected document-level SectionChunk with NodeID='file.md'")
+	}
+}
+
+func TestSectionChunksFlatHeadings(t *testing.T) {
+	// Three flat H1s — each HeadingPath should be just the heading name.
+	source := `# Alpha
+
+Alpha content.
+
+# Beta
+
+Beta content.
+
+# Gamma
+
+Gamma content.
+`
+	res := parseTestSource(t, source)
+
+	// Build map nodeID → HeadingPath.
+	pathByID := make(map[string]string)
+	for _, c := range res.SectionChunks {
+		pathByID[c.NodeID] = c.HeadingPath
+	}
+
+	cases := []struct {
+		id   string
+		want string
+	}{
+		{"file.md#alpha", "Alpha"},
+		{"file.md#beta", "Beta"},
+		{"file.md#gamma", "Gamma"},
+	}
+	for _, tc := range cases {
+		got, ok := pathByID[tc.id]
+		if !ok {
+			t.Errorf("no chunk found for %q", tc.id)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("HeadingPath for %q: expected %q, got %q", tc.id, tc.want, got)
+		}
+	}
+}
+
+func TestSectionChunksNestedHeadings(t *testing.T) {
+	// H1 > H2 > H3, then back to H2.
+	source := `# Introduction
+
+Intro text.
+
+## Background
+
+Background text.
+
+### Key Concepts
+
+Concepts text.
+
+## Summary
+
+Summary text.
+`
+	res := parseTestSource(t, source)
+
+	pathByID := make(map[string]string)
+	for _, c := range res.SectionChunks {
+		pathByID[c.NodeID] = c.HeadingPath
+	}
+
+	cases := []struct {
+		id   string
+		want string
+	}{
+		{"file.md#introduction", "Introduction"},
+		{"file.md#background", "Introduction > Background"},
+		{"file.md#key-concepts", "Introduction > Background > Key Concepts"},
+		{"file.md#summary", "Introduction > Summary"},
+	}
+	for _, tc := range cases {
+		got, ok := pathByID[tc.id]
+		if !ok {
+			t.Errorf("no chunk found for %q", tc.id)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("HeadingPath for %q: expected %q, got %q", tc.id, tc.want, got)
+		}
+	}
+}
+
+func TestSectionChunksSectionHashStability(t *testing.T) {
+	source := `# Title
+
+## Section A
+
+Content for A.
+
+## Section B
+
+Content for B.
+`
+	res1 := parseTestSource(t, source)
+	res2 := parseTestSource(t, source)
+
+	// Same content → same hashes.
+	hashByID1 := make(map[string]string)
+	for _, c := range res1.SectionChunks {
+		hashByID1[c.NodeID] = c.SectionHash
+	}
+	for _, c := range res2.SectionChunks {
+		if hashByID1[c.NodeID] != c.SectionHash {
+			t.Errorf("unstable section_hash for %q: first=%q second=%q",
+				c.NodeID, hashByID1[c.NodeID], c.SectionHash)
+		}
+	}
+
+	// Modify section A text → hash for A must change, B must stay the same.
+	source2 := `# Title
+
+## Section A
+
+CHANGED content for A.
+
+## Section B
+
+Content for B.
+`
+	res3 := parseTestSource(t, source2)
+	hashByID3 := make(map[string]string)
+	for _, c := range res3.SectionChunks {
+		hashByID3[c.NodeID] = c.SectionHash
+	}
+
+	if hashByID1["file.md#section-a"] == hashByID3["file.md#section-a"] {
+		t.Error("hash for section-a should change when content changes")
+	}
+	if hashByID1["file.md#section-b"] != hashByID3["file.md#section-b"] {
+		t.Error("hash for section-b should not change when only section-a changes")
+	}
+}
+
+func TestSectionChunksTruncation(t *testing.T) {
+	// Build a section body that exceeds 10240 bytes.
+	// Use a line of 200 chars; 52 lines × 200 bytes = 10400 bytes joined with newlines.
+	bigLine := strings.Repeat("x", 200)
+	var bodyLines []string
+	for i := 0; i < 52; i++ {
+		bodyLines = append(bodyLines, bigLine)
+	}
+
+	source := "# Title\n\n## Oversized\n\n" + strings.Join(bodyLines, "\n") + "\n"
+	res := parseTestSource(t, source)
+
+	var found bool
+	for _, c := range res.SectionChunks {
+		if c.NodeID != "file.md#oversized" {
+			continue
+		}
+		found = true
+		if !strings.HasSuffix(c.Text, "\n[...truncated]") {
+			t.Errorf("oversized chunk should end with truncation marker; got last 40 bytes: %q",
+				c.Text[maxInt(0, len(c.Text)-40):])
+		}
+		// The content before the marker must be exactly sectionMaxBytes bytes.
+		markerIdx := strings.LastIndex(c.Text, "\n[...truncated]")
+		if markerIdx != sectionMaxBytes {
+			t.Errorf("content before truncation marker should be %d bytes, got %d",
+				sectionMaxBytes, markerIdx)
+		}
+	}
+	if !found {
+		t.Fatal("no chunk found for 'file.md#oversized'")
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func TestSectionChunksSectionBoundary(t *testing.T) {
+	// Section text must not bleed into the next section.
+	source := `# Title
+
+## First
+
+Only first section content.
+
+## Second
+
+Only second section content.
+`
+	res := parseTestSource(t, source)
+
+	textByID := make(map[string]string)
+	for _, c := range res.SectionChunks {
+		textByID[c.NodeID] = c.Text
+	}
+
+	firstText := textByID["file.md#first"]
+	if strings.Contains(firstText, "Only second section content.") {
+		t.Errorf("'first' section text bleeds into 'second': %q", firstText)
+	}
+	if !strings.Contains(firstText, "Only first section content.") {
+		t.Errorf("'first' section text missing its content: %q", firstText)
+	}
+
+	secondText := textByID["file.md#second"]
+	if strings.Contains(secondText, "Only first section content.") {
+		t.Errorf("'second' section text bleeds into 'first': %q", secondText)
+	}
+	if !strings.Contains(secondText, "Only second section content.") {
+		t.Errorf("'second' section text missing its content: %q", secondText)
+	}
+}
+
+func TestSectionChunkCount(t *testing.T) {
+	source := `# Title
+
+## Section One
+
+Content one.
+
+## Section Two
+
+Content two.
+`
+	res := parseTestSource(t, source)
+
+	// Document chunk + 3 heading chunks = 4 total.
+	if len(res.SectionChunks) != 4 {
+		t.Errorf("expected 4 section chunks (1 doc + 3 headings), got %d", len(res.SectionChunks))
+	}
+
+	// Exactly one chunk with HeadingPath = "".
+	docCount := 0
+	for _, c := range res.SectionChunks {
+		if c.HeadingPath == "" {
+			docCount++
+		}
+	}
+	if docCount != 1 {
+		t.Errorf("expected exactly 1 document-level chunk (HeadingPath=''), got %d", docCount)
+	}
 }

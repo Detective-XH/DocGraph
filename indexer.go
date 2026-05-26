@@ -73,6 +73,9 @@ func indexStore(root string, st *store.Store) error {
 			nSkip++
 			continue
 		}
+		// Delete stale section chunks before DeleteFileData so we capture any
+		// nodes that would be cascade-deleted; explicit call is idempotent.
+		st.DeleteSectionChunksByFile(e.RelPath)
 		st.DeleteFileData(e.RelPath)
 		res, err := parser.ParseFile(e.Path, e.RelPath, src, hash)
 		if err != nil {
@@ -85,6 +88,11 @@ func indexStore(root string, st *store.Store) error {
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := st.InsertNodes(nodes); err != nil {
 			return err
+		}
+		if len(res.SectionChunks) > 0 {
+			if err := st.UpsertSectionChunks(res.SectionChunks); err != nil {
+				return err
+			}
 		}
 		if err := st.InsertEdges(res.Edges); err != nil {
 			return err
@@ -130,6 +138,24 @@ func indexStore(root string, st *store.Store) error {
 		}
 		if err := similarity.ComputeSimilarityIncremental(st, changedDocIDs, similarityThreshold); err != nil {
 			fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
+		}
+
+		// Clear reindex_required marker set by migration 004 only when every
+		// file in the project was fully reparsed this run (nSkip == 0), meaning
+		// section_chunks are now fully populated. If any files were skipped due
+		// to unchanged content hashes, the marker stays so the user knows a
+		// --force reindex is still needed to fill missing chunks.
+		if nSkip == 0 {
+			scope, _, _ := st.GetProjectMeta(store.MetaKeyReindexScope)
+			if scope == "sections" {
+				if err := st.DeleteProjectMeta(
+					store.MetaKeyReindexRequired,
+					store.MetaKeyReindexScope,
+					store.MetaKeyReindexReason,
+				); err != nil {
+					fmt.Fprintf(os.Stderr, "clear reindex marker: %v\n", err)
+				}
+			}
 		}
 	}
 	return nil

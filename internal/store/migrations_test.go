@@ -131,18 +131,18 @@ func TestRunMigrations_FreshDB(t *testing.T) {
 		t.Fatalf("RunMigrations on fresh DB: %v", err)
 	}
 
-	// 3 rows in schema_migrations.
-	if n := countMigrationRows(db); n != 3 {
-		t.Errorf("expected 3 migration rows, got %d", n)
+	// 4 rows in schema_migrations.
+	if n := countMigrationRows(db); n != 4 {
+		t.Errorf("expected 4 migration rows, got %d", n)
 	}
 
-	// PRAGMA user_version = 3.
-	if v := getUserVersion(db); v != 3 {
-		t.Errorf("expected user_version=3, got %d", v)
+	// PRAGMA user_version = 4.
+	if v := getUserVersion(db); v != 4 {
+		t.Errorf("expected user_version=4, got %d", v)
 	}
 
 	// All expected tables exist.
-	for _, tbl := range []string{"nodes", "edges", "files", "unresolved_refs", "project_metadata", "file_history", "embeddings", "nodes_fts", "schema_migrations"} {
+	for _, tbl := range []string{"nodes", "edges", "files", "unresolved_refs", "project_metadata", "file_history", "embeddings", "section_chunks", "nodes_fts", "schema_migrations"} {
 		if !tableExists(db, tbl) {
 			t.Errorf("table %q not found after fresh migration", tbl)
 		}
@@ -168,9 +168,9 @@ func TestRunMigrations_OldDBBaseline(t *testing.T) {
 		t.Fatalf("RunMigrations on old DB: %v", err)
 	}
 
-	// 3 rows inserted (not re-run).
-	if n := countMigrationRows(db); n != 3 {
-		t.Errorf("expected 3 migration rows, got %d", n)
+	// 4 rows inserted (not re-run).
+	if n := countMigrationRows(db); n != 4 {
+		t.Errorf("expected 4 migration rows, got %d", n)
 	}
 
 	// FTS search still works.
@@ -200,9 +200,9 @@ func TestRunMigrations_IdempotentReopen(t *testing.T) {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
 
-	// Still exactly 3 rows — no duplicates.
-	if n := countMigrationRows(db); n != 3 {
-		t.Errorf("expected 3 migration rows after double run, got %d", n)
+	// Still exactly 4 rows — no duplicates.
+	if n := countMigrationRows(db); n != 4 {
+		t.Errorf("expected 4 migration rows after double run, got %d", n)
 	}
 }
 
@@ -226,9 +226,9 @@ func TestRunMigrations_ChecksumMismatch(t *testing.T) {
 		t.Errorf("expected ErrChecksumMismatch, got: %v", err)
 	}
 
-	// DB should still have 3 rows (unchanged).
-	if n := countMigrationRows(db); n != 3 {
-		t.Errorf("expected 3 migration rows after mismatch, got %d", n)
+	// DB should still have 4 rows (unchanged).
+	if n := countMigrationRows(db); n != 4 {
+		t.Errorf("expected 4 migration rows after mismatch, got %d", n)
 	}
 }
 
@@ -248,13 +248,14 @@ func TestRunMigrations_FutureSchema(t *testing.T) {
 func TestRunMigrations_FailedMigrationRollback(t *testing.T) {
 	db := openRawDB(t)
 
-	// Use a custom migration list: migrations 1-3 succeed, migration 4 fails.
+	// Use a custom migration list: migrations 1-4 succeed, migration 5 fails.
 	badSQL := `THIS IS NOT VALID SQL $$%##`
 	customMigs := append([]Migration{
 		{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 		{Version: 2, Name: "file_history", SQL: migration002SQL},
 		{Version: 3, Name: "embeddings", SQL: migration003SQL},
-		{Version: 4, Name: "bad_migration", SQL: badSQL},
+		{Version: 4, Name: "section_chunks", SQL: migration004SQL},
+		{Version: 5, Name: "bad_migration", SQL: badSQL},
 	})
 	// Compute checksums.
 	for i := range customMigs {
@@ -266,9 +267,9 @@ func TestRunMigrations_FailedMigrationRollback(t *testing.T) {
 		t.Fatal("expected error from bad migration, got nil")
 	}
 
-	// Migrations 1-3 should still be intact.
-	if n := countMigrationRows(db); n != 3 {
-		t.Errorf("expected 3 migration rows after failed migration 4, got %d", n)
+	// Migrations 1-4 should still be intact.
+	if n := countMigrationRows(db); n != 4 {
+		t.Errorf("expected 4 migration rows after failed migration 5, got %d", n)
 	}
 
 	// project_metadata should have migration_last_failure entry.
@@ -279,15 +280,15 @@ func TestRunMigrations_FailedMigrationRollback(t *testing.T) {
 	if !found {
 		t.Error("expected migration_last_failure marker in project_metadata, not found")
 	}
-	expectedPrefix := "4:bad_migration:"
+	expectedPrefix := "5:bad_migration:"
 	if len(marker) < len(expectedPrefix) || marker[:len(expectedPrefix)] != expectedPrefix {
 		t.Errorf("expected marker to start with %q, got %q", expectedPrefix, marker)
 	}
 
-	// Tables from migrations 1-3 should still exist.
-	for _, tbl := range []string{"nodes", "edges", "files", "file_history", "embeddings"} {
+	// Tables from migrations 1-4 should still exist.
+	for _, tbl := range []string{"nodes", "edges", "files", "file_history", "embeddings", "section_chunks"} {
 		if !tableExists(db, tbl) {
-			t.Errorf("table %q missing after failed migration 4", tbl)
+			t.Errorf("table %q missing after failed migration 5", tbl)
 		}
 	}
 }
@@ -324,8 +325,8 @@ func TestRunMigrations_WorkspaceMixedState(t *testing.T) {
 	if err := RunMigrations(normalDB); err != nil {
 		t.Errorf("normal DB migrations failed: %v", err)
 	}
-	if n := countMigrationRows(normalDB); n != 3 {
-		t.Errorf("normal DB: expected 3 migration rows, got %d", n)
+	if n := countMigrationRows(normalDB); n != 4 {
+		t.Errorf("normal DB: expected 4 migration rows, got %d", n)
 	}
 
 	// Future DB should return ErrFutureSchema.

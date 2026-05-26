@@ -148,13 +148,37 @@ CREATE TABLE IF NOT EXISTS embeddings (
 CREATE INDEX IF NOT EXISTS idx_embeddings_model ON embeddings(model_id);
 `
 
+const migration004SQL = `
+CREATE TABLE IF NOT EXISTS section_chunks (
+    node_id       TEXT    NOT NULL,
+    file_path     TEXT    NOT NULL,
+    start_line    INTEGER,
+    end_line      INTEGER,
+    content_hash  TEXT    NOT NULL,
+    section_hash  TEXT    NOT NULL,
+    heading_path  TEXT    NOT NULL,
+    text          TEXT    NOT NULL,
+    PRIMARY KEY (node_id),
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_section_chunks_file         ON section_chunks(file_path);
+CREATE INDEX IF NOT EXISTS idx_section_chunks_section_hash ON section_chunks(section_hash);
+INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
+    VALUES('reindex_required','true',unixepoch());
+INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
+    VALUES('reindex_scope','sections',unixepoch());
+INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
+    VALUES('reindex_reason','section_chunks table added; run docgraph index --force',unixepoch());
+`
+
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003 only. Future migrations (004+) are added by their
+// F-18 delivers 001–003; F-19 delivers 004. Future migrations (005+) are added by their
 // corresponding F-feature — never added here without the owning feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 	{Version: 2, Name: "file_history", SQL: migration002SQL},
 	{Version: 3, Name: "embeddings", SQL: migration003SQL},
+	{Version: 4, Name: "section_chunks", SQL: migration004SQL},
 }
 
 func init() {

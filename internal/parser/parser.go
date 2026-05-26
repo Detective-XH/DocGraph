@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"regexp"
@@ -29,13 +30,14 @@ type RawLink struct {
 
 // ParseResult contains all data extracted from a single markdown file.
 type ParseResult struct {
-	DocNode  store.Node
-	Headings []store.Node
-	Defs     []store.Node
-	Tags     []store.Node // Deduplicated tag nodes
-	Edges    []store.Edge
-	RawLinks []RawLink
-	FileInfo store.FileInfo
+	DocNode       store.Node
+	Headings      []store.Node
+	Defs          []store.Node
+	Tags          []store.Node // Deduplicated tag nodes
+	Edges         []store.Edge
+	RawLinks      []RawLink
+	FileInfo      store.FileInfo
+	SectionChunks []store.SectionChunk
 }
 
 var inlineWikilinkRe = regexp.MustCompile(`(!?)\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
@@ -167,6 +169,9 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 	// 5. Post-pass: compute heading end_lines
 	computeHeadingEndLines(headings, docEndLine)
 
+	// 5b. Build section chunks (document + heading nodes).
+	sectionChunks := buildSectionChunks(source, docNode, headings, contentHash)
+
 	// 6. Create containment edges
 	edges := buildContainmentEdges(docNode.ID, headings)
 	defs, defEdges := extractDefinitions(body, bodyStartLine, relPath, docNode.ID, headings)
@@ -231,13 +236,14 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 	}
 
 	return &ParseResult{
-		DocNode:  docNode,
-		Headings: headings,
-		Defs:     defs,
-		Tags:     tagNodes,
-		Edges:    edges,
-		RawLinks: rawLinks,
-		FileInfo: fileInfo,
+		DocNode:       docNode,
+		Headings:      headings,
+		Defs:          defs,
+		Tags:          tagNodes,
+		Edges:         edges,
+		RawLinks:      rawLinks,
+		FileInfo:      fileInfo,
+		SectionChunks: sectionChunks,
 	}, nil
 }
 
@@ -514,4 +520,96 @@ func truncate(s string, maxBytes int) string {
 		s = s[:idx]
 	}
 	return s
+}
+
+const sectionMaxBytes = 10240
+
+// extractSectionText extracts lines [startLine, endLine] (1-based, inclusive) from source
+// using the same logic as ReadSectionContent: split on "\n", slice, join with "\n".
+// Returns the text capped at sectionMaxBytes with a truncation marker if needed.
+func extractSectionText(source []byte, startLine, endLine int) string {
+	lines := strings.Split(string(source), "\n")
+	start := startLine - 1
+	if start < 0 {
+		start = 0
+	}
+	end := endLine
+	if end > len(lines) {
+		end = len(lines)
+	}
+	if start >= end {
+		return ""
+	}
+	text := strings.Join(lines[start:end], "\n")
+	if len(text) > sectionMaxBytes {
+		text = text[:sectionMaxBytes] + "\n[...truncated]"
+	}
+	return text
+}
+
+// sectionHash computes SHA-256 of the given text, returning a hex string.
+func sectionHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return fmt.Sprintf("%x", sum)
+}
+
+// buildSectionChunks creates SectionChunk entries for the document node and all heading nodes.
+// Headings must already be sorted by StartLine (computeHeadingEndLines guarantees this).
+func buildSectionChunks(source []byte, docNode store.Node, headings []store.Node, contentHash string) []store.SectionChunk {
+	const cap_ = sectionMaxBytes
+
+	// Document-level chunk: entire file content.
+	docText := extractSectionText(source, docNode.StartLine, docNode.EndLine)
+	chunks := []store.SectionChunk{
+		{
+			NodeID:      docNode.ID,
+			FilePath:    docNode.FilePath,
+			StartLine:   docNode.StartLine,
+			EndLine:     docNode.EndLine,
+			ContentHash: contentHash,
+			SectionHash: sectionHash(docText),
+			HeadingPath: "",
+			Text:        docText,
+		},
+	}
+
+	// Build heading_path using a parent stack.
+	type stackFrame struct {
+		level int
+		name  string
+	}
+	var stack []stackFrame
+
+	for _, h := range headings {
+		// Pop stack entries with level >= current heading level.
+		for len(stack) > 0 && stack[len(stack)-1].level >= h.Level {
+			stack = stack[:len(stack)-1]
+		}
+
+		// Build breadcrumb from remaining stack + current heading name.
+		parts := make([]string, 0, len(stack)+1)
+		for _, f := range stack {
+			parts = append(parts, f.name)
+		}
+		parts = append(parts, h.Name)
+		headingPath := strings.Join(parts, " > ")
+
+		// Push current heading onto stack.
+		stack = append(stack, stackFrame{level: h.Level, name: h.Name})
+
+		text := extractSectionText(source, h.StartLine, h.EndLine)
+		chunks = append(chunks, store.SectionChunk{
+			NodeID:      h.ID,
+			FilePath:    h.FilePath,
+			StartLine:   h.StartLine,
+			EndLine:     h.EndLine,
+			ContentHash: contentHash,
+			SectionHash: sectionHash(text),
+			HeadingPath: headingPath,
+			Text:        text,
+		})
+	}
+
+	_ = cap_
+	return chunks
 }

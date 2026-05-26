@@ -168,6 +168,30 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 }
 
 func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, maxBytes int) {
+	// Try indexed section chunk first (avoids live file I/O, TOCTOU-safe).
+	if st := h.getStoreForNode(node.ID); st != nil {
+		if chunk, ok, err := st.GetSectionChunk(node.ID); err == nil && ok {
+			text := strings.TrimRight(chunk.Text, "\n")
+			if text == "" {
+				return
+			}
+			// Enforce the caller's maxBytes contract (chunk is bounded by H-19 ~10KB).
+			if len(text) > maxBytes {
+				text = text[:maxBytes] + fmt.Sprintf("\n[content truncated at %d bytes, use Read tool for full text]", maxBytes)
+			}
+			var rangeStr string
+			if chunk.StartLine != -1 {
+				rangeStr = fmt.Sprintf(", indexed lines %d-%d", chunk.StartLine, chunk.EndLine)
+			}
+			sb.WriteString(fmt.Sprintf("\n#### Content (indexed snapshot%s, max %d bytes)\n", rangeStr, maxBytes))
+			sb.WriteString("```markdown\n")
+			sb.WriteString(text)
+			sb.WriteString("\n```\n")
+			return
+		}
+	}
+
+	// Fallback: live file read (chunk not yet indexed).
 	root := h.getProjectRootForNode(node.ID)
 	if root == "" {
 		sb.WriteString("\n#### Content\n[content unavailable: project root not available]\n")
@@ -186,6 +210,7 @@ func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, max
 	sb.WriteString("```markdown\n")
 	sb.WriteString(content)
 	sb.WriteString("\n```\n")
+	sb.WriteString("[live read — chunk not yet indexed; run docgraph index --force]\n")
 }
 
 func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -301,6 +326,21 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 			return mcp.NewToolResultError(fmt.Sprintf("section %q not found in %s — available headings: %s",
 				section, node.Name, headingNames(headings))), nil
 		}
+		// Try indexed section chunk first (TOCTOU-safe).
+		if st := h.getStoreForNode(target.ID); st != nil {
+			if chunk, ok, err := st.GetSectionChunk(target.ID); err == nil && ok {
+				var rangeStr string
+				if chunk.StartLine != -1 {
+					rangeStr = fmt.Sprintf(", lines %d-%d", chunk.StartLine, chunk.EndLine)
+				}
+				sb.WriteString(fmt.Sprintf("\n### Content (section %q, indexed snapshot%s)\n", section, rangeStr))
+				sb.WriteString(chunk.Text)
+				sb.WriteString("\n")
+				return mcp.NewToolResultText(sb.String()), nil
+			}
+		}
+
+		// Fallback: live file read (chunk not yet indexed).
 		root := h.getProjectRootForNode(node.ID)
 		if root == "" {
 			return mcp.NewToolResultError("cannot read section content: project root not available"), nil
@@ -312,6 +352,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		sb.WriteString(fmt.Sprintf("\n### Content (section %q, lines %d-%d)\n", section, target.StartLine, target.EndLine))
 		sb.WriteString(content)
 		sb.WriteString("\n")
+		sb.WriteString("[live read — chunk not yet indexed; run docgraph index --force]\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

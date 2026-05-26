@@ -188,17 +188,16 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			sb.WriteString("\n### Warnings\n")
 			for _, w := range warnings {
 				sb.WriteString(fmt.Sprintf("\n**%s**\n", w.name))
-				if w.reindexReason != "" || w.reindexScope != "" {
+				if w.reindexReason != "" || w.reindexScope != "" || w.lastFailure == "" {
 					sb.WriteString("Reindex required: yes\n")
 					if w.reindexReason != "" {
 						sb.WriteString(fmt.Sprintf("  Reason: %s\n", w.reindexReason))
 					}
-					if w.reindexScope != "" {
-						sb.WriteString(fmt.Sprintf("  Scope: %s\n", w.reindexScope))
+					scope := w.reindexScope
+					if scope == "" {
+						scope = "unknown"
 					}
-				} else if w.lastFailure == "" {
-					// reindex_required=true but no reason/scope
-					sb.WriteString("Reindex required: yes\n")
+					sb.WriteString(fmt.Sprintf("  Scope: %s\n", scope))
 				}
 				if w.lastFailure != "" {
 					sb.WriteString(fmt.Sprintf("Last migration failure: %s\n", w.lastFailure))
@@ -268,9 +267,11 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			if reason, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexReason); reason != "" {
 				sb.WriteString(fmt.Sprintf("  Reason: %s\n", reason))
 			}
-			if scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope); scope != "" {
-				sb.WriteString(fmt.Sprintf("  Scope: %s\n", scope))
+			scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope)
+			if scope == "" {
+				scope = "unknown"
 			}
+			sb.WriteString(fmt.Sprintf("  Scope: %s\n", scope))
 		} else {
 			sb.WriteString("Reindex required: no\n")
 		}
