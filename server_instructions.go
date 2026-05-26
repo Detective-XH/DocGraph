@@ -2,7 +2,7 @@ package main
 
 const serverInstructions = `# DocGraph — Documentation Knowledge Graph
 
-DocGraph indexes Markdown files into a searchable knowledge graph with cross-document reference tracking.
+DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable knowledge graph with cross-document reference tracking.
 
 ## Tool selection
 
