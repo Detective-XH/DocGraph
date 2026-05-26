@@ -16,7 +16,7 @@ import (
 // ---------------------------------------------------------------------------
 
 var embeddingsPendingTool = mcp.NewTool("docgraph_embeddings_pending",
-	mcp.WithDescription("Return documents that need neural embeddings: either no embedding exists for model_id, or the stored content has changed since last embedding. PRIVACY: document content returned by this tool will be sent to an external LLM embedding provider — only proceed with user consent."),
+	mcp.WithDescription("Return documents that need neural embeddings (missing or stale for model_id). PRIVACY: content will be sent to an external LLM provider — only proceed with user consent. Workflow: (1) call this with model_id to get pending docs + content_hash; (2) generate vectors via your LLM provider; (3) call docgraph_embeddings_store with vector + content_hash; (4) docgraph_similar returns neural results (engine: neural) alongside TF-IDF; (5) call docgraph_embeddings_clear to remove a model. DocGraph never calls an LLM itself. model_id is arbitrary ('text-embedding-3-small', 'nomic-embed-text', Ollama, etc). Different model_id vectors are never compared with each other."),
 	mcp.WithString("model_id", mcp.Required(), mcp.Description("Embedding model identifier, e.g. 'text-embedding-3-small'")),
 	mcp.WithNumber("limit", mcp.Description("Max documents to return (default 50)")),
 	mcp.WithString("content_mode", mcp.Description("'full' (default) reads full section from disk; 'excerpt' uses the stored body excerpt")),
