@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Detective-XH/docgraph/internal/domainpacks"
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -612,16 +613,44 @@ func appendDomainPackStats(sb *strings.Builder, packs []domainpacks.Pack, stats 
 	}
 	sb.WriteString("\n### Domain Packs\n")
 	sb.WriteString(fmt.Sprintf("Loaded packs: %d (%d enabled, %d fields)\n", stats.TotalPacks, stats.EnabledPacks, stats.TotalFields))
-	sb.WriteString("| Pack | Domain | Version | Enabled | Fields |\n")
-	sb.WriteString("|------|--------|---------|---------|--------|\n")
+	sb.WriteString("| Pack | Domain | Version | Enabled | Fields | Description |\n")
+	sb.WriteString("|------|--------|---------|---------|--------|-------------|\n")
 	for _, pack := range packs {
 		enabled := "no"
 		if pack.EnabledByDefault {
 			enabled = "yes"
 		}
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d |\n",
-			pack.ID, pack.Domain, pack.Version, enabled, len(pack.Fields)))
+		desc := truncateRunes(pack.Description, 60)
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d | %s |\n",
+			pack.ID, pack.Domain, pack.Version, enabled, len(pack.Fields), desc))
 	}
+	// Capability notes for disabled built-in packs.
+	for _, pack := range packs {
+		if pack.EnabledByDefault || !pack.BuiltIn {
+			continue
+		}
+		note := packCapabilityNote(pack)
+		sb.WriteString(note)
+		sb.WriteByte('\n')
+	}
+}
+
+// packCapabilityNote returns a blockquote capability hint for a disabled built-in pack.
+// Total line length is kept under 120 chars.
+func packCapabilityNote(pack domainpacks.Pack) string {
+	prefix := fmt.Sprintf("> **`%s`** (opt-in): ", pack.ID)
+	suffix := ""
+	if pack.ID == domainpacks.PackPolicyProcess {
+		suffix = ". Use `docgraph_context format=drift_audit` to run the audit."
+	}
+	// Budget: 120 chars - len(prefix) - len(suffix), minus 3 for "..."
+	budget := 120 - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix)
+	desc := pack.Description
+	if utf8.RuneCountInString(desc) > budget {
+		runes := []rune(desc)
+		desc = string(runes[:budget-3]) + "..."
+	}
+	return prefix + desc + suffix
 }
 
 func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
@@ -661,13 +690,24 @@ func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
 	}
 	sort.Strings(ids)
 	sb.WriteString("\n### Domain Packs\n")
-	sb.WriteString("| Pack | Domain | Version | Projects | Enabled Projects | Fields |\n")
-	sb.WriteString("|------|--------|---------|----------|------------------|--------|\n")
+	sb.WriteString("| Pack | Domain | Version | Projects | Enabled Projects | Fields | Description |\n")
+	sb.WriteString("|------|--------|---------|----------|------------------|--------|-------------|\n")
 	for _, id := range ids {
 		agg := byID[id]
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %d | %d | %d |\n",
+		desc := truncateRunes(agg.pack.Description, 60)
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %d | %d | %d | %s |\n",
 			agg.pack.ID, agg.pack.Domain, agg.pack.Version,
-			agg.projectCount, agg.enabledProjects, len(agg.pack.Fields)))
+			agg.projectCount, agg.enabledProjects, len(agg.pack.Fields), desc))
+	}
+	// Capability notes for disabled built-in packs (zero enabled projects).
+	for _, id := range ids {
+		agg := byID[id]
+		if agg.enabledProjects > 0 || !agg.pack.BuiltIn {
+			continue
+		}
+		note := packCapabilityNote(agg.pack)
+		sb.WriteString(note)
+		sb.WriteByte('\n')
 	}
 }
 
@@ -682,6 +722,14 @@ func sanitizeArg(s string, max int) string {
 		return s[:max]
 	}
 	return s
+}
+
+// truncateRunes truncates s to at most n runes, appending "..." if truncated.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n-3]) + "..."
 }
 
 // ---------------------------------------------------------------------------
