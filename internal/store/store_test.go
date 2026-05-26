@@ -99,6 +99,131 @@ func TestInsertAndSearchNodes(t *testing.T) {
 	})
 }
 
+func TestSearchSectionChunkCandidate(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{
+			ID: "ops.md", Kind: "document", Name: "Operations Manual",
+			QualifiedName: "ops.md", FilePath: "ops.md",
+			StartLine: 1, EndLine: 20, Level: 0, BodyExcerpt: "General operations notes.", UpdatedAt: 1,
+		},
+		{
+			ID: "ops.md#response", Kind: "heading", Name: "Response Playbook",
+			QualifiedName: "ops.md#response", FilePath: "ops.md",
+			StartLine: 8, EndLine: 14, Level: 2, BodyExcerpt: "", UpdatedAt: 1,
+		},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	if err := st.UpsertSectionChunks([]SectionChunk{
+		sectionChunk("ops.md", "ops.md", "hash", "doc", "", "General operations notes.\n## Response Playbook\nIncident response escalation matrix.", 1, 20),
+		sectionChunk("ops.md#response", "ops.md", "hash", "section", "Response Playbook", "## Response Playbook\nIncident response escalation matrix.", 8, 14),
+	}); err != nil {
+		t.Fatalf("UpsertSectionChunks failed: %v", err)
+	}
+
+	results, err := st.Search("incident response", "", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected section-level search result, got none")
+	}
+	if results[0].Node.ID != "ops.md#response" {
+		t.Fatalf("expected heading section first, got %q", results[0].Node.ID)
+	}
+}
+
+func TestSearchFieldWeightedRanking(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{
+			ID: "title.md", Kind: "document", Name: "Budget Policy",
+			QualifiedName: "title.md", FilePath: "title.md",
+			StartLine: 1, EndLine: 5, BodyExcerpt: "Approval workflow.", UpdatedAt: 1,
+		},
+		{
+			ID: "body.md", Kind: "document", Name: "Finance Notes",
+			QualifiedName: "body.md", FilePath: "body.md",
+			StartLine: 1, EndLine: 5, BodyExcerpt: "Budget policy appears in body text only.", UpdatedAt: 1,
+		},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+
+	results, err := st.Search("budget policy", "document", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected two results, got %d", len(results))
+	}
+	if results[0].Node.ID != "title.md" {
+		t.Fatalf("expected title field match first, got %q", results[0].Node.ID)
+	}
+}
+
+func TestSearchGraphRerankingIncomingReferences(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{ID: "a.md", Kind: "document", Name: "Shared Topic", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 5, BodyExcerpt: "shared topic", UpdatedAt: 1},
+		{ID: "b.md", Kind: "document", Name: "Shared Topic", QualifiedName: "b.md", FilePath: "b.md", StartLine: 1, EndLine: 5, BodyExcerpt: "shared topic", UpdatedAt: 1},
+		{ID: "ref1.md", Kind: "document", Name: "Reference One", QualifiedName: "ref1.md", FilePath: "ref1.md", StartLine: 1, EndLine: 5, UpdatedAt: 1},
+		{ID: "ref2.md", Kind: "document", Name: "Reference Two", QualifiedName: "ref2.md", FilePath: "ref2.md", StartLine: 1, EndLine: 5, UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	if err := st.InsertEdges([]Edge{
+		{Source: "ref1.md", Target: "b.md", Kind: "references"},
+		{Source: "ref2.md", Target: "b.md", Kind: "references"},
+	}); err != nil {
+		t.Fatalf("InsertEdges failed: %v", err)
+	}
+
+	results, err := st.Search("shared topic", "document", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) < 2 {
+		t.Fatalf("expected at least two results, got %d", len(results))
+	}
+	if results[0].Node.ID != "b.md" {
+		t.Fatalf("expected graph-boosted document first, got %q", results[0].Node.ID)
+	}
+}
+
+func TestSearchTagExpansionReturnsTaggedDocument(t *testing.T) {
+	st := tempStore(t)
+
+	nodes := []Node{
+		{ID: "policy.md", Kind: "document", Name: "Access Policy", QualifiedName: "policy.md", FilePath: "policy.md", StartLine: 1, EndLine: 5, BodyExcerpt: "Identity controls.", UpdatedAt: 1},
+		{ID: "tag:security", Kind: "tag", Name: "security", QualifiedName: "tag:security", FilePath: "policy.md", StartLine: 0, EndLine: 0, UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	if err := st.InsertEdges([]Edge{{Source: "policy.md", Target: "tag:security", Kind: "tagged"}}); err != nil {
+		t.Fatalf("InsertEdges failed: %v", err)
+	}
+
+	results, err := st.Search("security", "document", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(results) == 0 {
+		t.Fatal("expected tagged document result, got none")
+	}
+	if results[0].Node.ID != "policy.md" {
+		t.Fatalf("expected tagged document first, got %q", results[0].Node.ID)
+	}
+}
+
 func TestFTS5CJK(t *testing.T) {
 	st := tempStore(t)
 

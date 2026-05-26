@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~8,800 lines of Go (+ ~8,670 lines of tests) |
+| Codebase | ~9,390 lines of Go (+ ~8,800 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -386,7 +386,7 @@ DocGraph is inspired by [CodeGraph](https://github.com/colbymchenry/codegraph),
 which builds a knowledge graph from source code symbols using tree-sitter
 and SQLite. DocGraph adopts the same core design:
 
-- **Schema**: `nodes` + `edges` + `files` + `unresolved_refs` + FTS5 + `section_chunks` + `document_metadata` + `governance_metadata` + `research_metadata` + `domain_packs` + `domain_pack_fields` — the graph model extended with section snapshots (F-19), normalized governance metadata (F-21), research provenance (F-22), and domain schema pack registration (F-23). Forward-only versioned migrations (001–008) replace `CREATE TABLE IF NOT EXISTS`.
+- **Schema**: `nodes` + `edges` + `files` + `unresolved_refs` + FTS5 + `section_chunks` + `section_chunks_fts` + `document_metadata` + `governance_metadata` + `research_metadata` + `domain_packs` + `domain_pack_fields` — the graph model extended with section snapshots (F-19), section-level search (F-24), normalized governance metadata (F-21), research provenance (F-22), and domain schema pack registration (F-23). Forward-only versioned migrations (001–009) replace `CREATE TABLE IF NOT EXISTS`.
 - **Pipeline**: scan → parse → store → resolve — the same four-phase indexing
   pipeline, with goldmark replacing tree-sitter for AST extraction.
 - **Two-phase resolution**: raw links are extracted during parsing, then

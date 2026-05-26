@@ -95,6 +95,12 @@ CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_edges_source_kind ON edges(source, kind);
 CREATE INDEX IF NOT EXISTS idx_edges_target_kind ON edges(target, kind);
 CREATE INDEX IF NOT EXISTS idx_unresolved_refs_from_node ON unresolved_refs(from_node_id);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS section_chunks_fts USING fts5(
+    heading_path, text,
+    content='section_chunks', content_rowid='rowid',
+    tokenize='trigram'
+);
 `
 
 // initSchema initialises the schema by running all pending migrations.

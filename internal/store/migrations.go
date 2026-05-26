@@ -272,8 +272,38 @@ CREATE INDEX IF NOT EXISTS idx_domain_packs_enabled ON domain_packs(enabled);
 CREATE INDEX IF NOT EXISTS idx_domain_pack_fields_key ON domain_pack_fields(field_key);
 `
 
+const migration009SQL = `
+CREATE VIRTUAL TABLE IF NOT EXISTS section_chunks_fts USING fts5(
+    heading_path,
+    text,
+    content='section_chunks',
+    content_rowid='rowid',
+    tokenize='trigram'
+);
+
+INSERT INTO section_chunks_fts(rowid, heading_path, text)
+    SELECT rowid, heading_path, text FROM section_chunks;
+
+CREATE TRIGGER section_chunks_fts_insert AFTER INSERT ON section_chunks BEGIN
+    INSERT INTO section_chunks_fts(rowid, heading_path, text)
+    VALUES (NEW.rowid, NEW.heading_path, NEW.text);
+END;
+
+CREATE TRIGGER section_chunks_fts_update AFTER UPDATE ON section_chunks BEGIN
+    INSERT INTO section_chunks_fts(section_chunks_fts, rowid, heading_path, text)
+    VALUES ('delete', OLD.rowid, OLD.heading_path, OLD.text);
+    INSERT INTO section_chunks_fts(rowid, heading_path, text)
+    VALUES (NEW.rowid, NEW.heading_path, NEW.text);
+END;
+
+CREATE TRIGGER section_chunks_fts_delete AFTER DELETE ON section_chunks BEGIN
+    INSERT INTO section_chunks_fts(section_chunks_fts, rowid, heading_path, text)
+    VALUES ('delete', OLD.rowid, OLD.heading_path, OLD.text);
+END;
+`
+
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008.
+// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008; F-24 delivers 009.
 // Future migrations (009+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
@@ -284,6 +314,7 @@ var migrations = []Migration{
 	{Version: 6, Name: "governance_metadata", SQL: migration006SQL},
 	{Version: 7, Name: "research_metadata", SQL: migration007SQL},
 	{Version: 8, Name: "domain_pack_registry", SQL: migration008SQL},
+	{Version: 9, Name: "section_search_fts", SQL: migration009SQL},
 }
 
 func init() {
