@@ -101,6 +101,19 @@ bounded answer.
 | Entity lookup | `entity_type`, `entity_id` |
 | Code documentation surface | `kind=code_file` after `code_doc` is enabled |
 
+Enable `code_doc` with the CLI instead of editing SQLite directly:
+
+```
+docgraph pack enable code_doc <project-path>
+docgraph pack enable --workspace code_doc <workspace-path>
+docgraph pack list <project-path>
+docgraph pack disable code_doc <project-path>
+```
+
+`pack enable code_doc` runs an incremental sync by default, so `kind=code_file`
+results are available after the command completes. `pack disable code_doc`
+removes indexed `code_file` rows.
+
 ---
 
 ## High-Value Use Cases

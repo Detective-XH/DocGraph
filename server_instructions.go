@@ -27,7 +27,7 @@ Only use docgraph_search when you need keyword-level precision, kind filtering, 
 - Neural embeddings are opt-in and agent-driven — DocGraph never calls an LLM itself. See "Neural Embeddings" section below.
 - docgraph_context includes source content by default. Set includeContent=false or lower maxContentBytes when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
-- Code documentation surface (code_doc domain pack, disabled by default): when enabled, indexes file headers, doc comments, and test/example names from .go, .py, .js, .ts, .rs, and similar source files. Use docgraph_search kind=code_file to filter. Enable by setting enabled=1 in the code_doc domain_packs row.
+- Code documentation surface (code_doc domain pack, disabled by default): indexes file headers, doc comments, and test/example names from .go, .py, .js, .ts, .rs, and similar source files. To enable for one project, run: docgraph pack enable code_doc <path>; for workspace mode, run: docgraph pack enable --workspace code_doc <workspace>. Use docgraph pack list <path> to inspect pack state and docgraph_search kind=code_file after enabling. Do not edit the SQLite domain_packs table by hand.
 
 ## CodeGraph interoperability
 
@@ -36,6 +36,7 @@ CodeGraph interoperability is advisory only. DocGraph does not call CodeGraph, r
 When the agent environment exposes codegraph_* MCP tools:
 - Use DocGraph for documentation context, governance metadata, citation paths, context packs, document references, and document impact.
 - Use CodeGraph for source-code structure: symbol lookup, callers/callees, call traces, code impact, route handlers, and multi-language code flow.
+- For docs-code work, use DocGraph code_doc surfaces for comments/tests/examples and CodeGraph for symbol existence or call-flow checks when those tools are available.
 - If .codegraph/ is missing or CodeGraph reports "not initialized", ask the user before running codegraph init -i.
 
 ## Managing .docgraphignore
@@ -75,6 +76,9 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 - docgraph init --install-clients auto <path>: after local setup, auto-detects Claude Code, Codex, Hermes, and OpenCode config locations and writes DocGraph MCP entries where detected.
 - docgraph init --with-skills <path>: after local setup, installs bundled skills into .claude/skills/ (skip-if-exists). Currently ships docgraph-drift-audit for auditing .md file DocGraph compatibility.
 - docgraph install --clients all <path>: non-interactive installer for Claude Code, Codex, Hermes, and OpenCode. Use --workspace to configure workspace mode instead of single-project mode.
+- docgraph pack list <path>: lists domain packs and enabled state.
+- docgraph pack enable code_doc <path>: enables code documentation surfaces and runs an incremental sync so kind=code_file results are available.
+- docgraph pack disable code_doc <path>: disables code documentation surfaces and removes indexed code_file rows.
 
 ## Installing for Claude Code — ask the user first
 

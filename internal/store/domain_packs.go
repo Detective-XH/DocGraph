@@ -176,6 +176,67 @@ func (s *Store) IsPackEnabled(packID string) (bool, error) {
 	return enabled == 1, err
 }
 
+// SetPackEnabled updates the persisted enabled state for a domain pack.
+// The pack must already be registered in domain_packs; Store.Open syncs
+// process-registered packs before callers can reach this method.
+func (s *Store) SetPackEnabled(packID string, enabled bool) error {
+	value := 0
+	if enabled {
+		value = 1
+	}
+	res, err := s.db.Exec(`UPDATE domain_packs SET enabled = ?, loaded_at = ? WHERE id = ?`, value, time.Now().Unix(), packID)
+	if err != nil {
+		return fmt.Errorf("set domain pack %q enabled=%t: %w", packID, enabled, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check domain pack %q update: %w", packID, err)
+	}
+	if affected == 0 {
+		return fmt.Errorf("domain pack %q is not registered", packID)
+	}
+	return nil
+}
+
+// DeleteFilesByNodeKind removes all files whose document node has the given kind.
+// This is used when disabling opt-in indexed surfaces, such as code_doc, so stale
+// nodes and section chunks do not remain searchable after the pack is turned off.
+func (s *Store) DeleteFilesByNodeKind(kind string) (int, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT file_path FROM nodes WHERE kind = ?`, kind)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	var paths []string
+	for rows.Next() {
+		var path string
+		if err := rows.Scan(&path); err != nil {
+			return 0, err
+		}
+		paths = append(paths, path)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	for _, path := range paths {
+		if err := s.DeleteSectionChunksByFile(path); err != nil {
+			return 0, fmt.Errorf("delete section chunks for %s: %w", path, err)
+		}
+		if err := s.DeleteDocumentMetadataByFile(path); err != nil {
+			return 0, fmt.Errorf("delete metadata for %s: %w", path, err)
+		}
+		if err := s.DeleteEntityData(path); err != nil {
+			return 0, fmt.Errorf("delete entity data for %s: %w", path, err)
+		}
+		if err := s.DeleteFileData(path); err != nil {
+			return 0, fmt.Errorf("delete file data for %s: %w", path, err)
+		}
+	}
+	return len(paths), nil
+}
+
 // GetDomainPackStats returns aggregate pack counts.
 func (s *Store) GetDomainPackStats() (DomainPackStats, error) {
 	var stats DomainPackStats

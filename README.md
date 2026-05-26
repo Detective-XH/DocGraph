@@ -43,7 +43,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~41,170 lines of Go (+ ~37,130 lines of tests) |
+| Codebase | ~41,400 lines of Go (+ ~37,240 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -70,6 +70,9 @@ Requires Go 1.25 or later.
 ```
 docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
 docgraph install [--clients auto|all|LIST] [--workspace] [--scope user] [--update-skills] [path]      # Configure MCP clients without re-initializing
+docgraph pack list [--workspace] <path>                         # List domain packs and enabled state
+docgraph pack enable [--workspace] [--no-sync] <pack-id> <path>  # Enable a domain pack; code_doc syncs by default
+docgraph pack disable [--workspace] <pack-id> <path>             # Disable a domain pack; code_doc rows are removed
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
@@ -220,7 +223,10 @@ nodes when the `code_doc` domain pack is enabled.
 - Image-only PDFs detected via average chars/page and flagged with `warning: image-only-pdf`
 
 **Code documentation surfaces (opt-in)** — up to 1 MB per file:
-- Enable the `code_doc` domain pack to index file headers, exported doc comments, test names, and example names
+- Enable the `code_doc` domain pack to index file headers, exported doc comments, test names, and example names:
+  - Single project: `docgraph pack enable code_doc /path/to/project`
+  - Workspace: `docgraph pack enable --workspace code_doc /path/to/workspace`
+  - Inspect state: `docgraph pack list /path/to/project`
 - Supported languages include Go, Python, Ruby, JavaScript, TypeScript, Svelte, Vue, Rust, C, C++, Java, Swift, C#, PHP, Kotlin, Dart, Lua, Luau, Pascal, SQL, and Liquid
 - This is shallow documentation indexing only; CodeGraph remains the intended tool for call graphs, type resolution, routes, and code impact
 
@@ -442,6 +448,11 @@ CodeGraph interoperability currently ships as an advisory handoff layer in the
 MCP server instructions. DocGraph does not call CodeGraph, read `.codegraph/`,
 or import CodeGraph symbol anchors. The reserved `codegraph_anchor` metadata
 field stays empty until CodeGraph exposes a stable export/API contract.
+
+For docs-code work, enable DocGraph's `code_doc` pack for comments, tests,
+examples, and file headers, then hand symbol existence, callers/callees, call
+traces, routes, and code impact questions to `codegraph_*` tools when the agent
+environment exposes them.
 
 ## Inspired By
 

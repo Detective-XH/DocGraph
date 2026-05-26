@@ -14,6 +14,8 @@ func main() {
 		cmdInit(os.Args[2:])
 	case "install":
 		cmdInstall(os.Args[2:])
+	case "pack":
+		cmdPack(os.Args[2:])
 	case "index":
 		cmdIndex(os.Args[2:])
 	case "sync":
@@ -31,7 +33,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [--update-skills] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--update-skills] [path]\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [--update-skills] [path]\n  install [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--update-skills] [path]\n  pack list [--workspace] <path>\n  pack enable [--workspace] [--no-sync] <pack-id> <path>\n  pack disable [--workspace] <pack-id> <path>\n  index [--force] [--threshold N] <path>\n  sync [--threshold N] <path>\n  status <path>\n  serve [--threshold N] --path <path>\n  serve [--threshold N] --workspace <dir>\n  version\n")
 	os.Exit(1)
 }
 
