@@ -304,7 +304,7 @@ END;
 
 // migrations is the ordered, append-only list of forward-only migrations.
 // F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008; F-24 delivers 009.
-// Future migrations (009+) are added by their corresponding F-feature.
+// Future migrations (010+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 	{Version: 2, Name: "file_history", SQL: migration002SQL},

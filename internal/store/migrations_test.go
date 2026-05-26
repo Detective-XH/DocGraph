@@ -448,7 +448,7 @@ func TestMigration006_AfterFive(t *testing.T) {
 	}
 }
 
-// ── Test 12: Migrations 005–008 are idempotent (file-backed DB, second Open) ─
+// ── Test 12: Migrations 005–009 are idempotent (file-backed DB, second Open) ─
 
 func TestMigration005To007_Idempotent(t *testing.T) {
 	dbPath := t.TempDir() + "/test_idempotent.db"
