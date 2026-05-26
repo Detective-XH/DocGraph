@@ -41,11 +41,19 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 		if err != nil {
 			return fmt.Errorf("abs path %s: %w", p, err)
 		}
-		if err := addRecursive(w, abs); err != nil {
+		// Add only the root synchronously so the event loop can start immediately.
+		// Subdirectory expansion runs in the background; new dirs created after
+		// startup are handled by the Create-event handler below.
+		if err := w.Add(abs); err != nil {
 			return fmt.Errorf("watch %s: %w", abs, err)
 		}
 		roots = append(roots, abs)
 	}
+	go func() {
+		for _, abs := range roots {
+			_ = addRecursive(w, abs)
+		}
+	}()
 
 	var (
 		mu      sync.Mutex

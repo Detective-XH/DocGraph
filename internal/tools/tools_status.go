@@ -20,6 +20,10 @@ var statusTool = mcp.NewTool("docgraph_status",
 func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	var sb strings.Builder
 
+	if h.indexing.Load() {
+		sb.WriteString("Indexing: in progress\n\n")
+	}
+
 	if h.workspace != nil {
 		allStats, err := h.workspace.GetAllStats()
 		if err != nil {

@@ -51,13 +51,15 @@ func cmdServe(args []string) {
 		defer w.Close()
 		w.NoGitignore = noGitignore
 		w.SimilarityThreshold = similarityThreshold
-		tools.RegisterWorkspace(srv, w)
-		doSync := func() { w.IndexAll() }
-		if warm {
-			go doSync()
-		} else {
-			doSync()
+		setIndexing := tools.RegisterWorkspace(srv, w)
+		doSync := func() {
+			defer setIndexing(false)
+			w.IndexAll()
 		}
+		if !warm {
+			setIndexing(true)
+		}
+		go doSync()
 		var paths []string
 		for _, proj := range w.Projects {
 			paths = append(paths, proj.Path)
@@ -83,17 +85,17 @@ func cmdServe(args []string) {
 		warm := dbExists(path)
 		st := openStore(path)
 		defer st.Close()
-		tools.Register(srv, st, absRoot)
+		setIndexing := tools.Register(srv, st, absRoot)
 		doSync := func() {
+			defer setIndexing(false)
 			if err := indexStore(absRoot, st); err != nil {
 				fmt.Fprintf(os.Stderr, "[sync] %v\n", err)
 			}
 		}
-		if warm {
-			go doSync()
-		} else {
-			doSync()
+		if !warm {
+			setIndexing(true)
 		}
+		go doSync()
 		go func() {
 			err := watcher.Watch([]string{absRoot}, func(projectPath string, _ []string) {
 				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
