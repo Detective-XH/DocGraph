@@ -45,7 +45,9 @@ func Open(root string) (*Workspace, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &Workspace{Root: abs}
+
+	type candidate struct{ name, dir string }
+	var candidates []candidate
 	for _, e := range entries {
 		if !e.IsDir() || e.Name()[0] == '.' {
 			continue
@@ -58,11 +60,37 @@ func Open(root string) (*Workspace, error) {
 		if err := os.MkdirAll(filepath.Join(dir, ".docgraph"), 0o755); err != nil {
 			return nil, err
 		}
-		st, err := store.Open(filepath.Join(dir, ".docgraph", "docgraph.db"))
-		if err != nil {
-			return nil, err
+		candidates = append(candidates, candidate{e.Name(), dir})
+	}
+
+	// Open all project stores in parallel; bootstrapSchema + SyncDomainPacks dominate startup time.
+	type openResult struct {
+		proj *Project
+		err  error
+	}
+	results := make([]openResult, len(candidates))
+	var wg sync.WaitGroup
+	for i, c := range candidates {
+		wg.Add(1)
+		go func(i int, c candidate) {
+			defer wg.Done()
+			st, err := store.Open(filepath.Join(c.dir, ".docgraph", "docgraph.db"))
+			results[i] = openResult{&Project{Name: c.name, Path: c.dir, Store: st}, err}
+		}(i, c)
+	}
+	wg.Wait()
+
+	w := &Workspace{Root: abs}
+	for _, r := range results {
+		if r.err != nil {
+			for _, r2 := range results {
+				if r2.proj != nil && r2.proj.Store != nil {
+					r2.proj.Store.Close()
+				}
+			}
+			return nil, r.err
 		}
-		w.Projects = append(w.Projects, &Project{Name: e.Name(), Path: dir, Store: st})
+		w.Projects = append(w.Projects, r.proj)
 	}
 	sort.Slice(w.Projects, func(i, j int) bool { return w.Projects[i].Name < w.Projects[j].Name })
 	return w, nil
