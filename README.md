@@ -130,7 +130,7 @@ Available skills bundled in the binary:
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) |
-| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process and research drift audit reports |
+| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process, research, and (when `code_doc` is enabled) docs-code drift audit reports |
 | 3 | `docgraph_references` | Incoming links (who references this doc) |
 | 4 | `docgraph_links` | Outgoing links (what this doc links to) |
 | 5 | `docgraph_impact` | Blast radius analysis (BFS over incoming refs, configurable depth) |

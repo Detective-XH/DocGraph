@@ -25,7 +25,7 @@ const (
 	docxMaxTotalBytes   = 50 * 1024 * 1024 // 50 MB total uncompressed budget
 	docxMaxEntries      = 500
 	docxBodyExcerptCap  = 500
-	docxSectionTextCap  = 10 * 1024 // 10 KB (H-19)
+	docxSectionTextCap  = 10 * 1024 // 10 KB section text cap
 )
 
 // headingStyleRe matches Heading1..Heading6 and variants like "Heading 1", "heading-1".
