@@ -168,6 +168,9 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			if gov, err := st.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
 				sb.WriteString(appendGovernanceSection(gov))
 			}
+			if research, err := st.GetResearchMetadata(node.ID); err == nil && !store.IsResearchEmpty(research) {
+				sb.WriteString(appendResearchSection(research))
+			}
 		}
 	}
 
@@ -299,6 +302,9 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	if s := h.getStoreForNode(node.ID); s != nil {
 		if gov, err := s.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
 			sb.WriteString(appendGovernanceSection(gov))
+		}
+		if research, err := s.GetResearchMetadata(node.ID); err == nil && !store.IsResearchEmpty(research) {
+			sb.WriteString(appendResearchSection(research))
 		}
 	}
 
@@ -537,7 +543,6 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-
 // appendGovernanceSection formats governance metadata as a Markdown section string.
 func appendGovernanceSection(g *store.GovernanceRecord) string {
 	if store.IsGovernanceEmpty(g) {
@@ -577,6 +582,49 @@ func appendGovernanceSection(g *store.GovernanceRecord) string {
 	}
 	if g.AllowedAudience != "" {
 		sb.WriteString(fmt.Sprintf("**Audience:** %s\n", g.AllowedAudience))
+	}
+	return sb.String()
+}
+
+// appendResearchSection formats research provenance metadata as a Markdown section string.
+func appendResearchSection(r *store.ResearchRecord) string {
+	if store.IsResearchEmpty(r) {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n### Research Provenance\n")
+	if r.ClaimID != "" {
+		sb.WriteString(fmt.Sprintf("**Claim ID:** %s\n", r.ClaimID))
+	}
+	if r.Confidence != "" {
+		sb.WriteString(fmt.Sprintf("**Confidence:** %s\n", r.Confidence))
+	}
+	if r.SourceType != "" {
+		sb.WriteString(fmt.Sprintf("**Source type:** %s\n", r.SourceType))
+	}
+	if r.AnalystStatus != "" {
+		sb.WriteString(fmt.Sprintf("**Analyst status:** %s\n", r.AnalystStatus))
+	}
+	if r.EventDate != "" {
+		sb.WriteString(fmt.Sprintf("**Event date:** %s\n", r.EventDate))
+	}
+	if r.AssessmentDate != "" {
+		sb.WriteString(fmt.Sprintf("**Assessment date:** %s\n", r.AssessmentDate))
+	}
+	if r.LastVerified != "" {
+		sb.WriteString(fmt.Sprintf("**Last verified:** %s\n", r.LastVerified))
+	}
+	if r.ValidUntil != "" {
+		sb.WriteString(fmt.Sprintf("**Valid until:** %s\n", r.ValidUntil))
+	}
+	if r.Client != "" {
+		sb.WriteString(fmt.Sprintf("**Client:** %s\n", r.Client))
+	}
+	if r.DeliverableID != "" {
+		sb.WriteString(fmt.Sprintf("**Deliverable ID:** %s\n", r.DeliverableID))
+	}
+	if r.Evidence != "" {
+		sb.WriteString(fmt.Sprintf("**Evidence:** %s\n", r.Evidence))
 	}
 	return sb.String()
 }

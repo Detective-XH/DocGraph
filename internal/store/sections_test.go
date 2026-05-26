@@ -38,14 +38,14 @@ func TestMigration004_FreshDB(t *testing.T) {
 		t.Fatalf("RunMigrations on fresh DB: %v", err)
 	}
 
-	// 6 migration rows (001–006).
-	if n := countMigrationRows(db); n != 6 {
-		t.Errorf("expected 6 migration rows, got %d", n)
+	// 7 migration rows (001–007).
+	if n := countMigrationRows(db); n != 7 {
+		t.Errorf("expected 7 migration rows, got %d", n)
 	}
 
-	// PRAGMA user_version = 6.
-	if v := getUserVersion(db); v != 6 {
-		t.Errorf("expected user_version=6, got %d", v)
+	// PRAGMA user_version = 7.
+	if v := getUserVersion(db); v != 7 {
+		t.Errorf("expected user_version=7, got %d", v)
 	}
 
 	// section_chunks table must exist.
@@ -60,13 +60,16 @@ func TestMigration004_FreshDB(t *testing.T) {
 	if !tableExists(db, "governance_metadata") {
 		t.Error("governance_metadata table not found after migration 006")
 	}
+	if !tableExists(db, "research_metadata") {
+		t.Error("research_metadata table not found after migration 007")
+	}
 
-	// Idempotent: run again, still 6 rows, no error.
+	// Idempotent: run again, still 7 rows, no error.
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
-	if n := countMigrationRows(db); n != 6 {
-		t.Errorf("expected 6 migration rows after double run, got %d", n)
+	if n := countMigrationRows(db); n != 7 {
+		t.Errorf("expected 7 migration rows after double run, got %d", n)
 	}
 }
 

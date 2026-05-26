@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/parser"
+	"github.com/Detective-XH/docgraph/internal/store"
 )
 
 func TestF22ResearchProvenanceFixtures(t *testing.T) {
@@ -100,6 +101,55 @@ func TestF22ResearchProvenanceFixtureShapes(t *testing.T) {
 	}
 	if got := invalid["event_date"]; got != "not-a-date" {
 		t.Fatalf("invalid event_date = %v, want preserved value", got)
+	}
+}
+
+func TestF22ResearchProvenanceFixtureIndexesResearchMetadata(t *testing.T) {
+	dir := filepath.Join("testdata", "research-provenance")
+	source, err := os.ReadFile(filepath.Join(dir, "valid-claim.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := parser.ParseFile(filepath.Join(dir, "valid-claim.md"), "valid-claim.md", source, "hash-valid-claim")
+	if err != nil {
+		t.Fatalf("ParseFile: %v", err)
+	}
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "docgraph.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	if err := st.InsertNodes([]store.Node{res.DocNode}); err != nil {
+		t.Fatalf("InsertNodes: %v", err)
+	}
+	if err := st.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+		t.Fatalf("InsertDocumentMetadata: %v", err)
+	}
+	if err := st.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+		t.Fatalf("UpsertResearchMetadata: %v", err)
+	}
+
+	research, err := st.GetResearchMetadata(res.DocNode.ID)
+	if err != nil {
+		t.Fatalf("GetResearchMetadata: %v", err)
+	}
+	if research == nil {
+		t.Fatal("expected research metadata projection")
+	}
+	if research.ClaimID != "claim-alpha-001" {
+		t.Errorf("ClaimID = %q, want claim-alpha-001", research.ClaimID)
+	}
+	if research.SourceType != "primary" {
+		t.Errorf("SourceType = %q, want primary", research.SourceType)
+	}
+	if research.Confidence != "high" {
+		t.Errorf("Confidence = %q, want high", research.Confidence)
+	}
+	if research.Evidence == "" {
+		t.Error("expected evidence projection to be populated")
 	}
 }
 

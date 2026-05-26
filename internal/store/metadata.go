@@ -35,25 +35,43 @@ type GovernanceRecord struct {
 	UpdatedAt       int64
 }
 
+// ResearchRecord is the typed projection of research provenance fields for a document node.
+type ResearchRecord struct {
+	NodeID         string
+	ClaimID        string
+	Evidence       string
+	SourceType     string
+	Confidence     string
+	EventDate      string
+	AssessmentDate string
+	LastVerified   string
+	ValidUntil     string
+	AnalystStatus  string
+	Client         string
+	DeliverableID  string
+	UpdatedAt      int64
+}
+
 // MetadataStats reports aggregate metadata index state for docgraph_status.
 type MetadataStats struct {
 	TotalDocs        int
 	DocsWithMetadata int
+	DocsWithResearch int
 }
 
 // valid source values (application-level enum; not SQL CHECK to allow future extension).
 var validSources = map[string]bool{
-	"frontmatter":   true,
-	"extractor":     true,
+	"frontmatter":    true,
+	"extractor":      true,
 	"skill_advisory": true,
-	"derived":       true,
+	"derived":        true,
 }
 
 // sourcePriority defines authority ordering: higher value = higher authority.
 var sourcePriority = map[string]int{
-	"frontmatter":   4,
-	"extractor":     3,
-	"derived":       2,
+	"frontmatter":    4,
+	"extractor":      3,
+	"derived":        2,
 	"skill_advisory": 1,
 }
 
@@ -70,6 +88,21 @@ var governanceKeys = map[string]string{
 	"sensitivity":      "sensitivity",
 	"allowed_audience": "allowed_audience",
 	"canonical_source": "canonical_source",
+}
+
+// researchKeys is the set of frontmatter keys that project into research_metadata.
+var researchKeys = map[string]string{
+	"claim_id":        "claim_id",
+	"evidence":        "evidence",
+	"source_type":     "source_type",
+	"confidence":      "confidence",
+	"event_date":      "event_date",
+	"assessment_date": "assessment_date",
+	"last_verified":   "last_verified",
+	"valid_until":     "valid_until",
+	"analyst_status":  "analyst_status",
+	"client":          "client",
+	"deliverable_id":  "deliverable_id",
 }
 
 // InsertDocumentMetadata upserts normalized metadata tuples for a document node.
@@ -120,8 +153,8 @@ func (s *Store) InsertDocumentMetadata(nodeID string, tuples []MetadataTuple) er
 func (s *Store) UpsertGovernanceMetadata(nodeID string, tuples []MetadataTuple) error {
 	// Build winning value per governance key.
 	type winner struct {
-		value    string
-		priority int
+		value     string
+		priority  int
 		updatedAt int64
 	}
 	now := time.Now().Unix()
@@ -207,10 +240,113 @@ func (s *Store) UpsertGovernanceMetadata(nodeID string, tuples []MetadataTuple) 
 	return err
 }
 
-// DeleteDocumentMetadataByFile removes all document_metadata (and via FK cascade,
-// governance_metadata) rows for nodes belonging to the given file path.
+// UpsertResearchMetadata projects research provenance keys from tuples into research_metadata,
+// applying the same source authority ordering as governance metadata.
+func (s *Store) UpsertResearchMetadata(nodeID string, tuples []MetadataTuple) error {
+	type winner struct {
+		value     string
+		priority  int
+		updatedAt int64
+	}
+	now := time.Now().Unix()
+	winners := make(map[string]winner, len(researchKeys))
+
+	for _, t := range tuples {
+		col, ok := researchKeys[t.Key]
+		if !ok {
+			continue
+		}
+		prio := sourcePriority[t.Source]
+		if w, exists := winners[col]; exists {
+			if prio < w.priority || (prio == w.priority && now <= w.updatedAt) {
+				continue
+			}
+		}
+		winners[col] = winner{value: t.Value, priority: prio, updatedAt: now}
+	}
+
+	if len(winners) == 0 {
+		return nil
+	}
+
+	rec := &ResearchRecord{NodeID: nodeID, UpdatedAt: now}
+	if w, ok := winners["claim_id"]; ok {
+		rec.ClaimID = w.value
+	}
+	if w, ok := winners["evidence"]; ok {
+		rec.Evidence = w.value
+	}
+	if w, ok := winners["source_type"]; ok {
+		rec.SourceType = w.value
+	}
+	if w, ok := winners["confidence"]; ok {
+		rec.Confidence = w.value
+	}
+	if w, ok := winners["event_date"]; ok {
+		rec.EventDate = w.value
+	}
+	if w, ok := winners["assessment_date"]; ok {
+		rec.AssessmentDate = w.value
+	}
+	if w, ok := winners["last_verified"]; ok {
+		rec.LastVerified = w.value
+	}
+	if w, ok := winners["valid_until"]; ok {
+		rec.ValidUntil = w.value
+	}
+	if w, ok := winners["analyst_status"]; ok {
+		rec.AnalystStatus = w.value
+	}
+	if w, ok := winners["client"]; ok {
+		rec.Client = w.value
+	}
+	if w, ok := winners["deliverable_id"]; ok {
+		rec.DeliverableID = w.value
+	}
+
+	_, err := s.db.Exec(`
+		INSERT INTO research_metadata(
+			node_id, claim_id, evidence, source_type, confidence,
+			event_date, assessment_date, last_verified, valid_until,
+			analyst_status, client, deliverable_id, updated_at
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(node_id) DO UPDATE SET
+			claim_id        = excluded.claim_id,
+			evidence        = excluded.evidence,
+			source_type     = excluded.source_type,
+			confidence      = excluded.confidence,
+			event_date      = excluded.event_date,
+			assessment_date = excluded.assessment_date,
+			last_verified   = excluded.last_verified,
+			valid_until     = excluded.valid_until,
+			analyst_status  = excluded.analyst_status,
+			client          = excluded.client,
+			deliverable_id  = excluded.deliverable_id,
+			updated_at      = excluded.updated_at
+	`,
+		rec.NodeID, rec.ClaimID, rec.Evidence, rec.SourceType, rec.Confidence,
+		rec.EventDate, rec.AssessmentDate, rec.LastVerified, rec.ValidUntil,
+		rec.AnalystStatus, rec.Client, rec.DeliverableID, rec.UpdatedAt,
+	)
+	return err
+}
+
+// DeleteDocumentMetadataByFile removes normalized metadata and typed projections
+// for nodes belonging to the given file path.
 // Called before re-indexing a file to ensure a clean slate.
 func (s *Store) DeleteDocumentMetadataByFile(filePath string) error {
+	if _, err := s.db.Exec(`
+		DELETE FROM governance_metadata
+		WHERE node_id IN (SELECT id FROM nodes WHERE file_path = ?)
+	`, filePath); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`
+		DELETE FROM research_metadata
+		WHERE node_id IN (SELECT id FROM nodes WHERE file_path = ?)
+	`, filePath); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`
 		DELETE FROM document_metadata
 		WHERE node_id IN (SELECT id FROM nodes WHERE file_path = ?)
@@ -273,6 +409,32 @@ func (s *Store) GetGovernanceMetadata(nodeID string) (*GovernanceRecord, error) 
 	return &rec, nil
 }
 
+// GetResearchMetadata returns the typed research provenance projection for a node.
+// Returns nil, nil when no research data exists.
+func (s *Store) GetResearchMetadata(nodeID string) (*ResearchRecord, error) {
+	row := s.db.QueryRow(`
+		SELECT node_id, claim_id, evidence, source_type, confidence,
+		       event_date, assessment_date, last_verified, valid_until,
+		       analyst_status, client, deliverable_id, updated_at
+		FROM research_metadata
+		WHERE node_id = ?
+	`, nodeID)
+
+	var rec ResearchRecord
+	err := row.Scan(
+		&rec.NodeID, &rec.ClaimID, &rec.Evidence, &rec.SourceType, &rec.Confidence,
+		&rec.EventDate, &rec.AssessmentDate, &rec.LastVerified, &rec.ValidUntil,
+		&rec.AnalystStatus, &rec.Client, &rec.DeliverableID, &rec.UpdatedAt,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &rec, nil
+}
+
 // GetMetadataStats returns counts used by docgraph_status.
 func (s *Store) GetMetadataStats() (MetadataStats, error) {
 	var stats MetadataStats
@@ -281,6 +443,10 @@ func (s *Store) GetMetadataStats() (MetadataStats, error) {
 		return stats, err
 	}
 	err = s.db.QueryRow(`SELECT COUNT(DISTINCT node_id) FROM document_metadata`).Scan(&stats.DocsWithMetadata)
+	if err != nil {
+		return stats, err
+	}
+	err = s.db.QueryRow(`SELECT COUNT(DISTINCT node_id) FROM research_metadata`).Scan(&stats.DocsWithResearch)
 	return stats, err
 }
 
@@ -330,6 +496,59 @@ func (s *Store) GetNodesByGovernance(status, sensitivity string, limit int) ([]N
 	return out, rows.Err()
 }
 
+// GetNodesByResearch returns document nodes whose research_metadata matches all
+// non-empty filters. limit 0 means no cap.
+func (s *Store) GetNodesByResearch(claimID, sourceType, confidence, analystStatus string, limit int) ([]Node, error) {
+	args := []interface{}{}
+	where := "1=1"
+	if claimID != "" {
+		where += " AND rm.claim_id = ?"
+		args = append(args, claimID)
+	}
+	if sourceType != "" {
+		where += " AND rm.source_type = ?"
+		args = append(args, sourceType)
+	}
+	if confidence != "" {
+		where += " AND rm.confidence = ?"
+		args = append(args, confidence)
+	}
+	if analystStatus != "" {
+		where += " AND rm.analyst_status = ?"
+		args = append(args, analystStatus)
+	}
+	limitClause := ""
+	if limit > 0 {
+		limitClause = fmt.Sprintf(" LIMIT %d", limit)
+	}
+	q := fmt.Sprintf(`
+		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
+		       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at
+		FROM research_metadata rm
+		JOIN nodes n ON n.id = rm.node_id
+		WHERE %s
+		ORDER BY n.id
+		%s
+	`, where, limitClause)
+
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []Node
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Name, &n.QualifiedName, &n.FilePath,
+			&n.StartLine, &n.EndLine, &n.Level, &n.Metadata, &n.BodyExcerpt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // IsGovernanceEmpty reports whether a GovernanceRecord has any non-empty fields.
 func IsGovernanceEmpty(r *GovernanceRecord) bool {
 	if r == nil {
@@ -339,4 +558,15 @@ func IsGovernanceEmpty(r *GovernanceRecord) bool {
 		r.Department == "" && r.EffectiveDate == "" && r.ReviewDue == "" &&
 		r.Supersedes == "" && r.SupersededBy == "" && r.Sensitivity == "" &&
 		r.AllowedAudience == "" && r.CanonicalSource == ""
+}
+
+// IsResearchEmpty reports whether a ResearchRecord has any non-empty fields.
+func IsResearchEmpty(r *ResearchRecord) bool {
+	if r == nil {
+		return true
+	}
+	return r.ClaimID == "" && r.Evidence == "" && r.SourceType == "" &&
+		r.Confidence == "" && r.EventDate == "" && r.AssessmentDate == "" &&
+		r.LastVerified == "" && r.ValidUntil == "" && r.AnalystStatus == "" &&
+		r.Client == "" && r.DeliverableID == ""
 }

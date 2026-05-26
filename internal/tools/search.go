@@ -14,12 +14,16 @@ import (
 // ---------------------------------------------------------------------------
 
 var searchTool = mcp.NewTool("docgraph_search",
-	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use status/sensitivity to filter by governance metadata."),
+	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use status/sensitivity for governance filters and claim_id/source_type/confidence/analyst_status for research provenance filters."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms")),
 	mcp.WithString("kind", mcp.Description("Filter by node kind: document, heading, definition, tag")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
 	mcp.WithString("status", mcp.Description("Filter by governance status (e.g. approved, draft, superseded). Requires metadata reindex.")),
 	mcp.WithString("sensitivity", mcp.Description("Filter by sensitivity (e.g. public, internal, confidential, restricted). Requires metadata reindex.")),
+	mcp.WithString("claim_id", mcp.Description("Filter by research claim_id. Requires metadata reindex.")),
+	mcp.WithString("source_type", mcp.Description("Filter by research source_type (e.g. primary, secondary, internal). Requires metadata reindex.")),
+	mcp.WithString("confidence", mcp.Description("Filter by research confidence (e.g. high, medium, low). Requires metadata reindex.")),
+	mcp.WithString("analyst_status", mcp.Description("Filter by research analyst_status. Requires metadata reindex.")),
 )
 
 var filesTool = mcp.NewTool("docgraph_files",
@@ -48,43 +52,45 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	limit := getIntArg(args, "limit", 10)
 	statusFilter := sanitizeArg(getStringArg(args, "status", ""), 100)
 	sensitivityFilter := sanitizeArg(getStringArg(args, "sensitivity", ""), 100)
+	claimIDFilter := sanitizeArg(getStringArg(args, "claim_id", ""), 100)
+	sourceTypeFilter := sanitizeArg(getStringArg(args, "source_type", ""), 100)
+	confidenceFilter := sanitizeArg(getStringArg(args, "confidence", ""), 100)
+	analystStatusFilter := sanitizeArg(getStringArg(args, "analyst_status", ""), 100)
 
 	useGovernanceFilter := statusFilter != "" || sensitivityFilter != ""
+	useResearchFilter := claimIDFilter != "" || sourceTypeFilter != "" || confidenceFilter != "" || analystStatusFilter != ""
 
 	var sb strings.Builder
 
-	if useGovernanceFilter {
-		// Governance-filtered path: query governance_metadata then intersect with FTS results.
-		var govNodes []store.Node
-		var govErr error
+	if useGovernanceFilter || useResearchFilter {
+		var candidateNodes []store.Node
 		if h.workspace != nil {
-			for _, p := range h.workspace.Projects {
-				ns, err := p.Store.GetNodesByGovernance(statusFilter, sensitivityFilter, limit)
-				if err == nil {
-					govNodes = append(govNodes, ns...)
-				}
-			}
+			candidateNodes = h.getWorkspaceMetadataFilteredNodes(statusFilter, sensitivityFilter, claimIDFilter, sourceTypeFilter, confidenceFilter, analystStatusFilter, 0)
 		} else {
-			govNodes, govErr = h.store.GetNodesByGovernance(statusFilter, sensitivityFilter, limit)
-			if govErr != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("governance filter failed: %v", govErr)), nil
+			ns, err := h.getMetadataFilteredNodes(h.store, statusFilter, sensitivityFilter, claimIDFilter, sourceTypeFilter, confidenceFilter, analystStatusFilter, 0)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("metadata filter failed: %v", err)), nil
 			}
+			candidateNodes = ns
 		}
 
 		// Further narrow by FTS query if a query is provided.
-		ftsResults, _ := func() ([]store.SearchResult, error) {
+		ftsResults, err := func() ([]store.SearchResult, error) {
 			if h.workspace != nil {
 				return h.workspace.Search(query, kind, limit*4)
 			}
 			return h.store.Search(query, kind, limit*4)
 		}()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+		}
 		ftsIDs := make(map[string]bool, len(ftsResults))
 		for _, r := range ftsResults {
 			ftsIDs[r.Node.ID] = true
 		}
 
 		var filtered []store.Node
-		for _, n := range govNodes {
+		for _, n := range candidateNodes {
 			if ftsIDs[n.ID] {
 				filtered = append(filtered, n)
 			}
@@ -93,8 +99,9 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 			filtered = filtered[:limit]
 		}
 
-		filters := fmt.Sprintf("status=%q sensitivity=%q", statusFilter, sensitivityFilter)
-		sb.WriteString(fmt.Sprintf("## Search Results for %q [governance filter: %s]\n\nFound %d results.\n", query, filters, len(filtered)))
+		filters := fmt.Sprintf("status=%q sensitivity=%q claim_id=%q source_type=%q confidence=%q analyst_status=%q",
+			statusFilter, sensitivityFilter, claimIDFilter, sourceTypeFilter, confidenceFilter, analystStatusFilter)
+		sb.WriteString(fmt.Sprintf("## Search Results for %q [metadata filter: %s]\n\nFound %d results.\n", query, filters, len(filtered)))
 		if len(filtered) == 0 {
 			reindexVal, reindexFound, _ := func() (string, bool, error) {
 				if h.store != nil {
@@ -153,6 +160,60 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func (h *handler) getWorkspaceMetadataFilteredNodes(status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) []store.Node {
+	var out []store.Node
+	for _, p := range h.workspace.Projects {
+		ns, err := h.getMetadataFilteredNodes(p.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus, limit)
+		if err == nil {
+			out = append(out, ns...)
+		}
+	}
+	return out
+}
+
+func (h *handler) getMetadataFilteredNodes(st *store.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) ([]store.Node, error) {
+	useGovernance := status != "" || sensitivity != ""
+	useResearch := claimID != "" || sourceType != "" || confidence != "" || analystStatus != ""
+
+	var candidates []store.Node
+	if useResearch {
+		nodes, err := st.GetNodesByResearch(claimID, sourceType, confidence, analystStatus, limit)
+		if err != nil {
+			return nil, err
+		}
+		candidates = nodes
+	} else if useGovernance {
+		nodes, err := st.GetNodesByGovernance(status, sensitivity, limit)
+		if err != nil {
+			return nil, err
+		}
+		candidates = nodes
+	}
+
+	if useResearch && useGovernance {
+		govNodes, err := st.GetNodesByGovernance(status, sensitivity, 0)
+		if err != nil {
+			return nil, err
+		}
+		govIDs := make(map[string]bool, len(govNodes))
+		for _, n := range govNodes {
+			govIDs[n.ID] = true
+		}
+		filtered := candidates[:0]
+		for _, n := range candidates {
+			if govIDs[n.ID] {
+				filtered = append(filtered, n)
+			}
+		}
+		candidates = filtered
+	}
+
+	if limit > 0 && len(candidates) > limit {
+		candidates = candidates[:limit]
+	}
+	return candidates, nil
 }
 
 func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -358,6 +419,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		if metaStats, err := h.store.GetMetadataStats(); err == nil {
 			sb.WriteString("\n### Metadata Index\n")
 			sb.WriteString(fmt.Sprintf("Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs))
+			sb.WriteString(fmt.Sprintf("Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs))
 			if reindexRequired {
 				scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope)
 				if scope == "metadata" {

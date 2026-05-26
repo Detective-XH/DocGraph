@@ -131,18 +131,18 @@ func TestRunMigrations_FreshDB(t *testing.T) {
 		t.Fatalf("RunMigrations on fresh DB: %v", err)
 	}
 
-	// 6 rows in schema_migrations (001–006).
-	if n := countMigrationRows(db); n != 6 {
-		t.Errorf("expected 6 migration rows, got %d", n)
+	// 7 rows in schema_migrations (001–007).
+	if n := countMigrationRows(db); n != 7 {
+		t.Errorf("expected 7 migration rows, got %d", n)
 	}
 
-	// PRAGMA user_version = 6.
-	if v := getUserVersion(db); v != 6 {
-		t.Errorf("expected user_version=6, got %d", v)
+	// PRAGMA user_version = 7.
+	if v := getUserVersion(db); v != 7 {
+		t.Errorf("expected user_version=7, got %d", v)
 	}
 
 	// All expected tables exist.
-	for _, tbl := range []string{"nodes", "edges", "files", "unresolved_refs", "project_metadata", "file_history", "embeddings", "section_chunks", "document_metadata", "governance_metadata", "nodes_fts", "schema_migrations"} {
+	for _, tbl := range []string{"nodes", "edges", "files", "unresolved_refs", "project_metadata", "file_history", "embeddings", "section_chunks", "document_metadata", "governance_metadata", "research_metadata", "nodes_fts", "schema_migrations"} {
 		if !tableExists(db, tbl) {
 			t.Errorf("table %q not found after fresh migration", tbl)
 		}
@@ -168,14 +168,14 @@ func TestRunMigrations_OldDBBaseline(t *testing.T) {
 		t.Fatalf("RunMigrations on old DB: %v", err)
 	}
 
-	// 6 rows inserted (not re-run).
-	if n := countMigrationRows(db); n != 6 {
-		t.Errorf("expected 6 migration rows, got %d", n)
+	// 7 rows inserted (legacy 001–003 are baselined; 004–007 run normally).
+	if n := countMigrationRows(db); n != 7 {
+		t.Errorf("expected 7 migration rows, got %d", n)
 	}
-	if v := getUserVersion(db); v != 6 {
-		t.Errorf("expected user_version=6 after applying post-baseline migrations, got %d", v)
+	if v := getUserVersion(db); v != 7 {
+		t.Errorf("expected user_version=7 after applying post-baseline migrations, got %d", v)
 	}
-	for _, tbl := range []string{"section_chunks", "document_metadata", "governance_metadata"} {
+	for _, tbl := range []string{"section_chunks", "document_metadata", "governance_metadata", "research_metadata"} {
 		if !tableExists(db, tbl) {
 			t.Errorf("post-baseline table %q not found after old DB migration", tbl)
 		}
@@ -208,9 +208,9 @@ func TestRunMigrations_IdempotentReopen(t *testing.T) {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
 
-	// Still exactly 6 rows — no duplicates.
-	if n := countMigrationRows(db); n != 6 {
-		t.Errorf("expected 6 migration rows after double run, got %d", n)
+	// Still exactly 7 rows — no duplicates.
+	if n := countMigrationRows(db); n != 7 {
+		t.Errorf("expected 7 migration rows after double run, got %d", n)
 	}
 }
 
@@ -234,9 +234,9 @@ func TestRunMigrations_ChecksumMismatch(t *testing.T) {
 		t.Errorf("expected ErrChecksumMismatch, got: %v", err)
 	}
 
-	// DB should still have 6 rows (unchanged).
-	if n := countMigrationRows(db); n != 6 {
-		t.Errorf("expected 6 migration rows after mismatch, got %d", n)
+	// DB should still have 7 rows (unchanged).
+	if n := countMigrationRows(db); n != 7 {
+		t.Errorf("expected 7 migration rows after mismatch, got %d", n)
 	}
 }
 
@@ -333,8 +333,8 @@ func TestRunMigrations_WorkspaceMixedState(t *testing.T) {
 	if err := RunMigrations(normalDB); err != nil {
 		t.Errorf("normal DB migrations failed: %v", err)
 	}
-	if n := countMigrationRows(normalDB); n != 6 {
-		t.Errorf("normal DB: expected 6 migration rows, got %d", n)
+	if n := countMigrationRows(normalDB); n != 7 {
+		t.Errorf("normal DB: expected 7 migration rows, got %d", n)
 	}
 
 	// Future DB should return ErrFutureSchema.
@@ -448,12 +448,12 @@ func TestMigration006_AfterFive(t *testing.T) {
 	}
 }
 
-// ── Test 12: Migrations 005+006 are idempotent (file-backed DB, second Open) ─
+// ── Test 12: Migrations 005–007 are idempotent (file-backed DB, second Open) ─
 
-func TestMigration005006_Idempotent(t *testing.T) {
+func TestMigration005To007_Idempotent(t *testing.T) {
 	dbPath := t.TempDir() + "/test_idempotent.db"
 
-	// First open: applies all 6 migrations.
+	// First open: applies all 7 migrations.
 	db1, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		t.Fatalf("first Open: %v", err)
@@ -461,8 +461,8 @@ func TestMigration005006_Idempotent(t *testing.T) {
 	if err := RunMigrations(db1); err != nil {
 		t.Fatalf("first RunMigrations: %v", err)
 	}
-	if n := countMigrationRows(db1); n != 6 {
-		t.Errorf("after first open: expected 6 migration rows, got %d", n)
+	if n := countMigrationRows(db1); n != 7 {
+		t.Errorf("after first open: expected 7 migration rows, got %d", n)
 	}
 	db1.Close()
 
@@ -476,15 +476,41 @@ func TestMigration005006_Idempotent(t *testing.T) {
 	if err := RunMigrations(db2); err != nil {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
-	if n := countMigrationRows(db2); n != 6 {
-		t.Errorf("after second open: expected 6 migration rows (no re-runs), got %d", n)
+	if n := countMigrationRows(db2); n != 7 {
+		t.Errorf("after second open: expected 7 migration rows (no re-runs), got %d", n)
 	}
 
-	// Tables from 005/006 still exist.
+	// Tables from 005–007 still exist.
 	if !tableExists(db2, "document_metadata") {
 		t.Error("document_metadata table missing after second open")
 	}
 	if !tableExists(db2, "governance_metadata") {
 		t.Error("governance_metadata table missing after second open")
+	}
+	if !tableExists(db2, "research_metadata") {
+		t.Error("research_metadata table missing after second open")
+	}
+}
+
+// ── Test 13: Migration 007 — research_metadata table, no new reindex markers
+
+func TestMigration007_AfterSix(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations on fresh DB: %v", err)
+	}
+
+	if !tableExists(db, "research_metadata") {
+		t.Error("research_metadata table not found after migration 007")
+	}
+
+	var scopeVal string
+	err := db.QueryRow(`SELECT value FROM project_metadata WHERE key = ?`, MetaKeyReindexScope).Scan(&scopeVal)
+	if err != nil {
+		t.Fatalf("query reindex_scope: %v", err)
+	}
+	if scopeVal != "metadata" {
+		t.Errorf("reindex_scope after 007: got %q want %q", scopeVal, "metadata")
 	}
 }

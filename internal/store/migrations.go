@@ -217,9 +217,32 @@ CREATE INDEX IF NOT EXISTS idx_govmeta_effective_date ON governance_metadata(eff
 CREATE INDEX IF NOT EXISTS idx_govmeta_review_due     ON governance_metadata(review_due);
 `
 
+const migration007SQL = `
+CREATE TABLE IF NOT EXISTS research_metadata (
+    node_id          TEXT    PRIMARY KEY,
+    claim_id         TEXT,
+    evidence         TEXT,
+    source_type      TEXT,
+    confidence       TEXT,
+    event_date       TEXT,
+    assessment_date  TEXT,
+    last_verified    TEXT,
+    valid_until      TEXT,
+    analyst_status   TEXT,
+    client           TEXT,
+    deliverable_id   TEXT,
+    updated_at       INTEGER NOT NULL,
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_research_claim_id      ON research_metadata(claim_id);
+CREATE INDEX IF NOT EXISTS idx_research_source_type   ON research_metadata(source_type);
+CREATE INDEX IF NOT EXISTS idx_research_confidence    ON research_metadata(confidence);
+CREATE INDEX IF NOT EXISTS idx_research_last_verified ON research_metadata(last_verified);
+`
+
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006.
-// Future migrations (007+) are added by their corresponding F-feature.
+// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007.
+// Future migrations (008+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 	{Version: 2, Name: "file_history", SQL: migration002SQL},
@@ -227,6 +250,7 @@ var migrations = []Migration{
 	{Version: 4, Name: "section_chunks", SQL: migration004SQL},
 	{Version: 5, Name: "document_metadata", SQL: migration005SQL},
 	{Version: 6, Name: "governance_metadata", SQL: migration006SQL},
+	{Version: 7, Name: "research_metadata", SQL: migration007SQL},
 }
 
 func init() {

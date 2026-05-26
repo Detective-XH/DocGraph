@@ -100,6 +100,8 @@ func indexStore(root string, st *store.Store) error {
 				return fmt.Errorf("metadata %s: %w", e.RelPath, err)
 			} else if err := st.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
 				return fmt.Errorf("governance %s: %w", e.RelPath, err)
+			} else if err := st.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("research %s: %w", e.RelPath, err)
 			}
 		}
 		if err := st.InsertEdges(res.Edges); err != nil {

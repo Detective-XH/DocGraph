@@ -292,6 +292,14 @@ func TestDeleteDocumentMetadataByFile(t *testing.T) {
 	if err := st.InsertDocumentMetadata("doc/delete.md", tuplesDelete); err != nil {
 		t.Fatalf("InsertDocumentMetadata delete: %v", err)
 	}
+	if err := st.UpsertGovernanceMetadata("doc/delete.md", tuplesDelete); err != nil {
+		t.Fatalf("UpsertGovernanceMetadata delete: %v", err)
+	}
+	if err := st.UpsertResearchMetadata("doc/delete.md", []MetadataTuple{
+		{Key: "claim_id", Value: "claim-delete", ValueType: "string", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertResearchMetadata delete: %v", err)
+	}
 
 	// Delete the second file's metadata.
 	if err := st.DeleteDocumentMetadataByFile("doc/delete.md"); err != nil {
@@ -305,6 +313,20 @@ func TestDeleteDocumentMetadataByFile(t *testing.T) {
 	}
 	if len(gotDeleted) != 0 {
 		t.Errorf("expected 0 tuples for deleted file, got %d", len(gotDeleted))
+	}
+	govDeleted, err := st.GetGovernanceMetadata("doc/delete.md")
+	if err != nil {
+		t.Fatalf("GetGovernanceMetadata deleted: %v", err)
+	}
+	if govDeleted != nil {
+		t.Errorf("expected deleted governance projection to be nil, got %+v", govDeleted)
+	}
+	researchDeleted, err := st.GetResearchMetadata("doc/delete.md")
+	if err != nil {
+		t.Fatalf("GetResearchMetadata deleted: %v", err)
+	}
+	if researchDeleted != nil {
+		t.Errorf("expected deleted research projection to be nil, got %+v", researchDeleted)
 	}
 
 	// Verify the kept file still has its metadata.
@@ -425,6 +447,129 @@ func TestGetNodesByGovernance_NoFilter(t *testing.T) {
 	}
 }
 
+// ---- UpsertResearchMetadata ----
+
+func TestUpsertResearchMetadata_AuthorityOrdering(t *testing.T) {
+	st := newTestStore(t)
+	insertTestNode(t, st, "doc/research-authority.md", "doc/research-authority.md")
+
+	tuples := []MetadataTuple{
+		{Key: "claim_id", Value: "claim-001", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "low", ValueType: "string", Source: "skill_advisory"},
+		{Key: "source_type", Value: "secondary", ValueType: "string", Source: "skill_advisory"},
+	}
+	if err := st.InsertDocumentMetadata("doc/research-authority.md", tuples); err != nil {
+		t.Fatalf("InsertDocumentMetadata: %v", err)
+	}
+	if err := st.UpsertResearchMetadata("doc/research-authority.md", tuples); err != nil {
+		t.Fatalf("UpsertResearchMetadata: %v", err)
+	}
+
+	rec, err := st.GetResearchMetadata("doc/research-authority.md")
+	if err != nil {
+		t.Fatalf("GetResearchMetadata: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("expected research record, got nil")
+	}
+	if rec.Confidence != "high" {
+		t.Errorf("expected frontmatter confidence=high to win, got %q", rec.Confidence)
+	}
+	if rec.SourceType != "secondary" {
+		t.Errorf("expected advisory-only source_type=secondary, got %q", rec.SourceType)
+	}
+}
+
+func TestUpsertResearchMetadata_AllFields(t *testing.T) {
+	st := newTestStore(t)
+	insertTestNode(t, st, "doc/research-all.md", "doc/research-all.md")
+
+	tuples := []MetadataTuple{
+		{Key: "claim_id", Value: "claim-alpha-001", ValueType: "string", Source: "frontmatter"},
+		{Key: "evidence", Value: `["[[source-brief.md]]","https://example.com/report"]`, ValueType: "list", Source: "frontmatter"},
+		{Key: "source_type", Value: "primary", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+		{Key: "event_date", Value: "2026-05-01", ValueType: "date", Source: "frontmatter"},
+		{Key: "assessment_date", Value: "2026-05-20", ValueType: "date", Source: "frontmatter"},
+		{Key: "last_verified", Value: "2026-05-25", ValueType: "date", Source: "frontmatter"},
+		{Key: "valid_until", Value: "2026-08-01", ValueType: "date", Source: "frontmatter"},
+		{Key: "analyst_status", Value: "peer-reviewed", ValueType: "string", Source: "frontmatter"},
+		{Key: "client", Value: "example-client", ValueType: "string", Source: "frontmatter"},
+		{Key: "deliverable_id", Value: "deliverable-2026-05", ValueType: "string", Source: "frontmatter"},
+	}
+	if err := st.InsertDocumentMetadata("doc/research-all.md", tuples); err != nil {
+		t.Fatalf("InsertDocumentMetadata: %v", err)
+	}
+	if err := st.UpsertResearchMetadata("doc/research-all.md", tuples); err != nil {
+		t.Fatalf("UpsertResearchMetadata: %v", err)
+	}
+
+	rec, err := st.GetResearchMetadata("doc/research-all.md")
+	if err != nil {
+		t.Fatalf("GetResearchMetadata: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("expected research record, got nil")
+	}
+	checks := []struct {
+		field string
+		got   string
+		want  string
+	}{
+		{"ClaimID", rec.ClaimID, "claim-alpha-001"},
+		{"Evidence", rec.Evidence, `["[[source-brief.md]]","https://example.com/report"]`},
+		{"SourceType", rec.SourceType, "primary"},
+		{"Confidence", rec.Confidence, "high"},
+		{"EventDate", rec.EventDate, "2026-05-01"},
+		{"AssessmentDate", rec.AssessmentDate, "2026-05-20"},
+		{"LastVerified", rec.LastVerified, "2026-05-25"},
+		{"ValidUntil", rec.ValidUntil, "2026-08-01"},
+		{"AnalystStatus", rec.AnalystStatus, "peer-reviewed"},
+		{"Client", rec.Client, "example-client"},
+		{"DeliverableID", rec.DeliverableID, "deliverable-2026-05"},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s: got %q, want %q", c.field, c.got, c.want)
+		}
+	}
+}
+
+func TestGetNodesByResearch(t *testing.T) {
+	st := newTestStore(t)
+	insertTestNode(t, st, "doc/research-a.md", "doc/research-a.md")
+	insertTestNode(t, st, "doc/research-b.md", "doc/research-b.md")
+
+	a := []MetadataTuple{
+		{Key: "claim_id", Value: "claim-a", ValueType: "string", Source: "frontmatter"},
+		{Key: "source_type", Value: "primary", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+	}
+	b := []MetadataTuple{
+		{Key: "claim_id", Value: "claim-b", ValueType: "string", Source: "frontmatter"},
+		{Key: "source_type", Value: "secondary", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "low", ValueType: "string", Source: "frontmatter"},
+	}
+	if err := st.UpsertResearchMetadata("doc/research-a.md", a); err != nil {
+		t.Fatalf("UpsertResearchMetadata a: %v", err)
+	}
+	if err := st.UpsertResearchMetadata("doc/research-b.md", b); err != nil {
+		t.Fatalf("UpsertResearchMetadata b: %v", err)
+	}
+
+	nodes, err := st.GetNodesByResearch("", "primary", "high", "", 10)
+	if err != nil {
+		t.Fatalf("GetNodesByResearch: %v", err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 primary/high node, got %d", len(nodes))
+	}
+	if nodes[0].ID != "doc/research-a.md" {
+		t.Errorf("expected doc/research-a.md, got %q", nodes[0].ID)
+	}
+}
+
 // ---- IsGovernanceEmpty ----
 
 func TestIsGovernanceEmpty(t *testing.T) {
@@ -475,6 +620,29 @@ func TestIsGovernanceEmpty(t *testing.T) {
 			got := IsGovernanceEmpty(tc.rec)
 			if got != tc.want {
 				t.Errorf("IsGovernanceEmpty(%+v) = %v, want %v", tc.rec, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsResearchEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		rec  *ResearchRecord
+		want bool
+	}{
+		{name: "nil returns true", rec: nil, want: true},
+		{name: "all empty fields returns true", rec: &ResearchRecord{}, want: true},
+		{name: "claim id set returns false", rec: &ResearchRecord{ClaimID: "claim"}, want: false},
+		{name: "confidence set returns false", rec: &ResearchRecord{Confidence: "high"}, want: false},
+		{name: "evidence set returns false", rec: &ResearchRecord{Evidence: "[]"}, want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsResearchEmpty(tc.rec)
+			if got != tc.want {
+				t.Errorf("IsResearchEmpty(%+v) = %v, want %v", tc.rec, got, tc.want)
 			}
 		})
 	}
