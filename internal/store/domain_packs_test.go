@@ -13,24 +13,30 @@ func TestSyncDomainPacksPersistsBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomainPacks: %v", err)
 	}
-	if len(packs) != 2 {
-		t.Fatalf("got %d packs, want 2", len(packs))
+	if len(packs) != 3 {
+		t.Fatalf("got %d packs, want 3", len(packs))
 	}
-	if packs[0].ID != domainpacks.PackGovernance {
-		t.Fatalf("first pack = %q, want %q", packs[0].ID, domainpacks.PackGovernance)
+	// Packs are sorted by ID: entity < governance < research_provenance.
+	if packs[0].ID != domainpacks.PackEntity {
+		t.Fatalf("first pack = %q, want %q", packs[0].ID, domainpacks.PackEntity)
 	}
-	if packs[1].ID != domainpacks.PackResearchProvenance {
-		t.Fatalf("second pack = %q, want %q", packs[1].ID, domainpacks.PackResearchProvenance)
+	if packs[1].ID != domainpacks.PackGovernance {
+		t.Fatalf("second pack = %q, want %q", packs[1].ID, domainpacks.PackGovernance)
 	}
-	if len(packs[0].Fields) == 0 || len(packs[1].Fields) == 0 {
-		t.Fatalf("expected fields for both built-in packs: %#v", packs)
+	if packs[2].ID != domainpacks.PackResearchProvenance {
+		t.Fatalf("third pack = %q, want %q", packs[2].ID, domainpacks.PackResearchProvenance)
+	}
+	for _, p := range packs {
+		if len(p.Fields) == 0 {
+			t.Fatalf("expected fields for built-in pack %q: %#v", p.ID, packs)
+		}
 	}
 
 	stats, err := st.GetDomainPackStats()
 	if err != nil {
 		t.Fatalf("GetDomainPackStats: %v", err)
 	}
-	if stats.TotalPacks != 2 || stats.EnabledPacks != 2 || stats.BuiltInPacks != 2 || stats.OptionalPacks != 0 {
+	if stats.TotalPacks != 3 || stats.EnabledPacks != 3 || stats.BuiltInPacks != 3 || stats.OptionalPacks != 0 {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
 }

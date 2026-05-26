@@ -17,6 +17,7 @@ type searchRequest struct {
 	CandidateLimit int
 	Governance     GovernanceSearchOptions
 	Research       ResearchSearchOptions
+	Entity         EntitySearchOptions
 	HasFilters     bool
 	AsOf           time.Time
 }
@@ -35,6 +36,7 @@ func newSearchRequest(opts SearchOptions) searchRequest {
 	}
 	governance := trimGovernanceOptions(opts.Governance)
 	research := trimResearchOptions(opts.Research)
+	entity := trimEntityOptions(opts.Entity)
 	asOf := time.Now().UTC()
 	if governance.AsOfDate != "" {
 		if parsed, ok := parseSearchDate(governance.AsOfDate); ok {
@@ -51,6 +53,7 @@ func newSearchRequest(opts SearchOptions) searchRequest {
 		CandidateLimit: candidateLimit,
 		Governance:     governance,
 		Research:       research,
+		Entity:         entity,
 		HasFilters: SearchOptions{
 			Governance: governance,
 			Research:   research,
@@ -75,6 +78,13 @@ func trimResearchOptions(opts ResearchSearchOptions) ResearchSearchOptions {
 		SourceType:    strings.TrimSpace(opts.SourceType),
 		Confidence:    strings.TrimSpace(opts.Confidence),
 		AnalystStatus: strings.TrimSpace(opts.AnalystStatus),
+	}
+}
+
+func trimEntityOptions(opts EntitySearchOptions) EntitySearchOptions {
+	return EntitySearchOptions{
+		EntityType: strings.TrimSpace(opts.EntityType),
+		EntityID:   strings.TrimSpace(opts.EntityID),
 	}
 }
 

@@ -13,6 +13,9 @@ const (
 
 	// PackResearchProvenance exposes the F-22 research provenance schema as a domain pack.
 	PackResearchProvenance = "research_provenance"
+
+	// PackEntity exposes the F-29 entity and source graph schema as a domain pack.
+	PackEntity = "entity"
 )
 
 // Field describes one metadata key owned by a domain schema pack.
@@ -51,6 +54,7 @@ var defaultRegistry = NewRegistry()
 func init() {
 	mustRegister(BuiltinGovernancePack())
 	mustRegister(BuiltinResearchProvenancePack())
+	mustRegister(BuiltinEntityPack())
 }
 
 // NewRegistry returns an empty pack registry.
@@ -241,6 +245,26 @@ func BuiltinGovernancePack() Pack {
 			{Key: "status", Column: "status", ValueType: "string", Description: "Governance lifecycle status."},
 			{Key: "superseded_by", Column: "superseded_by", ValueType: "ref", Description: "Document that replaces this document."},
 			{Key: "supersedes", Column: "supersedes", ValueType: "ref", Description: "Document replaced by this document."},
+		},
+	}
+}
+
+// BuiltinEntityPack returns the F-29 entity and source graph schema as a pack.
+func BuiltinEntityPack() Pack {
+	return Pack{
+		ID:               PackEntity,
+		Name:             "Generic Entity Graph",
+		Version:          "1.0.0",
+		Domain:           "entity",
+		Description:      "Entity and source graph metadata for named entities, canonical names, and alias resolution.",
+		Status:           "stable",
+		BuiltIn:          true,
+		EnabledByDefault: true,
+		MinSchemaVersion: 10,
+		Fields: []Field{
+			{Key: "aliases", Column: "aliases", ValueType: "list", Description: "Alternative names for this entity."},
+			{Key: "canonical_name", Column: "canonical_name", ValueType: "string", Description: "Canonical entity name."},
+			{Key: "entity_type", Column: "entity_type", ValueType: "string", Description: "Entity classification (person, organization, location, etc.)."},
 		},
 	}
 }

@@ -30,6 +30,8 @@ var searchTool = mcp.NewTool("docgraph_search",
 	mcp.WithString("source_type", mcp.Description("Filter by research source_type (e.g. primary, secondary, internal). Requires metadata reindex.")),
 	mcp.WithString("confidence", mcp.Description("Filter by research confidence (e.g. high, medium, low). Requires metadata reindex.")),
 	mcp.WithString("analyst_status", mcp.Description("Filter by research analyst_status. Requires metadata reindex.")),
+	mcp.WithString("entity_type", mcp.Description("Filter to documents that mention entities of this type (e.g. person, organization). F-29 entity graph.")),
+	mcp.WithString("entity_id", mcp.Description("Filter to documents that mention a specific entity UUID. F-29 entity graph.")),
 )
 
 var filesTool = mcp.NewTool("docgraph_files",
@@ -77,6 +79,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 			AllowedAudience: allowedAudienceFilter,
 			AsOfDate:        asOfDateFilter,
 		},
+		Entity: parseEntityFilters(args),
 		Research: store.ResearchSearchOptions{
 			ClaimID:       claimIDFilter,
 			SourceType:    sourceTypeFilter,
@@ -474,6 +477,11 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			if packStats, err := h.store.GetDomainPackStats(); err == nil {
 				appendDomainPackStats(&sb, packs, packStats)
 			}
+		}
+
+		if entities, mentions, err := h.store.GetEntityStats(); err == nil && (entities > 0 || mentions > 0) {
+			sb.WriteString("\n### Entity Graph\n")
+			sb.WriteString(fmt.Sprintf("Entities: %d | Mentions: %d\n", entities, mentions))
 		}
 	}
 

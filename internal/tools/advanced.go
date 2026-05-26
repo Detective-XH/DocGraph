@@ -260,6 +260,9 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			if quality, err := st.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
 				sb.WriteString(appendMetadataQualitySection(quality))
 			}
+			if mentions, err := st.GetEntityMentions(node.ID); err == nil {
+				sb.WriteString(appendEntitySection(mentions))
+			}
 		}
 	}
 
@@ -398,6 +401,9 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		}
 		if quality, err := s.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
 			sb.WriteString(appendMetadataQualitySection(quality))
+		}
+		if mentions, err := s.GetEntityMentions(node.ID); err == nil {
+			sb.WriteString(appendEntitySection(mentions))
 		}
 	}
 

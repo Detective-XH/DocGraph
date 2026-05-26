@@ -16,8 +16,7 @@ const (
 )
 
 // SearchOptions keeps F-24 search quality upgrades extensible without adding
-// new MCP tools. F-25 can add governance-aware ranking inputs here while the
-// existing tool surface continues to call Store.Search.
+// new MCP tools. F-25 adds governance/research filtering; F-29 adds entity filtering.
 type SearchOptions struct {
 	Query      string
 	Kind       string
@@ -25,6 +24,14 @@ type SearchOptions struct {
 	Intent     SearchIntent
 	Governance GovernanceSearchOptions
 	Research   ResearchSearchOptions
+	Entity     EntitySearchOptions
+}
+
+// EntitySearchOptions carries F-29 entity/source graph filter constraints.
+// Empty fields are ignored so existing callers keep the pre-F-29 behaviour.
+type EntitySearchOptions struct {
+	EntityType string
+	EntityID   string
 }
 
 // GovernanceSearchOptions carries F-25 governance retrieval constraints. Empty
@@ -49,7 +56,9 @@ type ResearchSearchOptions struct {
 }
 
 // HasMetadataFilters reports whether SearchWithOptions must enforce typed
-// metadata constraints in addition to relevance ranking.
+// governance/research metadata constraints in addition to relevance ranking.
+// Entity filters (F-29) are handled separately by collectEntityFilteredCandidates
+// and must NOT set this flag — they use a different collection path.
 func (opts SearchOptions) HasMetadataFilters() bool {
 	return opts.Governance.Status != "" ||
 		opts.Governance.Sensitivity != "" ||
@@ -110,6 +119,11 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 	}
 	if req.HasFilters {
 		if err := s.collectMetadataFilteredCandidates(req, candidates); err != nil {
+			return nil, err
+		}
+	}
+	if req.Entity.EntityType != "" || req.Entity.EntityID != "" {
+		if err := s.collectEntityFilteredCandidates(req, candidates); err != nil {
 			return nil, err
 		}
 	}

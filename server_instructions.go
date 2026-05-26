@@ -15,7 +15,7 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
-Only use docgraph_search when you need keyword-level precision, kind filtering, governance filters (status=, sensitivity=), or research filters (claim_id=, source_type=, confidence=, analyst_status=).
+Only use docgraph_search when you need keyword-level precision, kind filtering, governance filters (status=, sensitivity=), research filters (claim_id=, source_type=, confidence=, analyst_status=), or entity graph filters (entity_type=, entity_id=).
 
 ## Reducing noise
 

@@ -302,9 +302,41 @@ CREATE TRIGGER section_chunks_fts_delete AFTER DELETE ON section_chunks BEGIN
 END;
 `
 
+const migration010SQL = `
+CREATE TABLE IF NOT EXISTS entities (
+    id                        TEXT    PRIMARY KEY,
+    entity_type               TEXT    NOT NULL DEFAULT '',
+    canonical_name            TEXT    NOT NULL,
+    canonical_name_normalized TEXT    NOT NULL,
+    aliases                   TEXT    NOT NULL DEFAULT '[]',
+    properties                TEXT    NOT NULL DEFAULT '{}',
+    pack_id                   TEXT,
+    updated_at                INTEGER NOT NULL,
+    UNIQUE(entity_type, canonical_name_normalized)
+);
+
+CREATE TABLE IF NOT EXISTS entity_mentions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id    TEXT    NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
+    node_id      TEXT    NOT NULL REFERENCES nodes(id)   ON DELETE CASCADE,
+    file_path    TEXT    NOT NULL,
+    line         INTEGER NOT NULL DEFAULT 0,
+    context      TEXT    NOT NULL DEFAULT '',
+    mention_type TEXT    NOT NULL DEFAULT 'reference',
+    updated_at   INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_entities_type   ON entities(entity_type);
+CREATE INDEX IF NOT EXISTS idx_entities_pack   ON entities(pack_id);
+CREATE INDEX IF NOT EXISTS idx_mentions_entity ON entity_mentions(entity_id);
+CREATE INDEX IF NOT EXISTS idx_mentions_node   ON entity_mentions(node_id);
+CREATE INDEX IF NOT EXISTS idx_mentions_file   ON entity_mentions(file_path);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mentions_unique ON entity_mentions(entity_id, node_id, line);
+`
+
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008; F-24 delivers 009.
-// Future migrations (010+) are added by their corresponding F-feature.
+// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008; F-24 delivers 009; F-29 delivers 010.
+// Future migrations (011+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 	{Version: 2, Name: "file_history", SQL: migration002SQL},
@@ -315,6 +347,7 @@ var migrations = []Migration{
 	{Version: 7, Name: "research_metadata", SQL: migration007SQL},
 	{Version: 8, Name: "domain_pack_registry", SQL: migration008SQL},
 	{Version: 9, Name: "section_search_fts", SQL: migration009SQL},
+	{Version: 10, Name: "entity_source_graph", SQL: migration010SQL},
 }
 
 func init() {

@@ -61,4 +61,8 @@ func TestBuiltinPacksExposeProjectionColumns(t *testing.T) {
 	if research["claim_id"] != "claim_id" || research["deliverable_id"] != "deliverable_id" {
 		t.Fatalf("research field map missing expected keys: %#v", research)
 	}
+	entity := FieldColumnMap(PackEntity)
+	if entity["entity_type"] != "entity_type" || entity["canonical_name"] != "canonical_name" {
+		t.Fatalf("entity field map missing expected keys: %#v", entity)
+	}
 }

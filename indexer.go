@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/entitygraph"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
@@ -75,10 +76,11 @@ func indexStore(root string, st *store.Store) error {
 			nSkip++
 			continue
 		}
-		// Delete stale section chunks and document metadata before DeleteFileData
-		// so cascade-deleted node IDs are still reachable. All calls are idempotent.
+		// Delete stale section chunks, metadata, entity data, and node/edge data
+		// before re-parsing so cascade-deleted IDs are still reachable. Idempotent.
 		st.DeleteSectionChunksByFile(e.RelPath)
 		st.DeleteDocumentMetadataByFile(e.RelPath)
+		st.DeleteEntityData(e.RelPath)
 		st.DeleteFileData(e.RelPath)
 		res, err := dispatchParse(e.Path, e.RelPath, src, hash)
 		if err != nil {
@@ -105,6 +107,9 @@ func indexStore(root string, st *store.Store) error {
 			} else if err := st.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
 				return fmt.Errorf("research %s: %w", e.RelPath, err)
 			}
+		}
+		if err := entitygraph.IndexFile(st, e.RelPath, res); err != nil {
+			fmt.Fprintf(os.Stderr, "entity index %s: %v\n", e.RelPath, err)
 		}
 		if err := st.InsertEdges(res.Edges); err != nil {
 			return err
@@ -144,6 +149,9 @@ func indexStore(root string, st *store.Store) error {
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
 	}
 	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", len(entries), nNew, nSkip)
+	if err := st.PruneOrphanEntities(); err != nil {
+		fmt.Fprintf(os.Stderr, "prune orphan entities: %v\n", err)
+	}
 	if nNew > 0 {
 		if err := resolver.Resolve(st); err != nil {
 			fmt.Fprintf(os.Stderr, "resolver: %v\n", err)

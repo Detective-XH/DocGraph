@@ -38,14 +38,14 @@ func TestMigration004_FreshDB(t *testing.T) {
 		t.Fatalf("RunMigrations on fresh DB: %v", err)
 	}
 
-	// 9 migration rows (001–009).
-	if n := countMigrationRows(db); n != 9 {
-		t.Errorf("expected 9 migration rows, got %d", n)
+	// 10 migration rows (001–010).
+	if n := countMigrationRows(db); n != 10 {
+		t.Errorf("expected 10 migration rows, got %d", n)
 	}
 
-	// PRAGMA user_version = 9.
-	if v := getUserVersion(db); v != 9 {
-		t.Errorf("expected user_version=9, got %d", v)
+	// PRAGMA user_version = 10.
+	if v := getUserVersion(db); v != 10 {
+		t.Errorf("expected user_version=10, got %d", v)
 	}
 
 	// section_chunks table must exist.
@@ -70,12 +70,12 @@ func TestMigration004_FreshDB(t *testing.T) {
 		t.Error("section_chunks_fts table not found after migration 009")
 	}
 
-	// Idempotent: run again, still 9 rows, no error.
+	// Idempotent: run again, still 10 rows, no error.
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
-	if n := countMigrationRows(db); n != 9 {
-		t.Errorf("expected 9 migration rows after double run, got %d", n)
+	if n := countMigrationRows(db); n != 10 {
+		t.Errorf("expected 10 migration rows after double run, got %d", n)
 	}
 }
 

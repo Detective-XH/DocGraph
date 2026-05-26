@@ -43,6 +43,11 @@ func ExtractMetadataTuples(fm map[string]interface{}) []store.MetadataTuple {
 		if k == "tags" {
 			continue
 		}
+		if k == "entities" {
+			// F-29: entity data is handled by internal/entitygraph — skip here
+			// to prevent double-storage in document_metadata.
+			continue
+		}
 		if k == "skill_advisory" {
 			out = append(out, flattenAdvisoryValue(v, now)...)
 			continue
