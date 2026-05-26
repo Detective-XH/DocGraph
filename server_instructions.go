@@ -27,6 +27,16 @@ Only use docgraph_search when you need keyword-level precision, kind filtering, 
 - Neural embeddings are opt-in and agent-driven — DocGraph never calls an LLM itself. See "Neural Embeddings" section below.
 - docgraph_context includes source content by default. Set includeContent=false or lower maxContentBytes when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
+- Code documentation surface (code_doc domain pack, disabled by default): when enabled, indexes file headers, doc comments, and test/example names from .go, .py, .js, .ts, .rs, and similar source files. Use docgraph_search kind=code_file to filter. Enable by setting enabled=1 in the code_doc domain_packs row.
+
+## CodeGraph interoperability
+
+CodeGraph interoperability is advisory only. DocGraph does not call CodeGraph, read .codegraph/, or import CodeGraph symbol anchors. The codegraph_anchor metadata field stays empty until CodeGraph exposes a stable export/API contract.
+
+When the agent environment exposes codegraph_* MCP tools:
+- Use DocGraph for documentation context, governance metadata, citation paths, context packs, document references, and document impact.
+- Use CodeGraph for source-code structure: symbol lookup, callers/callees, call traces, code impact, route handlers, and multi-language code flow.
+- If .codegraph/ is missing or CodeGraph reports "not initialized", ask the user before running codegraph init -i.
 
 ## Managing .docgraphignore
 

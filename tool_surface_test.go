@@ -66,6 +66,30 @@ func TestToolSurfaceGovernanceInstructionsStayCompact(t *testing.T) {
 	}
 }
 
+func TestCodeGraphInteropInstructionsStayAdvisory(t *testing.T) {
+	// F-35 guardrail: CodeGraph interoperability starts as agent handoff
+	// guidance only. DocGraph must not imply that it owns CodeGraph internals.
+	section := markdownSection(serverInstructions, "## CodeGraph interoperability", "## Managing .docgraphignore")
+	if section == "" {
+		t.Fatal("serverInstructions must include CodeGraph interoperability guidance")
+	}
+
+	required := []string{
+		"advisory only",
+		"does not call CodeGraph",
+		"read .codegraph/",
+		"codegraph_anchor metadata field stays empty",
+		"stable export/API contract",
+		"codegraph_* MCP tools",
+		"ask the user before running codegraph init -i",
+	}
+	for _, phrase := range required {
+		if !strings.Contains(section, phrase) {
+			t.Fatalf("CodeGraph interoperability guidance missing %q", phrase)
+		}
+	}
+}
+
 func registeredToolNames(t *testing.T) []string {
 	t.Helper()
 

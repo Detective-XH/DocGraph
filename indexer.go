@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/codedoc"
 	"github.com/Detective-XH/docgraph/internal/entitygraph"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
@@ -63,9 +64,13 @@ func indexStore(root string, st *store.Store) error {
 	if err != nil {
 		return err
 	}
+	codeDocEnabled, _ := st.IsPackEnabled("code_doc")
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
+		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
+			continue
+		}
 		src, err := os.ReadFile(e.Path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
@@ -184,6 +189,9 @@ func dispatchParse(absPath, relPath string, src []byte, hash string) (*parser.Pa
 	ext := strings.ToLower(filepath.Ext(relPath))
 	if ext == ".md" {
 		return parser.ParseFile(absPath, relPath, src, hash)
+	}
+	if codedoc.IsCodeExt(ext) {
+		return codedoc.Extract(absPath, relPath, src, hash)
 	}
 	return extractor.Extract(absPath, relPath, src, hash)
 }

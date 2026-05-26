@@ -22,9 +22,10 @@
 
 </div>
 
-Documentation knowledge graph MCP server for LLM agents. Indexes `.md`, `.docx`,
-`.html`, and `.pdf` files into SQLite, extracts cross-references and topic
-similarity, and exposes the graph through 16 MCP tools over stdio.
+Documentation knowledge graph MCP server. Indexes `.md`, `.docx`, `.html`,
+`.pdf`, and optional code-documentation surfaces into SQLite, extracts
+cross-references and topic similarity, and exposes the graph through 16 MCP
+tools over stdio.
 
 DocGraph's value scales with **how connected your documents are**:
 
@@ -32,7 +33,7 @@ DocGraph's value scales with **how connected your documents are**:
 - **Medium value**: docs with shared tags/frontmatter but few explicit links. Similarity engine still finds topic clusters.
 - **Low value**: flat, isolated documents with no links or metadata. `grep` is simpler and faster.
 
-**LLM agents**: before installing, read [`AGENTS.md`](AGENTS.md) to diagnose whether DocGraph fits your project. It includes a scoring guide and a tool decision tree.
+The LLM-facing installation and tool-selection guide lives in [`AGENTS.md`](AGENTS.md).
 
 Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 
@@ -42,7 +43,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~13,770 lines of Go (+ ~12,730 lines of tests) |
+| Codebase | ~41,150 lines of Go (+ ~37,040 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -116,14 +117,15 @@ Available skills bundled in the binary:
 | Skill | Purpose |
 |-------|---------|
 | `docgraph-drift-audit` | Audit `.md` files for DocGraph compatibility |
-| `policy-drift-audit` | Display and triage policy/process drift findings from `docgraph_context format=drift_audit` (F-30) |
+| `policy-drift-audit` | Display and triage policy/process drift findings from `docgraph_context format=drift_audit` |
+| `assessment-drift-audit` | Display and triage research assessment drift findings from `docgraph_context format=drift_audit` |
 
 ## MCP Tools
 
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) |
-| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process drift audit reports (F-30) |
+| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process and research drift audit reports |
 | 3 | `docgraph_references` | Incoming links (who references this doc) |
 | 4 | `docgraph_links` | Outgoing links (what this doc links to) |
 | 5 | `docgraph_impact` | Blast radius analysis (BFS over incoming refs, configurable depth) |
@@ -132,7 +134,7 @@ Available skills bundled in the binary:
 | 8 | `docgraph_trace` | Shortest reference path between two docs (BFS, max 10 hops) |
 | 9 | `docgraph_files` | Indexed file tree |
 | 10 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
-| 11 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy findings exist |
+| 11 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
 | 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
 | 14 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |
@@ -143,7 +145,7 @@ Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
 to drill into specifics.
 
-**LLM agents**: if you have access to file reading tools, read [`AGENTS.md`](AGENTS.md) first — it contains a tool decision tree and usage tips that will save you trial-and-error calls.
+For agent-facing fit checks and tool-selection rules, see [`AGENTS.md`](AGENTS.md).
 
 ## Semantic Similarity
 
@@ -180,7 +182,8 @@ Use `docgraph_embeddings_clear(model_id)` to delete all vectors for a model and 
 
 ## Node and Edge Kinds
 
-**Nodes:** `document`, `heading`, `definition`, `tag`
+**Nodes:** `document`, `heading`, `definition`, `tag`; optional `code_file`
+nodes when the `code_doc` domain pack is enabled.
 
 **Edges:**
 
@@ -215,6 +218,11 @@ Use `docgraph_embeddings_clear(model_id)` to delete all vectors for a model and 
 - Each page becomes a `heading` node and a section chunk
 - Info-dict fields (Title, Author, Subject, Keywords, CreationDate) indexed as metadata tuples
 - Image-only PDFs detected via average chars/page and flagged with `warning: image-only-pdf`
+
+**Code documentation surfaces (opt-in)** — up to 1 MB per file:
+- Enable the `code_doc` domain pack to index file headers, exported doc comments, test names, and example names
+- Supported languages include Go, Python, Ruby, JavaScript, TypeScript, Svelte, Vue, Rust, C, C++, Java, Swift, C#, PHP, Kotlin, Dart, Lua, Luau, Pascal, SQL, and Liquid
+- This is shallow documentation indexing only; CodeGraph remains the intended tool for call graphs, type resolution, routes, and code impact
 
 **Common rules:**
 - Respects `.gitignore` and `.docgraphignore`
@@ -392,6 +400,7 @@ scan .md / .docx / .html / .pdf  (docformat registry: extensions + per-format si
        .docx        → stdlib archive/zip + encoding/xml
        .html / .htm → golang.org/x/net HTML tokenizer
        .pdf         → ledongthuc/pdf (text layer; writes to temp file)
+       code docs    → optional code_doc pack for comments/tests/examples
   -> extract nodes, edges, links, metadata tuples, and section chunks
   -> store in SQLite (modernc.org/sqlite, pure Go)
   -> resolve cross-document references
@@ -421,13 +430,26 @@ generates a CycloneDX JSON SBOM artifact named `docgraph-sbom` with
 `cyclonedx-gomod`. The SBOM is generated from `go.mod` during GitHub Actions
 runs; generated SBOM files are not checked into the repository.
 
+## CodeGraph Interoperability
+
+DocGraph and CodeGraph are complementary. DocGraph owns documentation context,
+governance/research metadata, citation paths, document references, context
+packs, drift audits, and shallow code-documentation surfaces. CodeGraph owns
+source-code intelligence such as symbols, callers/callees, call traces, route
+handlers, and code impact.
+
+CodeGraph interoperability currently ships as an advisory handoff layer in the
+MCP server instructions. DocGraph does not call CodeGraph, read `.codegraph/`,
+or import CodeGraph symbol anchors. The reserved `codegraph_anchor` metadata
+field stays empty until CodeGraph exposes a stable export/API contract.
+
 ## Inspired By
 
 DocGraph is inspired by [CodeGraph](https://github.com/colbymchenry/codegraph),
 which builds a knowledge graph from source code symbols using tree-sitter
 and SQLite. DocGraph adopts the same core design:
 
-- **Schema**: `nodes` + `edges` + `files` + `unresolved_refs` + FTS5 + `section_chunks` + `section_chunks_fts` + `document_metadata` + `governance_metadata` + `research_metadata` + `domain_packs` + `domain_pack_fields` — the graph model extended with section snapshots (F-19), section-level search (F-24), normalized governance metadata (F-21), research provenance (F-22), and domain schema pack registration (F-23). Forward-only versioned migrations (001–009) replace `CREATE TABLE IF NOT EXISTS`.
+- **Schema**: `nodes` + `edges` + `files` + `unresolved_refs` + FTS5 + `section_chunks` + `section_chunks_fts` + `document_metadata` + `governance_metadata` + `research_metadata` + `domain_packs` + `domain_pack_fields` + `entities` + `entity_mentions` — the graph model extended with section snapshots, section-level search, normalized governance metadata, research provenance, domain schema pack registration, and entity/source graph primitives. Forward-only versioned migrations replace `CREATE TABLE IF NOT EXISTS`.
 - **Pipeline**: scan → parse → store → resolve — the same four-phase indexing
   pipeline, with goldmark replacing tree-sitter for AST extraction.
 - **Two-phase resolution**: raw links are extracted during parsing, then

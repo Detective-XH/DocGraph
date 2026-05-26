@@ -1,7 +1,9 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -161,6 +163,17 @@ func (s *Store) GetDomainPacks() ([]domainpacks.Pack, error) {
 		}
 	}
 	return packs, fieldRows.Err()
+}
+
+// IsPackEnabled reports whether the domain pack with the given ID is enabled in SQLite.
+// Returns false (not an error) if the pack does not yet exist in the table.
+func (s *Store) IsPackEnabled(packID string) (bool, error) {
+	var enabled int
+	err := s.db.QueryRow(`SELECT enabled FROM domain_packs WHERE id = ?`, packID).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return enabled == 1, err
 }
 
 // GetDomainPackStats returns aggregate pack counts.
