@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
 	"github.com/Detective-XH/docgraph/internal/extractor"
@@ -75,15 +77,24 @@ func (w *Workspace) Close() error {
 	return last
 }
 func (w *Workspace) IndexAll() error {
+	// Index projects in parallel, bounded to NumCPU to avoid spawning hundreds of git subprocesses.
+	sem := make(chan struct{}, runtime.NumCPU())
+	var wg sync.WaitGroup
 	for _, p := range w.Projects {
 		p.NoGitignore = w.NoGitignore
 		p.SimilarityThreshold = w.SimilarityThreshold
-		if err := indexProjectOpts(p, w.NoGitignore, w.SimilarityThreshold); err != nil {
-			fmt.Fprintf(os.Stderr, "index %s: %v\n", p.Name, err)
-		}
+		wg.Add(1)
+		go func() {
+			sem <- struct{}{}
+			defer func() { <-sem; wg.Done() }()
+			if err := indexProjectOpts(p, w.NoGitignore, w.SimilarityThreshold); err != nil {
+				fmt.Fprintf(os.Stderr, "index %s: %v\n", p.Name, err)
+			}
+		}()
 	}
+	wg.Wait()
 
-	// Second-pass: resolve cross-project [[project/doc-name]] wikilinks
+	// Second-pass: resolve cross-project [[project/doc-name]] wikilinks (requires all projects indexed).
 	crossRefs := make([]resolver.ProjectRef, 0, len(w.Projects))
 	for _, p := range w.Projects {
 		crossRefs = append(crossRefs, resolver.ProjectRef{Name: p.Name, Store: p.Store})
@@ -203,6 +214,9 @@ func indexProject(p *Project) error {
 }
 
 func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
+	p.Store.IndexMu.Lock()
+	defer p.Store.IndexMu.Unlock()
+
 	entries, err := scanner.ScanDirOpts(p.Path, scanner.ScanOptions{NoGitignore: noGitignore})
 	if err != nil {
 		return err

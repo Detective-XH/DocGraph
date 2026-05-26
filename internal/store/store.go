@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Detective-XH/docgraph/internal/domainpacks"
@@ -73,7 +74,8 @@ type SearchResult struct {
 }
 
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	IndexMu sync.Mutex // serialises concurrent index/reindex calls on the same store
 }
 
 func Open(dbPath string) (*Store, error) {

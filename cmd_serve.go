@@ -14,6 +14,24 @@ import (
 	mcp "github.com/mark3labs/mcp-go/server"
 )
 
+// anyProjectDBExists checks whether at least one subdirectory of wsRoot already
+// has a .docgraph/docgraph.db. Used to decide warm-start vs cold-start.
+func anyProjectDBExists(wsRoot string) bool {
+	entries, err := os.ReadDir(wsRoot)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() || e.Name()[0] == '.' {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(wsRoot, e.Name(), ".docgraph", "docgraph.db")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func cmdServe(args []string) {
 	fset := flag.NewFlagSet("serve", flag.ExitOnError)
 	p := fset.String("path", "", "Project directory to index and serve")
@@ -25,6 +43,7 @@ func cmdServe(args []string) {
 	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
 
 	if *ws != "" {
+		warm := anyProjectDBExists(*ws)
 		w, err := workspace.Open(*ws)
 		if err != nil {
 			log.Fatal(err)
@@ -32,8 +51,13 @@ func cmdServe(args []string) {
 		defer w.Close()
 		w.NoGitignore = noGitignore
 		w.SimilarityThreshold = similarityThreshold
-		w.IndexAll()
 		tools.RegisterWorkspace(srv, w)
+		doSync := func() { w.IndexAll() }
+		if warm {
+			go doSync()
+		} else {
+			doSync()
+		}
 		var paths []string
 		for _, proj := range w.Projects {
 			paths = append(paths, proj.Path)
@@ -56,9 +80,20 @@ func cmdServe(args []string) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		st := indexPath(path)
+		warm := dbExists(path)
+		st := openStore(path)
 		defer st.Close()
 		tools.Register(srv, st, absRoot)
+		doSync := func() {
+			if err := indexStore(absRoot, st); err != nil {
+				fmt.Fprintf(os.Stderr, "[sync] %v\n", err)
+			}
+		}
+		if warm {
+			go doSync()
+		} else {
+			doSync()
+		}
 		go func() {
 			err := watcher.Watch([]string{absRoot}, func(projectPath string, _ []string) {
 				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)

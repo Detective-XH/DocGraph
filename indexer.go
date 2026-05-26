@@ -25,6 +25,34 @@ func indexPath(dir string) *store.Store {
 	return indexPathOpts(dir, false)
 }
 
+// openStore opens (or creates) the store for dir without running indexStore.
+// Used by cmdServe for async warm-start: open → register tools → listen → go indexStore.
+func openStore(dir string) *store.Store {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	dbDir := filepath.Join(root, ".docgraph")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		log.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dbDir, "docgraph.db"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	return st
+}
+
+// dbExists reports whether a docgraph.db already exists in dir's .docgraph directory.
+func dbExists(dir string) bool {
+	root, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(root, ".docgraph", "docgraph.db"))
+	return err == nil
+}
+
 func indexPathOpts(dir string, force bool) *store.Store {
 	root, err := filepath.Abs(dir)
 	if err != nil {
@@ -81,6 +109,9 @@ func removeIndexDB(dbDir string) error {
 }
 
 func indexStore(root string, st *store.Store) error {
+	st.IndexMu.Lock()
+	defer st.IndexMu.Unlock()
+
 	entries, err := scanner.ScanDirOpts(root, scanner.ScanOptions{NoGitignore: noGitignore})
 	if err != nil {
 		return err
