@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+
+	"github.com/Detective-XH/docgraph/internal/docformat"
 )
 
 type OnChangeFunc func(projectPath string, changedFiles []string)
@@ -67,7 +69,7 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 					_ = addRecursive(w, event.Name)
 				}
 			}
-			if strings.ToLower(filepath.Ext(event.Name)) != ".md" {
+			if !docformat.SupportedExt(strings.ToLower(filepath.Ext(event.Name))) {
 				continue
 			}
 			root := findProjectRoot(event.Name, roots)

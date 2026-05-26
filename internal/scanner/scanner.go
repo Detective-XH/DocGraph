@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Detective-XH/docgraph/internal/docformat"
 )
 
 type FileEntry struct {
@@ -19,8 +21,6 @@ var skipDirs = map[string]bool{
 	"build": true, ".codegraph": true, ".docgraph": true, ".next": true,
 	".cache": true, "vendor": true, "__pycache__": true, ".obsidian": true,
 }
-
-const maxFileSize = 1_048_576
 
 type ScanOptions struct {
 	NoGitignore bool
@@ -89,7 +89,7 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 		}
 
 		ext := strings.ToLower(filepath.Ext(path))
-		if ext != ".md" {
+		if !docformat.SupportedExt(ext) {
 			return nil
 		}
 
@@ -98,7 +98,7 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 			return nil
 		}
 
-		if info.Size() > maxFileSize {
+		if info.Size() > docformat.MaxFileSizeByExt[ext] {
 			return nil
 		}
 

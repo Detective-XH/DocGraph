@@ -1,10 +1,30 @@
+<div align="center">
+
 # DocGraph
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+### Documentation knowledge graph MCP server for LLM agents
 
-Documentation knowledge graph MCP server for LLM agents. Indexes Markdown
-files into SQLite, extracts cross-references and topic similarity, and
-exposes the graph through 16 MCP tools over stdio.
+**Cross-reference tracking · Impact analysis · Topic similarity · Multi-format**
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://go.dev)
+[![Single binary](https://img.shields.io/badge/binary-%7E13.5_MB_%C2%B7_zero_runtime_deps-brightgreen.svg)](#install)
+[![Formats](https://img.shields.io/badge/formats-.md_%C2%B7_.docx_%C2%B7_.html_%C2%B7_.pdf-orange.svg)](#what-gets-indexed)
+
+[![macOS](https://img.shields.io/badge/macOS-supported-blue.svg)](#install)
+[![Linux](https://img.shields.io/badge/Linux-supported-blue.svg)](#install)
+[![Windows](https://img.shields.io/badge/Windows-supported-blue.svg)](#install)
+
+[![Claude Code](https://img.shields.io/badge/Claude_Code-supported-blueviolet.svg)](#claude-code)
+[![Codex](https://img.shields.io/badge/Codex-supported-blueviolet.svg)](#codex-openai)
+[![Hermes Agent](https://img.shields.io/badge/Hermes_Agent-supported-blueviolet.svg)](#hermes-agent)
+[![OpenCode](https://img.shields.io/badge/OpenCode-supported-blueviolet.svg)](#opencode)
+
+</div>
+
+Documentation knowledge graph MCP server for LLM agents. Indexes `.md`, `.docx`,
+`.html`, and `.pdf` files into SQLite, extracts cross-references and topic
+similarity, and exposes the graph through 16 MCP tools over stdio.
 
 DocGraph's value scales with **how connected your documents are**:
 
@@ -12,7 +32,7 @@ DocGraph's value scales with **how connected your documents are**:
 - **Medium value**: docs with shared tags/frontmatter but few explicit links. Similarity engine still finds topic clusters.
 - **Low value**: flat, isolated documents with no links or metadata. `grep` is simpler and faster.
 
-**LLM agents**: before installing, read [`AGENTS.md`](AGENTS.md) to diagnose whether DocGraph fits your project. It includes a 6-question scoring guide and a tool decision tree.
+**LLM agents**: before installing, read [`AGENTS.md`](AGENTS.md) to diagnose whether DocGraph fits your project. It includes a scoring guide and a tool decision tree.
 
 Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 
@@ -22,7 +42,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~10,700 lines of Go (+ ~9,200 lines of tests) |
+| Codebase | ~11,780 lines of Go (+ ~10,430 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -176,13 +196,27 @@ Use `docgraph_embeddings_clear(model_id)` to delete all vectors for a model and 
 
 ## What Gets Indexed
 
-- Markdown files (`.md`) only
-- Respects `.gitignore` rules
-- YAML frontmatter parsed into metadata JSON
-- Headings extracted as structural hierarchy
-- Definition lines such as `**Term:** definition` produce `definition` nodes
-- `[[wikilinks]]`, `[links](path.md)`, `![[embeds]]`, external URLs, and frontmatter tags all produce typed edges
-- Max file size: 1 MB
+**Markdown (`.md`)** — up to 1 MB per file:
+- YAML frontmatter parsed into metadata; headings and `**Term:** definition` lines produce structural nodes
+- `[[wikilinks]]`, `[links](path.md)`, `![[embeds]]`, external URLs, and frontmatter tags produce typed edges
+
+**Word documents (`.docx`)** — up to 10 MB per file:
+- Heading paragraphs (Heading 1–6 styles) become `heading` nodes with containment edges
+- Hyperlinks extracted as `docx_hyperlink` edges; Dublin Core metadata (`core.xml`) stored as key/value tuples
+- Zip-slip protection, per-entry size limits, 50 MB total uncompressed budget
+
+**HTML (`.html`, `.htm`)** — up to 5 MB per file:
+- `<h1>`–`<h6>` tags (including `id` attributes) become `heading` nodes
+- `<meta name=…>` and `<meta property=…>` stored as metadata tuples; `<a href=…>` become typed link edges
+- `<script>` and `<style>` content excluded from body text and section chunks
+
+**PDF (`.pdf`)** — up to 50 MB / 500 pages per file:
+- Each page becomes a `heading` node and a section chunk
+- Info-dict fields (Title, Author, Subject, Keywords, CreationDate) indexed as metadata tuples
+- Image-only PDFs detected via average chars/page and flagged with `warning: image-only-pdf`
+
+**Common rules:**
+- Respects `.gitignore` and `.docgraphignore`
 - Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, and similar
 
 ## Workspace Mode
@@ -351,9 +385,13 @@ The server reads JSON-RPC from stdin and writes to stdout.
 ## Architecture
 
 ```
-scan .md files
-  -> parse with goldmark (+ inlined YAML frontmatter parser)
-  -> extract nodes, edges, and links
+scan .md / .docx / .html / .pdf  (docformat registry: extensions + per-format size limits)
+  -> dispatch:
+       .md          → goldmark + inlined YAML frontmatter parser
+       .docx        → stdlib archive/zip + encoding/xml
+       .html / .htm → golang.org/x/net HTML tokenizer
+       .pdf         → ledongthuc/pdf (text layer; writes to temp file)
+  -> extract nodes, edges, links, metadata tuples, and section chunks
   -> store in SQLite (modernc.org/sqlite, pure Go)
   -> resolve cross-document references
   -> compute topic similarity (TF-IDF + graph Jaccard)
@@ -371,7 +409,9 @@ FTS5 uses the trigram tokenizer for mixed CJK and Latin full-text search.
 | [yaml.v3](https://github.com/go-yaml/yaml) | YAML frontmatter parsing |
 | [mcp-go](https://github.com/mark3labs/mcp-go) | MCP protocol (stdio transport) |
 | [fsnotify](https://github.com/fsnotify/fsnotify) | Cross-platform file watcher |
-| stdlib | `.gitignore` + `.docgraphignore` rule matching (no external dep) |
+| [golang.org/x/net](https://pkg.go.dev/golang.org/x/net/html) | HTML tokenizer for `.html`/`.htm` extraction |
+| [ledongthuc/pdf](https://github.com/ledongthuc/pdf) | PDF text-layer extraction |
+| stdlib | `.gitignore` + `.docgraphignore` matching, `archive/zip` + `encoding/xml` for `.docx` |
 
 ## Supply Chain
 

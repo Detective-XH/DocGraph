@@ -8,7 +8,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
@@ -78,7 +80,7 @@ func indexStore(root string, st *store.Store) error {
 		st.DeleteSectionChunksByFile(e.RelPath)
 		st.DeleteDocumentMetadataByFile(e.RelPath)
 		st.DeleteFileData(e.RelPath)
-		res, err := parser.ParseFile(e.Path, e.RelPath, src, hash)
+		res, err := dispatchParse(e.Path, e.RelPath, src, hash)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
 			continue
@@ -168,6 +170,14 @@ func indexStore(root string, st *store.Store) error {
 		}
 	}
 	return nil
+}
+
+func dispatchParse(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
+	ext := strings.ToLower(filepath.Ext(relPath))
+	if ext == ".md" {
+		return parser.ParseFile(absPath, relPath, src, hash)
+	}
+	return extractor.Extract(absPath, relPath, src, hash)
 }
 
 func sha256Hex(d []byte) string {
