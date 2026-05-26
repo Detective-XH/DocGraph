@@ -151,6 +151,95 @@ func TestAppendBoundedContent_ChunkNoLineRange(t *testing.T) {
 	}
 }
 
+func TestHandleContext_ContextPackIncludesEvidenceAndImpact(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	nodes := []store.Node{
+		{
+			ID: "policy.md", Kind: "document", Name: "Incident Response Policy", QualifiedName: "policy.md",
+			FilePath: "policy.md", StartLine: 1, EndLine: 20, BodyExcerpt: "incident response policy evidence", UpdatedAt: 1,
+		},
+		{
+			ID: "source.md", Kind: "document", Name: "Primary Source", QualifiedName: "source.md",
+			FilePath: "source.md", StartLine: 1, EndLine: 5, BodyExcerpt: "source material", UpdatedAt: 1,
+		},
+		{
+			ID: "dependent.md", Kind: "document", Name: "Dependent Doc", QualifiedName: "dependent.md",
+			FilePath: "dependent.md", StartLine: 1, EndLine: 8, BodyExcerpt: "operational dependency", UpdatedAt: 1,
+		},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertSectionChunks([]store.SectionChunk{{
+		NodeID:      "policy.md",
+		FilePath:    "policy.md",
+		StartLine:   1,
+		EndLine:     20,
+		ContentHash: "content-hash-policy",
+		SectionHash: "section-hash-policy",
+		HeadingPath: "",
+		Text:        "# Incident Response Policy\n\nincident response policy evidence",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.InsertEdges([]store.Edge{
+		{Source: "dependent.md", Target: "policy.md", Kind: "references", Line: 4},
+		{Source: "policy.md", Target: "source.md", Kind: "references", Line: 6},
+		{Source: "policy.md", Target: "policy.md", Kind: "links_external", Metadata: `{"url":"https://example.test/evidence"}`, Line: 7},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertGovernanceMetadata("policy.md", []store.MetadataTuple{
+		{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
+		{Key: "effective_date", Value: "2025-01-01", ValueType: "date", Source: "frontmatter"},
+		{Key: "canonical_source", Value: "true", ValueType: "bool", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.UpsertResearchMetadata("policy.md", []store.MetadataTuple{
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+		{Key: "source_type", Value: "primary", ValueType: "string", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleContext, map[string]interface{}{
+		"task":           "incident response",
+		"format":         "context_pack",
+		"maxNodes":       float64(1),
+		"referenceLimit": float64(5),
+		"impactDepth":    float64(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+
+	text := extractText(res)
+	for _, want := range []string{
+		"docgraph.context_pack.v1",
+		"content-hash-policy",
+		"section-hash-policy",
+		"**Status:** approved",
+		"**Effective date:** 2025-01-01",
+		"**Confidence:** high",
+		"**Source type:** primary",
+		"Dependent Doc (dependent.md) --references--> Incident Response Policy (policy.md) [line 4]",
+		"Incident Response Policy (policy.md) --links_external--> https://example.test/evidence [line 7]",
+		"### Impacted Documents",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in context pack, got:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "live read") {
+		t.Errorf("context packs should not use live file reads, got:\n%s", text)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // handleNode --section — indexed chunk path
 // ---------------------------------------------------------------------------

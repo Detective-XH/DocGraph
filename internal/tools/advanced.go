@@ -14,9 +14,12 @@ import (
 var contextTool = mcp.NewTool("docgraph_context",
 	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes governance-aware search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead."),
 	mcp.WithString("task", mcp.Required(), mcp.Description("Description of the task/topic to find context for")),
+	mcp.WithString("format", mcp.Description("Output format: summary (default) or context_pack for a reviewable evidence pack.")),
 	mcp.WithNumber("maxNodes", mcp.Description("Max documents to return (default 10)")),
 	mcp.WithBoolean("includeContent", mcp.Description("Include bounded source content for each result (default true)")),
 	mcp.WithNumber("maxContentBytes", mcp.Description("Max source bytes per result (default 2000, hard cap 6000)")),
+	mcp.WithNumber("impactDepth", mcp.Description("Context pack impact depth for incoming references (default 1, max 3).")),
+	mcp.WithNumber("referenceLimit", mcp.Description("Context pack max incoming/outgoing references per item (default 5, max 20).")),
 	mcp.WithString("status", mcp.Description("Filter by governance status.")),
 	mcp.WithString("sensitivity", mcp.Description("Filter by sensitivity.")),
 	mcp.WithString("canonical_source", mcp.Description("Filter by canonical source marker or value.")),
@@ -203,6 +206,18 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 	}
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+
+	format := strings.ToLower(strings.TrimSpace(getStringArg(args, "format", "")))
+	if format == "context_pack" || format == "evidence_pack" {
+		impactDepth := getIntArg(args, "impactDepth", 1)
+		referenceLimit := getIntArg(args, "referenceLimit", 5)
+		return mcp.NewToolResultText(h.renderContextPack(task, results, contextPackOptions{
+			IncludeContent:  includeContent,
+			MaxContentBytes: maxContentBytes,
+			ImpactDepth:     impactDepth,
+			ReferenceLimit:  referenceLimit,
+		})), nil
 	}
 
 	var sb strings.Builder
