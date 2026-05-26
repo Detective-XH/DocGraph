@@ -1,0 +1,161 @@
+package store
+
+import (
+	"strings"
+	"time"
+	"unicode"
+)
+
+type searchRequest struct {
+	Query          string
+	Kind           string
+	Limit          int
+	Intent         SearchIntent
+	Terms          []string
+	ExpandedTerms  []string
+	Short          bool
+	CandidateLimit int
+	Governance     GovernanceSearchOptions
+	Research       ResearchSearchOptions
+	HasFilters     bool
+	AsOf           time.Time
+}
+
+func newSearchRequest(opts SearchOptions) searchRequest {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	candidateLimit := limit * 8
+	if candidateLimit < 40 {
+		candidateLimit = 40
+	}
+	if candidateLimit > 200 {
+		candidateLimit = 200
+	}
+	governance := trimGovernanceOptions(opts.Governance)
+	research := trimResearchOptions(opts.Research)
+	asOf := time.Now().UTC()
+	if governance.AsOfDate != "" {
+		if parsed, ok := parseSearchDate(governance.AsOfDate); ok {
+			asOf = parsed
+		} else {
+			governance.AsOfDate = ""
+		}
+	}
+	return searchRequest{
+		Query:          strings.TrimSpace(opts.Query),
+		Kind:           strings.TrimSpace(opts.Kind),
+		Limit:          limit,
+		Intent:         opts.Intent,
+		CandidateLimit: candidateLimit,
+		Governance:     governance,
+		Research:       research,
+		HasFilters: SearchOptions{
+			Governance: governance,
+			Research:   research,
+		}.HasMetadataFilters(),
+		AsOf: dateOnly(asOf),
+	}
+}
+
+func trimGovernanceOptions(opts GovernanceSearchOptions) GovernanceSearchOptions {
+	return GovernanceSearchOptions{
+		Status:          strings.TrimSpace(opts.Status),
+		Sensitivity:     strings.TrimSpace(opts.Sensitivity),
+		CanonicalSource: strings.TrimSpace(opts.CanonicalSource),
+		AllowedAudience: strings.TrimSpace(opts.AllowedAudience),
+		AsOfDate:        strings.TrimSpace(opts.AsOfDate),
+	}
+}
+
+func trimResearchOptions(opts ResearchSearchOptions) ResearchSearchOptions {
+	return ResearchSearchOptions{
+		ClaimID:       strings.TrimSpace(opts.ClaimID),
+		SourceType:    strings.TrimSpace(opts.SourceType),
+		Confidence:    strings.TrimSpace(opts.Confidence),
+		AnalystStatus: strings.TrimSpace(opts.AnalystStatus),
+	}
+}
+
+func inferSearchIntent(query, kind string) SearchIntent {
+	q := strings.TrimSpace(query)
+	if kind == "heading" || strings.Contains(q, "#") || strings.Contains(q, " > ") {
+		return SearchIntentSection
+	}
+	if strings.HasSuffix(q, ".md") || strings.Contains(q, ".md#") || strings.HasPrefix(q, "\"") {
+		return SearchIntentExact
+	}
+	return SearchIntentTopic
+}
+
+func queryTerms(query string) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, raw := range strings.Fields(query) {
+		term := normalizeSearchTerm(raw)
+		if term == "" || seen[term] {
+			continue
+		}
+		seen[term] = true
+		out = append(out, term)
+	}
+	return out
+}
+
+func normalizeSearchTerm(term string) string {
+	term = strings.TrimFunc(strings.ToLower(term), func(r rune) bool {
+		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '/' || r == '.')
+	})
+	return term
+}
+
+func (s *Store) expandQueryTerms(req searchRequest) []string {
+	if len(req.Terms) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(req.Terms))
+	for _, t := range req.Terms {
+		seen[t] = true
+	}
+	var out []string
+	addTerm := func(term string) {
+		term = normalizeSearchTerm(term)
+		if term == "" || seen[term] {
+			return
+		}
+		seen[term] = true
+		out = append(out, term)
+	}
+
+	for _, term := range req.Terms {
+		if len(out) >= 32 {
+			break
+		}
+		pattern := "%" + escapeLike(term) + "%"
+		rows, err := s.db.Query(`
+			SELECT DISTINCT name
+			FROM nodes
+			WHERE kind IN ('heading','definition','tag')
+			  AND lower(name) LIKE ? ESCAPE '\'
+			ORDER BY length(name), name
+			LIMIT 12`, pattern)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				continue
+			}
+			for _, t := range queryTerms(name) {
+				addTerm(t)
+				if len(out) >= 32 {
+					break
+				}
+			}
+		}
+		rows.Close()
+	}
+	return out
+}
