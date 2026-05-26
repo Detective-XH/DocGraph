@@ -364,7 +364,7 @@ func (h *handler) renderDriftAudit(task string) string {
 		sb.WriteString(fmt.Sprintf("**Context:** %s\n\n", task))
 	}
 	sb.WriteString("- **Format:** docgraph.drift_audit.v1\n")
-	sb.WriteString("- **Packs:** policy_process, assessment_drift\n")
+	sb.WriteString("- **Packs:** policy_process, assessment_drift, code_doc (when enabled)\n")
 	sb.WriteString("- **Findings are advisory** — they highlight candidates for human review, not authoritative rulings.\n\n")
 
 	opts := store.DriftAuditOpts{}
@@ -423,6 +423,9 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 		store.CodeResearchStaleAssessment,
 		store.CodeResearchUnverifiedEvidence,
 		store.CodeResearchImpactedDeliverable,
+		store.CodeCodeMissingSymbol,
+		store.CodeCodeUndocumentedExport,
+		store.CodeCodeUnanchoredFeature,
 	}
 	byCode := make(map[string][]store.DriftFinding)
 	for _, f := range findings {

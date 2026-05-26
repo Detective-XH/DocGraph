@@ -646,6 +646,9 @@ func packCapabilityNote(pack domainpacks.Pack) string {
 	if pack.ID == domainpacks.PackAssessmentDrift {
 		suffix = ". Use `docgraph_context format=drift_audit`."
 	}
+	if pack.ID == "code_doc" {
+		suffix = ". When enabled, `format=drift_audit` also reports code.* findings."
+	}
 	// Budget: 120 chars - len(prefix) - len(suffix), minus 3 for "..."
 	budget := 120 - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix)
 	desc := pack.Description

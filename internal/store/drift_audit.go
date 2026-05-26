@@ -54,6 +54,13 @@ const (
 	CodeResearchImpactedDeliverable      = "research.impacted_deliverable"
 )
 
+// Docs-code drift finding codes.
+const (
+	CodeCodeMissingSymbol       = "code.missing_symbol"
+	CodeCodeUndocumentedExport  = "code.undocumented_export"
+	CodeCodeUnanchoredFeature   = "code.unanchored_feature"
+)
+
 // GetDriftFindings runs the policy/process drift audit and returns advisory
 // findings. Computation is on-demand; no schema migration is required. The
 // findings are not authoritative — they highlight candidates for human review.
@@ -132,6 +139,12 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 		return nil, err
 	}
 	all = append(all, impacted...)
+
+	docsCode, err := s.findDocsCodeDrift(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, docsCode...)
 
 	if len(all) > opts.Limit {
 		all = all[:opts.Limit]

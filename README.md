@@ -43,7 +43,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~41,710 lines of Go (+ ~37,390 lines of tests) |
+| Codebase | ~41,900 lines of Go (+ ~37,700 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 

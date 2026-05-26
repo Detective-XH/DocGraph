@@ -23,7 +23,7 @@ Score one point for each "yes".
 | Is this a multi-project workspace? | Workspace mode searches across child projects. | Single-project tools may be enough. |
 | Are there CJK documents or mixed Latin/CJK search needs? | FTS5 trigram search helps. | Standard search tools may be enough. |
 | Are there policy/process or research assessment docs that need drift checks? | `format=drift_audit` can surface advisory findings. | Drift audit packs add little. |
-| Are there docs that quote or describe code surfaces? | Opt-in `code_doc` surfaces can support docs-code drift work. | Code indexing can stay off. |
+| Are there docs that quote or describe code surfaces? | Opt-in `code_doc` surfaces can support docs-code drift checks (`format=drift_audit` reports `code.*` findings). | Code indexing can stay off. |
 
 **Score 6-8:** Install/use DocGraph. Start with `docgraph_context`.
 
@@ -126,7 +126,7 @@ removes indexed `code_file` rows.
 | "Find stale or conflicting governance/research docs." | `format=drift_audit` uses metadata, dates, references, and similarity. |
 | "Search across many repos under one workspace." | Workspace mode fans out over per-project indexes. |
 | "Find related docs that do not explicitly link." | Similarity combines TF-IDF, shared references, and tags. |
-| "Check whether docs mention code surfaces." | `code_doc` can index comments, tests, examples, and file headers without owning code semantics. |
+| "Find broken code refs or undocumented exports." | Enable `code_doc`, then `format=drift_audit` surfaces `code.missing_symbol`, `code.undocumented_export`, and `code.unanchored_feature` findings. |
 
 ---
 
@@ -188,3 +188,4 @@ ask the user before running `codegraph init -i`.
 | Code docs are shallow | `code_doc` indexes documentation surfaces, not type resolution, dataflow, or call graphs. |
 | Scanned PDFs | Image-only PDFs are flagged, not OCR'd. |
 | Short CJK queries | Queries under 3 characters fall back to LIKE. |
+| `code.*` drift findings require `code_doc` enabled | Zero findings on projects where `code_doc` is disabled; `findUnanchoredFeature` also requires F-21 governance metadata. |

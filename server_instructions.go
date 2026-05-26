@@ -15,7 +15,7 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
-Use format=context_pack for reviewable evidence packs; format=drift_audit for drift audit (always available; policy finding codes: policy.stale_review, policy.superseded_referenced, policy.duplicate, policy.non_canonical, policy.conflicting; research finding codes: research.stale_assessment, research.unverified_evidence, research.competing_interpretations, research.superseded_claim, research.impacted_deliverable).
+Use format=context_pack for reviewable evidence packs; format=drift_audit for drift audit (always available; policy finding codes: policy.stale_review, policy.superseded_referenced, policy.duplicate, policy.non_canonical, policy.conflicting; research finding codes: research.stale_assessment, research.unverified_evidence, research.competing_interpretations, research.superseded_claim, research.impacted_deliverable; when code_doc is enabled — code finding codes: code.missing_symbol, code.undocumented_export, code.unanchored_feature).
 Only use docgraph_search when you need keyword-level precision, kind filtering, governance filters (status=, sensitivity=), research filters (claim_id=, source_type=, confidence=, analyst_status=), or entity graph filters (entity_type=, entity_id=).
 
 ## Reducing noise
@@ -27,7 +27,7 @@ Only use docgraph_search when you need keyword-level precision, kind filtering, 
 - Neural embeddings are opt-in and agent-driven — DocGraph never calls an LLM itself. See "Neural Embeddings" section below.
 - docgraph_context includes source content by default. Set includeContent=false or lower maxContentBytes when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
-- Code documentation surface (code_doc domain pack, disabled by default): indexes file headers, doc comments, and test/example names from .go, .py, .js, .ts, .rs, and similar source files. To enable for one project, run: docgraph pack enable code_doc <path>; for workspace mode, run: docgraph pack enable --workspace code_doc <workspace>. Use docgraph pack list <path> to inspect pack state and docgraph_search kind=code_file after enabling. Do not edit the SQLite domain_packs table by hand.
+- Code documentation surface (code_doc domain pack, disabled by default): indexes file headers, doc comments, and test/example names from .go, .py, .js, .ts, .rs, and similar source files. To enable for one project, run: docgraph pack enable code_doc <path>; for workspace mode, run: docgraph pack enable --workspace code_doc <workspace>. Use docgraph pack list <path> to inspect pack state and docgraph_search kind=code_file after enabling. Do not edit the SQLite domain_packs table by hand. When enabled, format=drift_audit also surfaces code.missing_symbol, code.undocumented_export, and code.unanchored_feature findings.
 
 ## CodeGraph interoperability
 
