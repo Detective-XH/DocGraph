@@ -23,14 +23,6 @@ var iso8601Re = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}(T[\d:.Z+-]*)?$`)
 // wikilinkValueRe matches [[...]] wikilink patterns used as values.
 var wikilinkValueRe = regexp.MustCompile(`^\[\[.+\]\]$`)
 
-// governanceKeySet is the set of frontmatter keys that map to governance_metadata.
-var governanceKeySet = map[string]bool{
-	"status": true, "owner": true, "approver": true, "department": true,
-	"effective_date": true, "review_due": true, "supersedes": true,
-	"superseded_by": true, "sensitivity": true, "allowed_audience": true,
-	"canonical_source": true,
-}
-
 // ExtractMetadataTuples converts a frontmatter map into normalized MetadataTuples.
 // Rules:
 //   - "tags" key is skipped (already handled by tag nodes + tagged edges).

@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/domainpacks"
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -379,6 +381,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			allEmbStats = append(allEmbStats, *s)
 		}
 		appendEmbeddingStats(&sb, allEmbStats)
+		appendWorkspaceDomainPacks(&sb, h)
 	} else {
 		stats, err := h.store.GetStats()
 		if err != nil {
@@ -445,6 +448,12 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 				}
 			}
 		}
+
+		if packs, err := h.store.GetDomainPacks(); err == nil {
+			if packStats, err := h.store.GetDomainPackStats(); err == nil {
+				appendDomainPackStats(&sb, packs, packStats)
+			}
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -457,6 +466,71 @@ func appendEmbeddingStats(sb *strings.Builder, stats []store.EmbeddingModelStat)
 	sb.WriteString("\n### Neural Embeddings\n| Model | Total | Stale |\n|-------|-------|-------|\n")
 	for _, s := range stats {
 		sb.WriteString(fmt.Sprintf("| %s | %d | %d |\n", s.ModelID, s.Total, s.Stale))
+	}
+}
+
+func appendDomainPackStats(sb *strings.Builder, packs []domainpacks.Pack, stats store.DomainPackStats) {
+	if len(packs) == 0 {
+		return
+	}
+	sb.WriteString("\n### Domain Packs\n")
+	sb.WriteString(fmt.Sprintf("Loaded packs: %d (%d enabled, %d fields)\n", stats.TotalPacks, stats.EnabledPacks, stats.TotalFields))
+	sb.WriteString("| Pack | Domain | Version | Enabled | Fields |\n")
+	sb.WriteString("|------|--------|---------|---------|--------|\n")
+	for _, pack := range packs {
+		enabled := "no"
+		if pack.EnabledByDefault {
+			enabled = "yes"
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d |\n",
+			pack.ID, pack.Domain, pack.Version, enabled, len(pack.Fields)))
+	}
+}
+
+func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
+	if h == nil || h.workspace == nil {
+		return
+	}
+	type aggregate struct {
+		pack            domainpacks.Pack
+		projectCount    int
+		enabledProjects int
+	}
+	byID := make(map[string]*aggregate)
+	for _, project := range h.workspace.Projects {
+		packs, err := project.Store.GetDomainPacks()
+		if err != nil {
+			continue
+		}
+		for _, pack := range packs {
+			agg, ok := byID[pack.ID]
+			if !ok {
+				cp := pack
+				agg = &aggregate{pack: cp}
+				byID[pack.ID] = agg
+			}
+			agg.projectCount++
+			if pack.EnabledByDefault {
+				agg.enabledProjects++
+			}
+		}
+	}
+	if len(byID) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(byID))
+	for id := range byID {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	sb.WriteString("\n### Domain Packs\n")
+	sb.WriteString("| Pack | Domain | Version | Projects | Enabled Projects | Fields |\n")
+	sb.WriteString("|------|--------|---------|----------|------------------|--------|\n")
+	for _, id := range ids {
+		agg := byID[id]
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %d | %d | %d |\n",
+			agg.pack.ID, agg.pack.Domain, agg.pack.Version,
+			agg.projectCount, agg.enabledProjects, len(agg.pack.Fields)))
 	}
 }
 

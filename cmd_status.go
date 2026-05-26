@@ -30,6 +30,13 @@ func cmdStatus(args []string) {
 	}
 	fmt.Printf("DocGraph Index Status\n  Files: %d\n  Nodes: %d (%s)\n  Edges: %d (%s)\n  Unresolved: %d\n  DB Size: %s\n",
 		s.FileCount, s.NodeCount, kindStr(s.NodesByKind), s.EdgeCount, kindStr(s.EdgesByKind), s.UnresolvedCount, sizeStr(s.DBSizeBytes))
+	if schemaVer, schemaName, err := st.SchemaVersion(); err == nil && schemaVer > 0 {
+		fmt.Printf("  Schema: v%d (%s)\n", schemaVer, schemaName)
+	}
+	if packStats, err := st.GetDomainPackStats(); err == nil && packStats.TotalPacks > 0 {
+		fmt.Printf("  Domain Packs: %d loaded (%d enabled, %d fields)\n",
+			packStats.TotalPacks, packStats.EnabledPacks, packStats.TotalFields)
+	}
 }
 
 func sizeStr(b int64) string {

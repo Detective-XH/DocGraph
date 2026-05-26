@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Detective-XH/docgraph/internal/domainpacks"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -118,7 +120,13 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	st := &Store{db: db}
+	if err := st.SyncDomainPacks(domainpacks.Packs()); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("sync domain packs: %w", err)
+	}
+
+	return st, nil
 }
 
 func validateDB(dbPath string) error {

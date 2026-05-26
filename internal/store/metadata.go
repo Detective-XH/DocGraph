@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/Detective-XH/docgraph/internal/domainpacks"
 )
 
 // MetadataTuple is a normalized key/value pair extracted from a document.
@@ -75,36 +77,6 @@ var sourcePriority = map[string]int{
 	"skill_advisory": 1,
 }
 
-// governanceKeys is the set of frontmatter keys that project into governance_metadata.
-var governanceKeys = map[string]string{
-	"status":           "status",
-	"owner":            "owner",
-	"approver":         "approver",
-	"department":       "department",
-	"effective_date":   "effective_date",
-	"review_due":       "review_due",
-	"supersedes":       "supersedes",
-	"superseded_by":    "superseded_by",
-	"sensitivity":      "sensitivity",
-	"allowed_audience": "allowed_audience",
-	"canonical_source": "canonical_source",
-}
-
-// researchKeys is the set of frontmatter keys that project into research_metadata.
-var researchKeys = map[string]string{
-	"claim_id":        "claim_id",
-	"evidence":        "evidence",
-	"source_type":     "source_type",
-	"confidence":      "confidence",
-	"event_date":      "event_date",
-	"assessment_date": "assessment_date",
-	"last_verified":   "last_verified",
-	"valid_until":     "valid_until",
-	"analyst_status":  "analyst_status",
-	"client":          "client",
-	"deliverable_id":  "deliverable_id",
-}
-
 // InsertDocumentMetadata upserts normalized metadata tuples for a document node.
 // It is an audit-trail insert: all (node_id, key, source) triples coexist as separate rows.
 // Authority ordering is NOT enforced here — it is applied at projection time in
@@ -158,10 +130,11 @@ func (s *Store) UpsertGovernanceMetadata(nodeID string, tuples []MetadataTuple) 
 		updatedAt int64
 	}
 	now := time.Now().Unix()
-	winners := make(map[string]winner, len(governanceKeys))
+	projectionKeys := domainpacks.FieldColumnMap(domainpacks.PackGovernance)
+	winners := make(map[string]winner, len(projectionKeys))
 
 	for _, t := range tuples {
-		col, ok := governanceKeys[t.Key]
+		col, ok := projectionKeys[t.Key]
 		if !ok {
 			continue
 		}
@@ -249,10 +222,11 @@ func (s *Store) UpsertResearchMetadata(nodeID string, tuples []MetadataTuple) er
 		updatedAt int64
 	}
 	now := time.Now().Unix()
-	winners := make(map[string]winner, len(researchKeys))
+	projectionKeys := domainpacks.FieldColumnMap(domainpacks.PackResearchProvenance)
+	winners := make(map[string]winner, len(projectionKeys))
 
 	for _, t := range tuples {
-		col, ok := researchKeys[t.Key]
+		col, ok := projectionKeys[t.Key]
 		if !ok {
 			continue
 		}

@@ -240,9 +240,41 @@ CREATE INDEX IF NOT EXISTS idx_research_confidence    ON research_metadata(confi
 CREATE INDEX IF NOT EXISTS idx_research_last_verified ON research_metadata(last_verified);
 `
 
+const migration008SQL = `
+CREATE TABLE IF NOT EXISTS domain_packs (
+    id                 TEXT    PRIMARY KEY,
+    name               TEXT    NOT NULL,
+    version            TEXT    NOT NULL,
+    domain             TEXT    NOT NULL,
+    enabled            INTEGER NOT NULL DEFAULT 1,
+    builtin            INTEGER NOT NULL DEFAULT 0,
+    min_schema_version INTEGER NOT NULL DEFAULT 0,
+    status             TEXT    NOT NULL DEFAULT 'stable',
+    description        TEXT    NOT NULL DEFAULT '',
+    loaded_at          INTEGER NOT NULL,
+    metadata           TEXT    NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS domain_pack_fields (
+    pack_id     TEXT    NOT NULL,
+    field_key   TEXT    NOT NULL,
+    column_name TEXT    NOT NULL,
+    value_type  TEXT    NOT NULL,
+    required    INTEGER NOT NULL DEFAULT 0,
+    aliases     TEXT    NOT NULL DEFAULT '[]',
+    description TEXT    NOT NULL DEFAULT '',
+    PRIMARY KEY (pack_id, field_key),
+    FOREIGN KEY (pack_id) REFERENCES domain_packs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_domain_packs_domain  ON domain_packs(domain);
+CREATE INDEX IF NOT EXISTS idx_domain_packs_enabled ON domain_packs(enabled);
+CREATE INDEX IF NOT EXISTS idx_domain_pack_fields_key ON domain_pack_fields(field_key);
+`
+
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007.
-// Future migrations (008+) are added by their corresponding F-feature.
+// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008.
+// Future migrations (009+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 	{Version: 2, Name: "file_history", SQL: migration002SQL},
@@ -251,6 +283,7 @@ var migrations = []Migration{
 	{Version: 5, Name: "document_metadata", SQL: migration005SQL},
 	{Version: 6, Name: "governance_metadata", SQL: migration006SQL},
 	{Version: 7, Name: "research_metadata", SQL: migration007SQL},
+	{Version: 8, Name: "domain_pack_registry", SQL: migration008SQL},
 }
 
 func init() {
