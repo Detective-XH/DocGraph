@@ -2,6 +2,8 @@ package store
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -151,6 +153,53 @@ func TestSQLInjectionEdgeQueries(t *testing.T) {
 			_ = err
 			assertTablesIntact(t, st, 2)
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Live file read boundary tests
+// ---------------------------------------------------------------------------
+
+func TestReadSectionContentRejectsPathTraversal(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(parent, "outside.md"), []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	content, err := ReadSectionContent("../outside.md", 1, 1, root, 2000)
+	if err == nil {
+		t.Fatalf("expected traversal rejection, got content %q", content)
+	}
+	if strings.Contains(content, "secret") {
+		t.Fatalf("path traversal leaked outside content: %q", content)
+	}
+}
+
+func TestReadSectionContentRejectsSymlinkEscape(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "root")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsidePath := filepath.Join(parent, "outside.md")
+	if err := os.WriteFile(outsidePath, []byte("secret\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	linkPath := filepath.Join(root, "link.md")
+	if err := os.Symlink(outsidePath, linkPath); err != nil {
+		t.Skipf("symlink creation unavailable: %v", err)
+	}
+
+	content, err := ReadSectionContent("link.md", 1, 1, root, 2000)
+	if err == nil {
+		t.Fatalf("expected symlink escape rejection, got content %q", content)
+	}
+	if strings.Contains(content, "secret") {
+		t.Fatalf("symlink escape leaked outside content: %q", content)
 	}
 }
 

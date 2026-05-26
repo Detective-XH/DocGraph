@@ -510,14 +510,37 @@ func ReadSectionContent(filePath string, startLine, endLine int, projectRoot str
 		maxBytes = 2000
 	}
 
-	absPath := filepath.Join(projectRoot, filePath)
-	// Prevent path traversal: resolved path must stay within projectRoot.
-	rel, err := filepath.Rel(projectRoot, absPath)
+	if filepath.IsAbs(filePath) {
+		return "", fmt.Errorf("path escapes project root")
+	}
+	rootAbs, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	absPath := filepath.Join(rootAbs, filePath)
+
+	// Prevent lexical traversal before resolving symlinks.
+	rel, err := filepath.Rel(rootAbs, absPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path escapes project root")
 	}
 
-	data, err := os.ReadFile(absPath)
+	// Resolve both sides before reading. os.ReadFile follows symlinks, so a
+	// lexical Rel check alone is not enough for stale or adversarial DB paths.
+	rootReal, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return "", fmt.Errorf("resolve project root: %w", err)
+	}
+	fileReal, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		return "", fmt.Errorf("resolve file: %w", err)
+	}
+	realRel, err := filepath.Rel(rootReal, fileReal)
+	if err != nil || realRel == ".." || strings.HasPrefix(realRel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes project root")
+	}
+
+	data, err := os.ReadFile(fileReal)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
 	}
