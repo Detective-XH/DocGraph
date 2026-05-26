@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/codedoc"
+	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
@@ -210,9 +212,16 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	if err != nil {
 		return err
 	}
+	codeDocEnabled, err := p.Store.IsPackEnabled("code_doc")
+	if err != nil {
+		return fmt.Errorf("[%s] code_doc pack state: %w", p.Name, err)
+	}
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
+		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
+			continue
+		}
 		src, err := os.ReadFile(e.Path)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
@@ -228,7 +237,7 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		p.Store.DeleteSectionChunksByFile(e.RelPath)
 		p.Store.DeleteDocumentMetadataByFile(e.RelPath)
 		p.Store.DeleteFileData(e.RelPath)
-		res, err := parser.ParseFile(e.Path, e.RelPath, src, hash)
+		res, err := parseIndexedFile(e.Path, e.RelPath, src, hash)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
 			continue
@@ -310,6 +319,17 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		}
 	}
 	return nil
+}
+
+func parseIndexedFile(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
+	ext := strings.ToLower(filepath.Ext(relPath))
+	if ext == ".md" {
+		return parser.ParseFile(absPath, relPath, src, hash)
+	}
+	if codedoc.IsCodeExt(ext) {
+		return codedoc.Extract(absPath, relPath, src, hash)
+	}
+	return extractor.Extract(absPath, relPath, src, hash)
 }
 
 func loadExcludeList(path string) map[string]bool {
