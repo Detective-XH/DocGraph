@@ -114,6 +114,11 @@ docgraph pack disable code_doc <project-path>
 results are available after the command completes. `pack disable code_doc`
 removes indexed `code_file` rows.
 
+Scale reference (measured): 40–80 code files sync in 1–4s; 300+ mixed-language code files
+(Python, SQL, TypeScript) in ~12s. A 127-file Go codebase adds ~127 `code_file` nodes in
+under 1s (incremental, files already hashed). `format=drift_audit` with `code_doc` enabled
+typically surfaces 50–100+ `code.undocumented_export` findings on a real codebase.
+
 ---
 
 ## High-Value Use Cases
@@ -189,3 +194,4 @@ ask the user before running `codegraph init -i`.
 | Scanned PDFs | Image-only PDFs are flagged, not OCR'd. |
 | Short CJK queries | Queries under 3 characters fall back to LIKE. |
 | `code.*` drift findings require `code_doc` enabled | Zero findings on projects where `code_doc` is disabled; `findUnanchoredFeature` also requires governance metadata (frontmatter `status` field). |
+| `--force` re-index resets domain pack settings | `docgraph index --force` deletes and recreates the project DB, losing all `domain_packs` state. Re-run `docgraph pack enable code_doc <path>` after a force rebuild. |

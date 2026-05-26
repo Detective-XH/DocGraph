@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://go.dev)
-[![Single binary](https://img.shields.io/badge/binary-%7E13.5_MB_%C2%B7_zero_runtime_deps-brightgreen.svg)](#install)
+[![Single binary](https://img.shields.io/badge/binary-%7E16_MB_%C2%B7_zero_runtime_deps-brightgreen.svg)](#install)
 [![Formats](https://img.shields.io/badge/formats-.md_%C2%B7_.docx_%C2%B7_.html_%C2%B7_.pdf-orange.svg)](#what-gets-indexed)
 
 [![macOS](https://img.shields.io/badge/macOS-supported-blue.svg)](#install)
@@ -42,10 +42,10 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 | Metric | Value |
 |--------|-------|
 | Language | Go 1.25+ |
-| Binary size | ~13.5 MB |
-| Codebase | ~41,910 lines of Go (+ ~37,700 lines of tests) |
-| Index speed | ~880 .md files across 19 projects in seconds |
-| Typical graph | ~12,800 nodes, ~13,500 edges |
+| Binary size | ~16 MB |
+| Codebase | ~41,940 lines of Go (+ ~37,700 lines of tests) |
+| Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
+| Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
 ## Install
 
@@ -231,6 +231,9 @@ nodes when the `code_doc` domain pack is enabled.
   - Workspace: `docgraph pack enable --workspace code_doc /path/to/workspace`
   - Inspect state: `docgraph pack list /path/to/project`
 - Supported languages include Go, Python, Ruby, JavaScript, TypeScript, Svelte, Vue, Rust, C, C++, Java, Swift, C#, PHP, Kotlin, Dart, Lua, Luau, Pascal, SQL, and Liquid
+- Adds one `code_file` node per source file; incremental `pack enable` sync completes in 1–4s for 40–80 code files, up to ~12s for 300+ code files
+- After enabling, `kind=code_file` is immediately available in `docgraph_search` and `format=drift_audit` surfaces `code.*` findings
+- `--force` re-index resets domain pack state — re-run `docgraph pack enable code_doc <path>` after a force rebuild
 - This is shallow documentation indexing only; CodeGraph remains the intended tool for call graphs, type resolution, routes, and code impact
 
 **Common rules:**

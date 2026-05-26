@@ -69,12 +69,15 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 			if d.Type()&os.ModeSymlink != 0 {
 				return filepath.SkipDir
 			}
+			dirRel, _ := filepath.Rel(root, path)
 			if !opts.NoGitignore {
 				if nested := loadGitignore(filepath.Join(path, ".gitignore")); nested != nil {
+					nested.baseDir = dirRel
 					ignores = append(ignores, nested)
 				}
 			}
 			if nested := loadGitignore(filepath.Join(path, ".docgraphignore")); nested != nil {
+				nested.baseDir = dirRel
 				ignores = append(ignores, nested)
 			}
 			return nil
@@ -128,6 +131,10 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 // ---------------------------------------------------------------------------
 
 type gitignore struct {
+	// baseDir is the directory containing this .gitignore file, expressed as a
+	// path relative to the scan root (empty string = root). Patterns apply only
+	// to files whose relPath starts with baseDir.
+	baseDir  string
 	patterns []string
 	negated  []bool
 }
@@ -157,6 +164,15 @@ func loadGitignore(path string) *gitignore {
 func (gi *gitignore) matches(relPath string) bool {
 	if gi == nil {
 		return false
+	}
+	// Patterns in a nested .gitignore only apply to files within that directory.
+	if gi.baseDir != "" {
+		prefix := gi.baseDir + string(filepath.Separator)
+		if !strings.HasPrefix(relPath, prefix) {
+			return false
+		}
+		// Strip the baseDir prefix so patterns match relative to their own dir.
+		relPath = relPath[len(prefix):]
 	}
 	matched := false
 	for i, pattern := range gi.patterns {
