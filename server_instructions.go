@@ -15,6 +15,7 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
+Use format=context_pack for reviewable Markdown evidence packs; format=drift_audit for policy/process drift audit reports (F-30 finding codes: policy.stale_review, policy.superseded_referenced, policy.duplicate, policy.non_canonical, policy.conflicting).
 Only use docgraph_search when you need keyword-level precision, kind filtering, governance filters (status=, sensitivity=), research filters (claim_id=, source_type=, confidence=, analyst_status=), or entity graph filters (entity_type=, entity_id=).
 
 ## Reducing noise

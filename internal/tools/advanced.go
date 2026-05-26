@@ -14,7 +14,7 @@ import (
 var contextTool = mcp.NewTool("docgraph_context",
 	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes governance-aware search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead."),
 	mcp.WithString("task", mcp.Required(), mcp.Description("Description of the task/topic to find context for")),
-	mcp.WithString("format", mcp.Description("Output format: summary (default) or context_pack for a reviewable evidence pack.")),
+	mcp.WithString("format", mcp.Description("Output format: summary (default), context_pack for a reviewable evidence pack, or drift_audit for a policy/process drift audit report.")),
 	mcp.WithNumber("maxNodes", mcp.Description("Max documents to return (default 10)")),
 	mcp.WithBoolean("includeContent", mcp.Description("Include bounded source content for each result (default true)")),
 	mcp.WithNumber("maxContentBytes", mcp.Description("Max source bytes per result (default 2000, hard cap 6000)")),
@@ -218,6 +218,9 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			ImpactDepth:     impactDepth,
 			ReferenceLimit:  referenceLimit,
 		})), nil
+	}
+	if format == "drift_audit" {
+		return mcp.NewToolResultText(h.renderDriftAudit(task)), nil
 	}
 
 	var sb strings.Builder

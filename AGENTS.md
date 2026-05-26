@@ -90,6 +90,8 @@ What do you need?
 ├─ Understand a topic, task, or area
 │   └─ docgraph_context  ← START HERE
 │       Combines: search + structure + cross-refs + bounded source content
+│       format=context_pack  → reviewable Markdown evidence pack
+│       format=drift_audit   → policy/process drift audit report (F-30)
 │
 ├─ Details on ONE specific document
 │   ├─ Full document with structure → docgraph_node

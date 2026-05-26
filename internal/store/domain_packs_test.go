@@ -13,18 +13,21 @@ func TestSyncDomainPacksPersistsBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomainPacks: %v", err)
 	}
-	if len(packs) != 3 {
-		t.Fatalf("got %d packs, want 3", len(packs))
+	if len(packs) != 4 {
+		t.Fatalf("got %d packs, want 4", len(packs))
 	}
-	// Packs are sorted by ID: entity < governance < research_provenance.
+	// Packs are sorted by ID: entity < governance < policy_process < research_provenance.
 	if packs[0].ID != domainpacks.PackEntity {
 		t.Fatalf("first pack = %q, want %q", packs[0].ID, domainpacks.PackEntity)
 	}
 	if packs[1].ID != domainpacks.PackGovernance {
 		t.Fatalf("second pack = %q, want %q", packs[1].ID, domainpacks.PackGovernance)
 	}
-	if packs[2].ID != domainpacks.PackResearchProvenance {
-		t.Fatalf("third pack = %q, want %q", packs[2].ID, domainpacks.PackResearchProvenance)
+	if packs[2].ID != domainpacks.PackPolicyProcess {
+		t.Fatalf("third pack = %q, want %q", packs[2].ID, domainpacks.PackPolicyProcess)
+	}
+	if packs[3].ID != domainpacks.PackResearchProvenance {
+		t.Fatalf("fourth pack = %q, want %q", packs[3].ID, domainpacks.PackResearchProvenance)
 	}
 	for _, p := range packs {
 		if len(p.Fields) == 0 {
@@ -36,7 +39,8 @@ func TestSyncDomainPacksPersistsBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomainPackStats: %v", err)
 	}
-	if stats.TotalPacks != 3 || stats.EnabledPacks != 3 || stats.BuiltInPacks != 3 || stats.OptionalPacks != 0 {
+	// policy_process is built-in but EnabledByDefault=false; so 3 enabled, 4 built-in.
+	if stats.TotalPacks != 4 || stats.EnabledPacks != 3 || stats.BuiltInPacks != 4 || stats.OptionalPacks != 0 {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
 }

@@ -483,6 +483,8 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			sb.WriteString("\n### Entity Graph\n")
 			sb.WriteString(fmt.Sprintf("Entities: %d | Mentions: %d\n", entities, mentions))
 		}
+
+		appendDriftAuditStats(&sb, h.store)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -551,6 +553,33 @@ func formatQualityIssueCodes(issues []store.MetadataQualityIssue, limit int) str
 		suffix = fmt.Sprintf(", +%d", len(issues)-limit)
 	}
 	return fmt.Sprintf(" (issues: %s%s)", strings.Join(codes, ", "), suffix)
+}
+
+// appendDriftAuditStats adds a compact policy drift audit summary to the status
+// output. It omits the section entirely when there are no findings, so a clean
+// project has no extra noise in docgraph_status output.
+func appendDriftAuditStats(sb *strings.Builder, st *store.Store) {
+	if st == nil {
+		return
+	}
+	findings, err := st.GetDriftFindings(store.DriftAuditOpts{})
+	if err != nil || len(findings) == 0 {
+		return
+	}
+	summary := store.SummarizeDriftFindings(findings)
+	sb.WriteString("\n### Policy Drift Audit\n")
+	sb.WriteString(fmt.Sprintf("Total findings: %d", summary.TotalFindings))
+	if e := summary.BySeverity["error"]; e > 0 {
+		sb.WriteString(fmt.Sprintf(" | Errors: %d", e))
+	}
+	if w := summary.BySeverity["warning"]; w > 0 {
+		sb.WriteString(fmt.Sprintf(" | Warnings: %d", w))
+	}
+	sb.WriteString("\n")
+	for code, count := range summary.ByCode {
+		sb.WriteString(fmt.Sprintf("  %s: %d\n", code, count))
+	}
+	sb.WriteString("Use `docgraph_context format=drift_audit` for full report.\n")
 }
 
 func sortedIssueCounts(counts map[string]int) []string {

@@ -42,7 +42,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~12,590 lines of Go (+ ~11,030 lines of tests) |
+| Codebase | ~13,350 lines of Go (+ ~12,120 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -116,13 +116,14 @@ Available skills bundled in the binary:
 | Skill | Purpose |
 |-------|---------|
 | `docgraph-drift-audit` | Audit `.md` files for DocGraph compatibility |
+| `policy-drift-audit` | Display and triage policy/process drift findings from `docgraph_context format=drift_audit` (F-30) |
 
 ## MCP Tools
 
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) |
-| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content |
+| 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process drift audit reports (F-30) |
 | 3 | `docgraph_references` | Incoming links (who references this doc) |
 | 4 | `docgraph_links` | Outgoing links (what this doc links to) |
 | 5 | `docgraph_impact` | Blast radius analysis (BFS over incoming refs, configurable depth) |
@@ -131,7 +132,7 @@ Available skills bundled in the binary:
 | 8 | `docgraph_trace` | Shortest reference path between two docs (BFS, max 10 hops) |
 | 9 | `docgraph_files` | Indexed file tree |
 | 10 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
-| 11 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, and pending reindex/migration state |
+| 11 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy findings exist |
 | 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
 | 14 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |

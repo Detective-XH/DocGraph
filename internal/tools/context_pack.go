@@ -352,3 +352,105 @@ func writeContextPackField(sb *strings.Builder, label, value string) {
 	}
 	sb.WriteString(fmt.Sprintf("- **%s:** %s\n", label, value))
 }
+
+// renderDriftAudit runs the policy/process drift audit and formats findings as
+// a Markdown report. In workspace mode it fans out across all projects. The
+// task label is used for the report header only; findings are not filtered by
+// topic — the audit scans all indexed documents.
+func (h *handler) renderDriftAudit(task string) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("# Policy/Process Drift Audit Report\n\n"))
+	if task != "" {
+		sb.WriteString(fmt.Sprintf("**Context:** %s\n\n", task))
+	}
+	sb.WriteString("- **Format:** docgraph.drift_audit.v1\n")
+	sb.WriteString("- **Pack:** policy_process\n")
+	sb.WriteString("- **Findings are advisory** — they highlight candidates for human review, not authoritative rulings.\n\n")
+
+	opts := store.DriftAuditOpts{}
+
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			findings, err := p.Store.GetDriftFindings(opts)
+			if err != nil {
+				sb.WriteString(fmt.Sprintf("## %s\n\n_Error running drift audit: %v_\n\n", p.Name, err))
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("## %s\n\n", p.Name))
+			appendDriftFindingsMarkdown(&sb, findings)
+		}
+		return sb.String()
+	}
+
+	if h.store == nil {
+		sb.WriteString("_No store available._\n")
+		return sb.String()
+	}
+	findings, err := h.store.GetDriftFindings(opts)
+	if err != nil {
+		sb.WriteString(fmt.Sprintf("_Error running drift audit: %v_\n", err))
+		return sb.String()
+	}
+	appendDriftFindingsMarkdown(&sb, findings)
+	return sb.String()
+}
+
+// appendDriftFindingsMarkdown writes a grouped Markdown section for drift findings.
+func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFinding) {
+	if len(findings) == 0 {
+		sb.WriteString("No drift findings.\n\n")
+		return
+	}
+	stats := store.SummarizeDriftFindings(findings)
+	sb.WriteString(fmt.Sprintf("**Total findings:** %d", stats.TotalFindings))
+	if e := stats.BySeverity["error"]; e > 0 {
+		sb.WriteString(fmt.Sprintf(" | **Errors:** %d", e))
+	}
+	if w := stats.BySeverity["warning"]; w > 0 {
+		sb.WriteString(fmt.Sprintf(" | **Warnings:** %d", w))
+	}
+	sb.WriteString("\n\n")
+
+	// Group by code for readability.
+	codeOrder := []string{
+		store.CodePolicyConflicting,
+		store.CodePolicySupersedeReferenced,
+		store.CodePolicyStaleReview,
+		store.CodePolicyDuplicate,
+		store.CodePolicyNonCanonical,
+	}
+	byCode := make(map[string][]store.DriftFinding)
+	for _, f := range findings {
+		byCode[f.Code] = append(byCode[f.Code], f)
+	}
+	// Also collect any unknown codes (future F-31 research.* codes).
+	seen := make(map[string]bool)
+	for _, c := range codeOrder {
+		seen[c] = true
+	}
+	for _, f := range findings {
+		if !seen[f.Code] {
+			seen[f.Code] = true
+			codeOrder = append(codeOrder, f.Code)
+		}
+	}
+
+	for _, code := range codeOrder {
+		group := byCode[code]
+		if len(group) == 0 {
+			continue
+		}
+		sb.WriteString(fmt.Sprintf("### `%s` (%d)\n\n", code, len(group)))
+		for _, f := range group {
+			sb.WriteString(fmt.Sprintf("- **%s**", f.FilePath))
+			if f.RelatedPath != "" {
+				sb.WriteString(fmt.Sprintf(" ↔ %s", f.RelatedPath))
+			}
+			sb.WriteString(fmt.Sprintf("\n  - %s\n", f.Message))
+			if f.Evidence != "" {
+				sb.WriteString(fmt.Sprintf("  - Evidence: %s\n", f.Evidence))
+			}
+		}
+		sb.WriteString("\n")
+	}
+}
