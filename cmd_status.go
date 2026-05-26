@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"sort"
+	"strings"
+	"time"
 
 	"github.com/Detective-XH/docgraph/internal/store"
 )
@@ -37,6 +40,13 @@ func cmdStatus(args []string) {
 		fmt.Printf("  Domain Packs: %d loaded (%d enabled, %d fields)\n",
 			packStats.TotalPacks, packStats.EnabledPacks, packStats.TotalFields)
 	}
+	if qualityStats, err := st.GetMetadataQualityStats(time.Time{}); err == nil && qualityStats.TotalDocs > 0 {
+		fmt.Printf("  Metadata Quality: %.1f/100 avg (good: %d, warning: %d, poor: %d)\n",
+			qualityStats.AverageScore, qualityStats.GoodDocs, qualityStats.WarningDocs, qualityStats.PoorDocs)
+		if top := topQualityIssues(qualityStats.IssueCounts, 3); top != "" {
+			fmt.Printf("  Metadata Quality Issues: %s\n", top)
+		}
+	}
 }
 
 func sizeStr(b int64) string {
@@ -61,4 +71,25 @@ func kindStr(m map[string]int) string {
 		s += fmt.Sprintf("%s: %d", k, v)
 	}
 	return s
+}
+
+func topQualityIssues(counts map[string]int, limit int) string {
+	codes := make([]string, 0, len(counts))
+	for code := range counts {
+		codes = append(codes, code)
+	}
+	sort.Slice(codes, func(i, j int) bool {
+		if counts[codes[i]] == counts[codes[j]] {
+			return codes[i] < codes[j]
+		}
+		return counts[codes[i]] > counts[codes[j]]
+	})
+	if limit > 0 && len(codes) > limit {
+		codes = codes[:limit]
+	}
+	parts := make([]string, 0, len(codes))
+	for _, code := range codes {
+		parts = append(parts, fmt.Sprintf("%s:%d", code, counts[code]))
+	}
+	return strings.Join(parts, ", ")
 }

@@ -250,11 +250,15 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 
 		// Governance metadata — appended when available.
 		if st := h.getStoreForResolvedNode(&node); st != nil {
-			if gov, err := st.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
+			docID := contextPackDocID(node)
+			if gov, err := st.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
 				sb.WriteString(appendGovernanceSection(gov))
 			}
-			if research, err := st.GetResearchMetadata(node.ID); err == nil && !store.IsResearchEmpty(research) {
+			if research, err := st.GetResearchMetadata(docID); err == nil && !store.IsResearchEmpty(research) {
 				sb.WriteString(appendResearchSection(research))
+			}
+			if quality, err := st.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
+				sb.WriteString(appendMetadataQualitySection(quality))
 			}
 		}
 	}
@@ -385,11 +389,15 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 
 	// Governance metadata section.
 	if s := h.getStoreForResolvedNode(node); s != nil {
-		if gov, err := s.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
+		docID := contextPackDocID(*node)
+		if gov, err := s.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
 			sb.WriteString(appendGovernanceSection(gov))
 		}
-		if research, err := s.GetResearchMetadata(node.ID); err == nil && !store.IsResearchEmpty(research) {
+		if research, err := s.GetResearchMetadata(docID); err == nil && !store.IsResearchEmpty(research) {
 			sb.WriteString(appendResearchSection(research))
+		}
+		if quality, err := s.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
+			sb.WriteString(appendMetadataQualitySection(quality))
 		}
 	}
 
@@ -710,6 +718,33 @@ func appendResearchSection(r *store.ResearchRecord) string {
 	}
 	if r.Evidence != "" {
 		sb.WriteString(fmt.Sprintf("**Evidence:** %s\n", r.Evidence))
+	}
+	return sb.String()
+}
+
+// appendMetadataQualitySection formats advisory F-27 metadata quality signals.
+func appendMetadataQualitySection(q *store.MetadataQualityRecord) string {
+	if q == nil {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n### Metadata Quality\n")
+	sb.WriteString(fmt.Sprintf("**Score:** %d/100 (%s)\n", q.Score, q.Level))
+	sb.WriteString(fmt.Sprintf("**References:** %d incoming, %d outgoing\n", q.IncomingReferences, q.OutgoingReferences))
+	if len(q.Issues) == 0 {
+		sb.WriteString("**Issues:** none\n")
+		return sb.String()
+	}
+	sb.WriteString("**Issues:**\n")
+	limit := len(q.Issues)
+	if limit > 6 {
+		limit = 6
+	}
+	for _, issue := range q.Issues[:limit] {
+		sb.WriteString(fmt.Sprintf("- `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message))
+	}
+	if len(q.Issues) > limit {
+		sb.WriteString(fmt.Sprintf("- ... %d more issues omitted\n", len(q.Issues)-limit))
 	}
 	return sb.String()
 }

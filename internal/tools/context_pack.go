@@ -3,6 +3,7 @@ package tools
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Detective-XH/docgraph/internal/store"
 )
@@ -81,6 +82,7 @@ func (h *handler) appendContextPackItem(sb *strings.Builder, index int, node sto
 
 	h.appendContextPackSnapshot(sb, st, &node, opts)
 	h.appendContextPackMetadata(sb, st, docID)
+	h.appendContextPackQuality(sb, st, docID)
 	h.appendContextPackReferences(sb, st, docNode, opts.ReferenceLimit)
 	h.appendContextPackImpact(sb, st, docID, opts.ImpactDepth, opts.ReferenceLimit)
 }
@@ -168,6 +170,37 @@ func (h *handler) appendContextPackMetadata(sb *strings.Builder, st *store.Store
 		writeContextPackField(sb, "Analyst status", research.AnalystStatus)
 		writeContextPackField(sb, "Client", research.Client)
 		writeContextPackField(sb, "Deliverable ID", research.DeliverableID)
+	}
+}
+
+func (h *handler) appendContextPackQuality(sb *strings.Builder, st *store.Store, docID string) {
+	if st == nil || docID == "" {
+		return
+	}
+	quality, err := st.GetMetadataQuality(docID, time.Time{})
+	if err != nil || quality == nil {
+		return
+	}
+	sb.WriteString("\n### Metadata Quality\n")
+	sb.WriteString(fmt.Sprintf("- **Score:** %d/100\n", quality.Score))
+	sb.WriteString(fmt.Sprintf("- **Level:** %s\n", quality.Level))
+	sb.WriteString(fmt.Sprintf("- **As of:** %s\n", quality.AsOf))
+	sb.WriteString(fmt.Sprintf("- **Incoming references:** %d\n", quality.IncomingReferences))
+	sb.WriteString(fmt.Sprintf("- **Outgoing references:** %d\n", quality.OutgoingReferences))
+	if len(quality.Issues) == 0 {
+		sb.WriteString("- **Issues:** none\n")
+		return
+	}
+	sb.WriteString("- **Issues:**\n")
+	limit := len(quality.Issues)
+	if limit > 8 {
+		limit = 8
+	}
+	for _, issue := range quality.Issues[:limit] {
+		sb.WriteString(fmt.Sprintf("  - `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message))
+	}
+	if len(quality.Issues) > limit {
+		sb.WriteString(fmt.Sprintf("  - ... %d more quality issues omitted\n", len(quality.Issues)-limit))
 	}
 }
 

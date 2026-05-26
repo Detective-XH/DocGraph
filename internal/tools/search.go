@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Detective-XH/docgraph/internal/domainpacks"
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -123,6 +124,12 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 				firstLine = firstLine[:100] + "..."
 			}
 			sb.WriteString(fmt.Sprintf("   > %s\n", firstLine))
+		}
+		if st := h.getStoreForResolvedNode(&n); st != nil {
+			if quality, err := st.GetMetadataQuality(n.ID, time.Time{}); err == nil && quality != nil {
+				sb.WriteString(fmt.Sprintf("   Quality: %d/100 %s%s\n",
+					quality.Score, quality.Level, formatQualityIssueCodes(quality.Issues, 3)))
+			}
 		}
 	}
 
@@ -391,6 +398,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		}
 		appendEmbeddingStats(&sb, allEmbStats)
 		appendWorkspaceDomainPacks(&sb, h)
+		appendWorkspaceMetadataQualityStats(&sb, h)
 	} else {
 		stats, err := h.store.GetStats()
 		if err != nil {
@@ -458,6 +466,10 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			}
 		}
 
+		if qualityStats, err := h.store.GetMetadataQualityStats(time.Time{}); err == nil {
+			appendMetadataQualityStats(&sb, qualityStats)
+		}
+
 		if packs, err := h.store.GetDomainPacks(); err == nil {
 			if packStats, err := h.store.GetDomainPackStats(); err == nil {
 				appendDomainPackStats(&sb, packs, packStats)
@@ -466,6 +478,85 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func appendMetadataQualityStats(sb *strings.Builder, stats store.MetadataQualityStats) {
+	sb.WriteString("\n### Metadata Quality\n")
+	sb.WriteString(fmt.Sprintf("Average score: %.1f / 100 across %d documents\n", stats.AverageScore, stats.TotalDocs))
+	sb.WriteString(fmt.Sprintf("Good: %d | Warning: %d | Poor: %d\n", stats.GoodDocs, stats.WarningDocs, stats.PoorDocs))
+	if len(stats.IssueCounts) == 0 {
+		sb.WriteString("Issues: none\n")
+		return
+	}
+	codes := sortedIssueCounts(stats.IssueCounts)
+	sb.WriteString("| Issue | Documents |\n|-------|-----------|\n")
+	limit := len(codes)
+	if limit > 8 {
+		limit = 8
+	}
+	for _, code := range codes[:limit] {
+		sb.WriteString(fmt.Sprintf("| `%s` | %d |\n", code, stats.IssueCounts[code]))
+	}
+}
+
+func appendWorkspaceMetadataQualityStats(sb *strings.Builder, h *handler) {
+	if h == nil || h.workspace == nil {
+		return
+	}
+	sb.WriteString("\n### Metadata Quality\n")
+	sb.WriteString("| Project | Avg Score | Good | Warning | Poor | Top Issues |\n")
+	sb.WriteString("|---------|-----------|------|---------|------|------------|\n")
+	for _, project := range h.workspace.Projects {
+		stats, err := project.Store.GetMetadataQualityStats(time.Time{})
+		if err != nil {
+			continue
+		}
+		topIssues := sortedIssueCounts(stats.IssueCounts)
+		if len(topIssues) > 3 {
+			topIssues = topIssues[:3]
+		}
+		for i, code := range topIssues {
+			topIssues[i] = fmt.Sprintf("%s:%d", code, stats.IssueCounts[code])
+		}
+		issues := strings.Join(topIssues, ", ")
+		if issues == "" {
+			issues = "none"
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %.1f | %d | %d | %d | %s |\n",
+			project.Name, stats.AverageScore, stats.GoodDocs, stats.WarningDocs, stats.PoorDocs, issues))
+	}
+}
+
+func formatQualityIssueCodes(issues []store.MetadataQualityIssue, limit int) string {
+	if len(issues) == 0 {
+		return " (issues: none)"
+	}
+	if limit <= 0 || limit > len(issues) {
+		limit = len(issues)
+	}
+	codes := make([]string, 0, limit)
+	for _, issue := range issues[:limit] {
+		codes = append(codes, issue.Code)
+	}
+	suffix := ""
+	if len(issues) > limit {
+		suffix = fmt.Sprintf(", +%d", len(issues)-limit)
+	}
+	return fmt.Sprintf(" (issues: %s%s)", strings.Join(codes, ", "), suffix)
+}
+
+func sortedIssueCounts(counts map[string]int) []string {
+	codes := make([]string, 0, len(counts))
+	for code := range counts {
+		codes = append(codes, code)
+	}
+	sort.Slice(codes, func(i, j int) bool {
+		if counts[codes[i]] == counts[codes[j]] {
+			return codes[i] < codes[j]
+		}
+		return counts[codes[i]] > counts[codes[j]]
+	})
+	return codes
 }
 
 func appendEmbeddingStats(sb *strings.Builder, stats []store.EmbeddingModelStat) {
