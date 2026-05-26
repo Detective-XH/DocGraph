@@ -1,0 +1,121 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strings"
+
+	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/mark3labs/mcp-go/mcp"
+)
+
+var similarTool = mcp.NewTool("docgraph_similar",
+	mcp.WithDescription("Find documents that are topically similar to a given document, even without explicit links. Uses TF-IDF text similarity + shared references + tag overlap. If neural embeddings have been stored via docgraph_embeddings_store, results also include neural similarity scores (engine: neural). For explicit link tracking, use docgraph_references instead."),
+	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
+	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
+)
+
+func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	document := getStringArg(args, "document", "")
+	if document == "" {
+		return mcp.NewToolResultError("document parameter is required"), nil
+	}
+	document = sanitizeArg(document, maxArgLength)
+	limit := getIntArg(args, "limit", 10)
+
+	node, err := h.resolveDoc(document)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("resolve failed: %v", err)), nil
+	}
+	if node == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("document not found: %s — try docgraph_search to find the correct name or path", document)), nil
+	}
+
+	// Query similar_to edges (both directions) for this document.
+	var edges []store.Edge
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			if es, err := p.Store.GetSimilarEdgesForDoc(node.ID); err == nil {
+				edges = append(edges, es...)
+			}
+		}
+	} else {
+		var err error
+		edges, err = h.store.GetSimilarEdgesForDoc(node.ID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("get similar edges: %v", err)), nil
+		}
+	}
+
+	// Deduplicate: same pair can have both TF-IDF and neural edges.
+	// Keep one edge per pair, preferring engine=neural over tfidf.
+	type pairKey struct{ a, b string }
+	best := make(map[pairKey]store.Edge)
+	for _, e := range edges {
+		src, tgt := e.Source, e.Target
+		if src > tgt {
+			src, tgt = tgt, src
+		}
+		k := pairKey{src, tgt}
+		existing, ok := best[k]
+		if !ok {
+			best[k] = e
+			continue
+		}
+		// Prefer neural engine.
+		var existingEng, newEng string
+		var m map[string]interface{}
+		if json.Unmarshal([]byte(existing.Metadata), &m) == nil {
+			existingEng, _ = m["engine"].(string)
+		}
+		if json.Unmarshal([]byte(e.Metadata), &m) == nil {
+			newEng, _ = m["engine"].(string)
+		}
+		if newEng == "neural" && existingEng != "neural" {
+			best[k] = e
+		}
+	}
+
+	deduped := make([]store.Edge, 0, len(best))
+	for _, e := range best {
+		deduped = append(deduped, e)
+	}
+	if limit > 0 && len(deduped) > limit {
+		deduped = deduped[:limit]
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Documents similar to %q\n\nFound %d similar documents.\n", node.Name, len(deduped)))
+
+	for i, e := range deduped {
+		otherID := e.Target
+		if otherID == node.ID {
+			otherID = e.Source
+		}
+		other := h.getNodeByID(otherID)
+		if other == nil {
+			continue
+		}
+		score := ""
+		if e.Metadata != "" {
+			var m map[string]interface{}
+			if json.Unmarshal([]byte(e.Metadata), &m) == nil {
+				if s, ok := m["score"].(float64); ok {
+					score = fmt.Sprintf(" (score: %.2f", s)
+					if eng, ok := m["engine"].(string); ok {
+						score += ", engine: " + eng
+						if mid, ok := m["model_id"].(string); ok {
+							score += ", model: " + mid
+						}
+					}
+					score += ")"
+				}
+			}
+		}
+		sb.WriteString(fmt.Sprintf("\n%d. **%s** %s%s\n", i+1, other.Name, other.FilePath, score))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}

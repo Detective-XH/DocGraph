@@ -1,0 +1,66 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/mark3labs/mcp-go/mcp"
+)
+
+var exploreTool = mcp.NewTool("docgraph_explore",
+	mcp.WithDescription("Survey several related documents and their cross-references in one call. More efficient than multiple docgraph_node calls. For a single known document, use docgraph_node instead."),
+	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms to find related documents")),
+	mcp.WithNumber("maxDocs", mcp.Description("Max documents (default 5)")),
+)
+
+func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	query := getStringArg(args, "query", "")
+	if query == "" {
+		return mcp.NewToolResultError("query parameter is required"), nil
+	}
+	query = sanitizeArg(query, maxArgLength)
+	maxDocs := getIntArg(args, "maxDocs", 5)
+
+	var results []store.SearchResult
+	var err error
+	if h.workspace != nil {
+		results, err = h.workspace.Search(query, "", maxDocs)
+	} else {
+		results, err = h.store.Search(query, "", maxDocs)
+	}
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("## Explore: %q\n\n", query))
+
+	for i, sr := range results {
+		node := sr.Node
+		headings := h.getHeadings(&node)
+		inCount, outCount := h.getEdgeCounts(&node)
+
+		headingNames := make([]string, len(headings))
+		for j, hd := range headings {
+			headingNames[j] = hd.Name
+		}
+
+		sb.WriteString(fmt.Sprintf("### %d. %s (%s)\n", i+1, node.Name, node.FilePath))
+		if len(headingNames) > 0 {
+			sb.WriteString(fmt.Sprintf("Headings: %s\n", strings.Join(headingNames, ", ")))
+		}
+		sb.WriteString(fmt.Sprintf("Links out: %d | Links in: %d\n", outCount, inCount))
+
+		if node.BodyExcerpt != "" {
+			for _, line := range strings.Split(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
+				sb.WriteString(fmt.Sprintf("> %s\n", line))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
