@@ -155,6 +155,9 @@ func loadGitignore(path string) *gitignore {
 			neg = true
 			line = line[1:]
 		}
+		// Strip leading "/" — gitignore uses it to anchor a pattern to the
+		// directory containing the .gitignore file, which baseDir already handles.
+		line = strings.TrimPrefix(line, "/")
 		gi.patterns = append(gi.patterns, line)
 		gi.negated = append(gi.negated, neg)
 	}

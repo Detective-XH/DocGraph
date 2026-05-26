@@ -194,4 +194,3 @@ ask the user before running `codegraph init -i`.
 | Scanned PDFs | Image-only PDFs are flagged, not OCR'd. |
 | Short CJK queries | Queries under 3 characters fall back to LIKE. |
 | `code.*` drift findings require `code_doc` enabled | Zero findings on projects where `code_doc` is disabled; `findUnanchoredFeature` also requires governance metadata (frontmatter `status` field). |
-| `--force` re-index resets domain pack settings | `docgraph index --force` deletes and recreates the project DB, losing all `domain_packs` state. Re-run `docgraph pack enable code_doc <path>` after a force rebuild. |

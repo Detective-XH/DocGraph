@@ -239,6 +239,81 @@ func TestScanDirEmpty(t *testing.T) {
 	})
 }
 
+func TestScanDirGitignoreLeadingSlash(t *testing.T) {
+	t.Run("leading-slash pattern excludes directory anchored at root", func(t *testing.T) {
+		tmp := t.TempDir()
+
+		if err := os.WriteFile(filepath.Join(tmp, ".gitignore"), []byte("/prompts/\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(tmp, "prompts"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, "prompts", "excluded.md"), []byte("# excluded"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(tmp, "included.md"), []byte("# included"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := ScanDir(tmp)
+		if err != nil {
+			t.Fatalf("ScanDir: %v", err)
+		}
+		found := map[string]bool{}
+		for _, e := range entries {
+			found[e.RelPath] = true
+		}
+		if found[filepath.Join("prompts", "excluded.md")] {
+			t.Error("prompts/excluded.md should be excluded by /prompts/ gitignore pattern")
+		}
+		if !found["included.md"] {
+			t.Error("included.md should not be excluded")
+		}
+	})
+}
+
+func TestScanDirNestedGitignoreScoping(t *testing.T) {
+	t.Run("wildcard in nested .gitignore does not exclude files outside that directory", func(t *testing.T) {
+		tmp := t.TempDir()
+
+		cacheDir := filepath.Join(tmp, "cache_dir")
+		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Nested .gitignore with wildcard — must only apply inside cache_dir/
+		if err := os.WriteFile(filepath.Join(cacheDir, ".gitignore"), []byte("*\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cacheDir, "noise.md"), []byte("# noise"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		queriesDir := filepath.Join(tmp, "queries")
+		if err := os.MkdirAll(queriesDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(queriesDir, "query.md"), []byte("# query"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := ScanDir(tmp)
+		if err != nil {
+			t.Fatalf("ScanDir: %v", err)
+		}
+		found := map[string]bool{}
+		for _, e := range entries {
+			found[e.RelPath] = true
+		}
+		if found[filepath.Join("cache_dir", "noise.md")] {
+			t.Error("cache_dir/noise.md should be excluded by nested wildcard")
+		}
+		if !found[filepath.Join("queries", "query.md")] {
+			t.Errorf("queries/query.md should not be excluded by cache_dir/.gitignore wildcard")
+		}
+	})
+}
+
 func TestScanDirRelPaths(t *testing.T) {
 	t.Run("all RelPath values are relative, not absolute", func(t *testing.T) {
 		entries, err := ScanDir(fixtureDir(t, "project-a"))

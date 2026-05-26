@@ -34,15 +34,36 @@ func indexPathOpts(dir string, force bool) *store.Store {
 	if err := os.MkdirAll(dbDir, 0o755); err != nil {
 		log.Fatal(err)
 	}
+
+	// Snapshot pack enabled states before wiping the DB so user overrides survive.
+	var savedPackEnabled map[string]bool
 	if force {
+		if existing, openErr := store.Open(filepath.Join(dbDir, "docgraph.db")); openErr == nil {
+			if packs, pErr := existing.GetDomainPacks(); pErr == nil {
+				savedPackEnabled = make(map[string]bool, len(packs))
+				for _, p := range packs {
+					savedPackEnabled[p.ID] = p.EnabledByDefault
+				}
+			}
+			existing.Close()
+		}
 		if err := removeIndexDB(dbDir); err != nil {
 			log.Fatal(err)
 		}
 	}
+
 	st, err := store.Open(filepath.Join(dbDir, "docgraph.db"))
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	// Restore overridden pack states after force rebuild (before indexStore reads them).
+	for id, enabled := range savedPackEnabled {
+		if err := st.SetPackEnabled(id, enabled); err != nil {
+			fmt.Fprintf(os.Stderr, "restore pack %s: %v\n", id, err)
+		}
+	}
+
 	if err := indexStore(root, st); err != nil {
 		log.Fatal(err)
 	}
