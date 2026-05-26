@@ -27,7 +27,7 @@ const (
 
 // Sentinel errors.
 var (
-	ErrFutureSchema    = errors.New("docgraph: database was created by a newer version of DocGraph; upgrade your binary")
+	ErrFutureSchema     = errors.New("docgraph: database was created by a newer version of DocGraph; upgrade your binary")
 	ErrChecksumMismatch = errors.New("docgraph: migration checksum mismatch; database may have been tampered with")
 )
 
@@ -171,14 +171,62 @@ INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
     VALUES('reindex_reason','section_chunks table added; run docgraph index --force',unixepoch());
 `
 
+const migration005SQL = `
+CREATE TABLE IF NOT EXISTS document_metadata (
+    node_id    TEXT    NOT NULL,
+    key        TEXT    NOT NULL,
+    value      TEXT    NOT NULL,
+    value_type TEXT    NOT NULL DEFAULT 'string',
+    source     TEXT    NOT NULL DEFAULT 'frontmatter',
+    confidence REAL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (node_id, key, source),
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_docmeta_key_value ON document_metadata(key, value);
+CREATE INDEX IF NOT EXISTS idx_docmeta_node      ON document_metadata(node_id);
+CREATE INDEX IF NOT EXISTS idx_docmeta_source    ON document_metadata(source);
+INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
+    VALUES('reindex_required','true',unixepoch());
+INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
+    VALUES('reindex_scope','metadata',unixepoch());
+INSERT OR REPLACE INTO project_metadata(key,value,updated_at)
+    VALUES('reindex_reason','document_metadata table added; run docgraph index --force',unixepoch());
+`
+
+const migration006SQL = `
+CREATE TABLE IF NOT EXISTS governance_metadata (
+    node_id          TEXT    PRIMARY KEY,
+    status           TEXT,
+    owner            TEXT,
+    approver         TEXT,
+    department       TEXT,
+    effective_date   TEXT,
+    review_due       TEXT,
+    supersedes       TEXT,
+    superseded_by    TEXT,
+    sensitivity      TEXT,
+    allowed_audience TEXT,
+    canonical_source TEXT,
+    updated_at       INTEGER NOT NULL,
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_govmeta_status         ON governance_metadata(status);
+CREATE INDEX IF NOT EXISTS idx_govmeta_sensitivity    ON governance_metadata(sensitivity);
+CREATE INDEX IF NOT EXISTS idx_govmeta_effective_date ON governance_metadata(effective_date);
+CREATE INDEX IF NOT EXISTS idx_govmeta_review_due     ON governance_metadata(review_due);
+`
+
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003; F-19 delivers 004. Future migrations (005+) are added by their
-// corresponding F-feature — never added here without the owning feature.
+// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006.
+// Future migrations (007+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
 	{Version: 2, Name: "file_history", SQL: migration002SQL},
 	{Version: 3, Name: "embeddings", SQL: migration003SQL},
 	{Version: 4, Name: "section_chunks", SQL: migration004SQL},
+	{Version: 5, Name: "document_metadata", SQL: migration005SQL},
+	{Version: 6, Name: "governance_metadata", SQL: migration006SQL},
 }
 
 func init() {
@@ -250,9 +298,13 @@ func runMigrationsList(db *sql.DB, migs []Migration) error {
 			return fmt.Errorf("check existing tables: %w", err)
 		}
 		if tableCount == 3 {
-			// Pre-F-18 DB: mark all known migrations as applied without re-running SQL.
+			// Pre-F-18 DB: mark only the legacy baseline migrations as applied.
+			// Later migrations still need to run so their tables actually exist.
 			now := time.Now().Unix()
 			for _, m := range migs {
+				if m.Version > 3 {
+					continue
+				}
 				if _, err := db.Exec(
 					`INSERT OR IGNORE INTO schema_migrations(version, name, checksum, applied_at) VALUES(?,?,?,?)`,
 					m.Version, m.Name, m.Checksum, now,
@@ -260,10 +312,9 @@ func runMigrationsList(db *sql.DB, migs []Migration) error {
 					return fmt.Errorf("baseline insert migration %d: %w", m.Version, err)
 				}
 			}
-			if err := setUserVersion(db, highestKnown); err != nil {
+			if err := setUserVersion(db, 3); err != nil {
 				return err
 			}
-			return nil
 		}
 	}
 

@@ -38,14 +38,14 @@ func TestMigration004_FreshDB(t *testing.T) {
 		t.Fatalf("RunMigrations on fresh DB: %v", err)
 	}
 
-	// 4 migration rows.
-	if n := countMigrationRows(db); n != 4 {
-		t.Errorf("expected 4 migration rows, got %d", n)
+	// 6 migration rows (001–006).
+	if n := countMigrationRows(db); n != 6 {
+		t.Errorf("expected 6 migration rows, got %d", n)
 	}
 
-	// PRAGMA user_version = 4.
-	if v := getUserVersion(db); v != 4 {
-		t.Errorf("expected user_version=4, got %d", v)
+	// PRAGMA user_version = 6.
+	if v := getUserVersion(db); v != 6 {
+		t.Errorf("expected user_version=6, got %d", v)
 	}
 
 	// section_chunks table must exist.
@@ -53,12 +53,20 @@ func TestMigration004_FreshDB(t *testing.T) {
 		t.Error("section_chunks table not found after migration 004")
 	}
 
-	// Idempotent: run again, still 4 rows, no error.
+	// document_metadata and governance_metadata tables must exist (F-21).
+	if !tableExists(db, "document_metadata") {
+		t.Error("document_metadata table not found after migration 005")
+	}
+	if !tableExists(db, "governance_metadata") {
+		t.Error("governance_metadata table not found after migration 006")
+	}
+
+	// Idempotent: run again, still 6 rows, no error.
 	if err := RunMigrations(db); err != nil {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
-	if n := countMigrationRows(db); n != 4 {
-		t.Errorf("expected 4 migration rows after double run, got %d", n)
+	if n := countMigrationRows(db); n != 6 {
+		t.Errorf("expected 6 migration rows after double run, got %d", n)
 	}
 }
 
@@ -252,7 +260,9 @@ func TestDeleteSectionChunksByFile(t *testing.T) {
 	}
 }
 
-// ── Test 7: Reindex markers present in project_metadata after migration 004 ───
+// ── Test 7: Reindex markers present in project_metadata after all migrations ──
+// Migration 005 runs after 004 and overwrites reindex_scope to "metadata", so
+// a full RunMigrations (all 6) will show scope="metadata" not "sections".
 
 func TestMigration004_ReindexMarkers(t *testing.T) {
 	st := tempStore(t)
@@ -265,12 +275,13 @@ func TestMigration004_ReindexMarkers(t *testing.T) {
 		t.Errorf("reindex_required: got %q want %q", val, "true")
 	}
 
+	// Migration 005 overwrites the scope written by 004 ("sections" → "metadata").
 	scope, found := getMetaValue(t, st, MetaKeyReindexScope)
 	if !found {
 		t.Fatal("reindex_scope marker not found in project_metadata")
 	}
-	if scope != "sections" {
-		t.Errorf("reindex_scope: got %q want %q", scope, "sections")
+	if scope != "metadata" {
+		t.Errorf("reindex_scope: got %q want %q", scope, "metadata")
 	}
 
 	reason, found := getMetaValue(t, st, MetaKeyReindexReason)

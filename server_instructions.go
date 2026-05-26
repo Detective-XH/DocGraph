@@ -15,7 +15,7 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 | Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
-Only use docgraph_search when you need keyword-level precision or kind filtering.
+Only use docgraph_search when you need keyword-level precision, kind filtering, or governance filters (status=, sensitivity=).
 
 ## Reducing noise
 

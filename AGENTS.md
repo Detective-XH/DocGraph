@@ -105,7 +105,7 @@ Need the connection path between two docs?
   → docgraph_trace
 
 Need a keyword search with filtering?
-  → docgraph_search (with kind= filter for precision)
+  → docgraph_search (kind= for node type precision; status= / sensitivity= for governance filtering)
 
 Don't know if DocGraph has the file indexed?
   → docgraph_status (check counts, schema version, reindex state) or docgraph_files (list files)

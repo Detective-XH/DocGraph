@@ -14,10 +14,12 @@ import (
 // ---------------------------------------------------------------------------
 
 var searchTool = mcp.NewTool("docgraph_search",
-	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure."),
+	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use status/sensitivity to filter by governance metadata."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms")),
 	mcp.WithString("kind", mcp.Description("Filter by node kind: document, heading, definition, tag")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
+	mcp.WithString("status", mcp.Description("Filter by governance status (e.g. approved, draft, superseded). Requires metadata reindex.")),
+	mcp.WithString("sensitivity", mcp.Description("Filter by sensitivity (e.g. public, internal, confidential, restricted). Requires metadata reindex.")),
 )
 
 var filesTool = mcp.NewTool("docgraph_files",
@@ -44,7 +46,81 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	query = sanitizeArg(query, maxArgLength)
 	kind := getStringArg(args, "kind", "")
 	limit := getIntArg(args, "limit", 10)
+	statusFilter := sanitizeArg(getStringArg(args, "status", ""), 100)
+	sensitivityFilter := sanitizeArg(getStringArg(args, "sensitivity", ""), 100)
 
+	useGovernanceFilter := statusFilter != "" || sensitivityFilter != ""
+
+	var sb strings.Builder
+
+	if useGovernanceFilter {
+		// Governance-filtered path: query governance_metadata then intersect with FTS results.
+		var govNodes []store.Node
+		var govErr error
+		if h.workspace != nil {
+			for _, p := range h.workspace.Projects {
+				ns, err := p.Store.GetNodesByGovernance(statusFilter, sensitivityFilter, limit)
+				if err == nil {
+					govNodes = append(govNodes, ns...)
+				}
+			}
+		} else {
+			govNodes, govErr = h.store.GetNodesByGovernance(statusFilter, sensitivityFilter, limit)
+			if govErr != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("governance filter failed: %v", govErr)), nil
+			}
+		}
+
+		// Further narrow by FTS query if a query is provided.
+		ftsResults, _ := func() ([]store.SearchResult, error) {
+			if h.workspace != nil {
+				return h.workspace.Search(query, kind, limit*4)
+			}
+			return h.store.Search(query, kind, limit*4)
+		}()
+		ftsIDs := make(map[string]bool, len(ftsResults))
+		for _, r := range ftsResults {
+			ftsIDs[r.Node.ID] = true
+		}
+
+		var filtered []store.Node
+		for _, n := range govNodes {
+			if ftsIDs[n.ID] {
+				filtered = append(filtered, n)
+			}
+		}
+		if len(filtered) > limit {
+			filtered = filtered[:limit]
+		}
+
+		filters := fmt.Sprintf("status=%q sensitivity=%q", statusFilter, sensitivityFilter)
+		sb.WriteString(fmt.Sprintf("## Search Results for %q [governance filter: %s]\n\nFound %d results.\n", query, filters, len(filtered)))
+		if len(filtered) == 0 {
+			reindexVal, reindexFound, _ := func() (string, bool, error) {
+				if h.store != nil {
+					return h.store.GetProjectMeta(store.MetaKeyReindexRequired)
+				}
+				return "", false, nil
+			}()
+			if reindexFound && reindexVal == "true" {
+				sb.WriteString("\n> **Note:** metadata reindex pending — run `docgraph index --force` to populate governance filters.\n")
+			}
+		}
+		for i, n := range filtered {
+			path := n.FilePath
+			sb.WriteString(fmt.Sprintf("\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine))
+			if n.BodyExcerpt != "" {
+				firstLine := strings.SplitN(strings.TrimRight(n.BodyExcerpt, "\n"), "\n", 2)[0]
+				if len(firstLine) > 100 {
+					firstLine = firstLine[:100] + "..."
+				}
+				sb.WriteString(fmt.Sprintf("   > %s\n", firstLine))
+			}
+		}
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
+	// Standard FTS path.
 	var results []store.SearchResult
 	var err error
 	if h.workspace != nil {
@@ -56,7 +132,6 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
 	}
 
-	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("## Search Results for %q\n\nFound %d results.\n", query, len(results)))
 
 	for i, sr := range results {
@@ -277,6 +352,18 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		}
 		if failureFound && lastFailure != "" {
 			sb.WriteString(fmt.Sprintf("Last migration failure: %s\n", lastFailure))
+		}
+
+		// Metadata index stats.
+		if metaStats, err := h.store.GetMetadataStats(); err == nil {
+			sb.WriteString("\n### Metadata Index\n")
+			sb.WriteString(fmt.Sprintf("Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs))
+			if reindexRequired {
+				scope, _, _ := h.store.GetProjectMeta(store.MetaKeyReindexScope)
+				if scope == "metadata" {
+					sb.WriteString("> metadata reindex pending — run `docgraph index --force`\n")
+				}
+			}
 		}
 	}
 

@@ -162,6 +162,13 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		if includeContent {
 			appendBoundedContent(&sb, h, &node, maxContentBytes)
 		}
+
+		// Governance metadata — appended when available.
+		if st := h.getStoreForNode(node.ID); st != nil {
+			if gov, err := st.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
+				sb.WriteString(appendGovernanceSection(gov))
+			}
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -285,6 +292,13 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		sb.WriteString("\n### Body Excerpt\n")
 		for _, line := range strings.Split(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
 			sb.WriteString(fmt.Sprintf("> %s\n", line))
+		}
+	}
+
+	// Governance metadata section.
+	if s := h.getStoreForNode(node.ID); s != nil {
+		if gov, err := s.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
+			sb.WriteString(appendGovernanceSection(gov))
 		}
 	}
 
@@ -521,4 +535,48 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+
+// appendGovernanceSection formats governance metadata as a Markdown section string.
+func appendGovernanceSection(g *store.GovernanceRecord) string {
+	if store.IsGovernanceEmpty(g) {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n### Governance\n")
+	if g.Status != "" {
+		sb.WriteString(fmt.Sprintf("**Status:** %s\n", g.Status))
+	}
+	if g.Sensitivity != "" {
+		sb.WriteString(fmt.Sprintf("**Sensitivity:** %s\n", g.Sensitivity))
+	}
+	if g.Owner != "" {
+		sb.WriteString(fmt.Sprintf("**Owner:** %s\n", g.Owner))
+	}
+	if g.Approver != "" {
+		sb.WriteString(fmt.Sprintf("**Approver:** %s\n", g.Approver))
+	}
+	if g.Department != "" {
+		sb.WriteString(fmt.Sprintf("**Department:** %s\n", g.Department))
+	}
+	if g.EffectiveDate != "" {
+		sb.WriteString(fmt.Sprintf("**Effective:** %s\n", g.EffectiveDate))
+	}
+	if g.ReviewDue != "" {
+		sb.WriteString(fmt.Sprintf("**Review due:** %s\n", g.ReviewDue))
+	}
+	if g.Supersedes != "" {
+		sb.WriteString(fmt.Sprintf("**Supersedes:** %s\n", g.Supersedes))
+	}
+	if g.SupersededBy != "" {
+		sb.WriteString(fmt.Sprintf("**Superseded by:** %s\n", g.SupersededBy))
+	}
+	if g.CanonicalSource != "" {
+		sb.WriteString(fmt.Sprintf("**Canonical source:** %s\n", g.CanonicalSource))
+	}
+	if g.AllowedAudience != "" {
+		sb.WriteString(fmt.Sprintf("**Audience:** %s\n", g.AllowedAudience))
+	}
+	return sb.String()
 }

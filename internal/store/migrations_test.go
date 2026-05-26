@@ -131,18 +131,18 @@ func TestRunMigrations_FreshDB(t *testing.T) {
 		t.Fatalf("RunMigrations on fresh DB: %v", err)
 	}
 
-	// 4 rows in schema_migrations.
-	if n := countMigrationRows(db); n != 4 {
-		t.Errorf("expected 4 migration rows, got %d", n)
+	// 6 rows in schema_migrations (001–006).
+	if n := countMigrationRows(db); n != 6 {
+		t.Errorf("expected 6 migration rows, got %d", n)
 	}
 
-	// PRAGMA user_version = 4.
-	if v := getUserVersion(db); v != 4 {
-		t.Errorf("expected user_version=4, got %d", v)
+	// PRAGMA user_version = 6.
+	if v := getUserVersion(db); v != 6 {
+		t.Errorf("expected user_version=6, got %d", v)
 	}
 
 	// All expected tables exist.
-	for _, tbl := range []string{"nodes", "edges", "files", "unresolved_refs", "project_metadata", "file_history", "embeddings", "section_chunks", "nodes_fts", "schema_migrations"} {
+	for _, tbl := range []string{"nodes", "edges", "files", "unresolved_refs", "project_metadata", "file_history", "embeddings", "section_chunks", "document_metadata", "governance_metadata", "nodes_fts", "schema_migrations"} {
 		if !tableExists(db, tbl) {
 			t.Errorf("table %q not found after fresh migration", tbl)
 		}
@@ -168,9 +168,17 @@ func TestRunMigrations_OldDBBaseline(t *testing.T) {
 		t.Fatalf("RunMigrations on old DB: %v", err)
 	}
 
-	// 4 rows inserted (not re-run).
-	if n := countMigrationRows(db); n != 4 {
-		t.Errorf("expected 4 migration rows, got %d", n)
+	// 6 rows inserted (not re-run).
+	if n := countMigrationRows(db); n != 6 {
+		t.Errorf("expected 6 migration rows, got %d", n)
+	}
+	if v := getUserVersion(db); v != 6 {
+		t.Errorf("expected user_version=6 after applying post-baseline migrations, got %d", v)
+	}
+	for _, tbl := range []string{"section_chunks", "document_metadata", "governance_metadata"} {
+		if !tableExists(db, tbl) {
+			t.Errorf("post-baseline table %q not found after old DB migration", tbl)
+		}
 	}
 
 	// FTS search still works.
@@ -200,9 +208,9 @@ func TestRunMigrations_IdempotentReopen(t *testing.T) {
 		t.Fatalf("second RunMigrations: %v", err)
 	}
 
-	// Still exactly 4 rows — no duplicates.
-	if n := countMigrationRows(db); n != 4 {
-		t.Errorf("expected 4 migration rows after double run, got %d", n)
+	// Still exactly 6 rows — no duplicates.
+	if n := countMigrationRows(db); n != 6 {
+		t.Errorf("expected 6 migration rows after double run, got %d", n)
 	}
 }
 
@@ -226,9 +234,9 @@ func TestRunMigrations_ChecksumMismatch(t *testing.T) {
 		t.Errorf("expected ErrChecksumMismatch, got: %v", err)
 	}
 
-	// DB should still have 4 rows (unchanged).
-	if n := countMigrationRows(db); n != 4 {
-		t.Errorf("expected 4 migration rows after mismatch, got %d", n)
+	// DB should still have 6 rows (unchanged).
+	if n := countMigrationRows(db); n != 6 {
+		t.Errorf("expected 6 migration rows after mismatch, got %d", n)
 	}
 }
 
@@ -325,8 +333,8 @@ func TestRunMigrations_WorkspaceMixedState(t *testing.T) {
 	if err := RunMigrations(normalDB); err != nil {
 		t.Errorf("normal DB migrations failed: %v", err)
 	}
-	if n := countMigrationRows(normalDB); n != 4 {
-		t.Errorf("normal DB: expected 4 migration rows, got %d", n)
+	if n := countMigrationRows(normalDB); n != 6 {
+		t.Errorf("normal DB: expected 6 migration rows, got %d", n)
 	}
 
 	// Future DB should return ErrFutureSchema.
@@ -369,3 +377,114 @@ func TestRunMigrations_GarbageFailureMarker(t *testing.T) {
 	}
 }
 
+// ── Test 10: Migration 005 — document_metadata table + reindex markers ───────
+
+func TestMigration005_FreshDB(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations on fresh DB: %v", err)
+	}
+
+	// document_metadata table must exist after migration 005.
+	if !tableExists(db, "document_metadata") {
+		t.Error("document_metadata table not found after migration 005")
+	}
+
+	// Migration 005 writes reindex_required="true".
+	var reindexVal string
+	err := db.QueryRow(`SELECT value FROM project_metadata WHERE key = ?`, MetaKeyReindexRequired).Scan(&reindexVal)
+	if err != nil {
+		t.Fatalf("query reindex_required: %v", err)
+	}
+	if reindexVal != "true" {
+		t.Errorf("reindex_required: got %q want %q", reindexVal, "true")
+	}
+
+	// Migration 005 writes reindex_scope="metadata".
+	var scopeVal string
+	err = db.QueryRow(`SELECT value FROM project_metadata WHERE key = ?`, MetaKeyReindexScope).Scan(&scopeVal)
+	if err != nil {
+		t.Fatalf("query reindex_scope: %v", err)
+	}
+	if scopeVal != "metadata" {
+		t.Errorf("reindex_scope: got %q want %q", scopeVal, "metadata")
+	}
+}
+
+// ── Test 11: Migration 006 — governance_metadata table, no new reindex markers
+
+func TestMigration006_AfterFive(t *testing.T) {
+	db := openRawDB(t)
+
+	if err := RunMigrations(db); err != nil {
+		t.Fatalf("RunMigrations on fresh DB: %v", err)
+	}
+
+	// governance_metadata table must exist after migration 006.
+	if !tableExists(db, "governance_metadata") {
+		t.Error("governance_metadata table not found after migration 006")
+	}
+
+	// Migration 006 does NOT write any new reindex markers.
+	// The scope should still be "metadata" from migration 005 (not overwritten).
+	var scopeVal string
+	err := db.QueryRow(`SELECT value FROM project_metadata WHERE key = ?`, MetaKeyReindexScope).Scan(&scopeVal)
+	if err != nil {
+		t.Fatalf("query reindex_scope: %v", err)
+	}
+	if scopeVal != "metadata" {
+		t.Errorf("reindex_scope after 006: got %q want %q (006 must not overwrite 005 markers)", scopeVal, "metadata")
+	}
+
+	// Reason should still be from migration 005.
+	var reasonVal string
+	err = db.QueryRow(`SELECT value FROM project_metadata WHERE key = ?`, MetaKeyReindexReason).Scan(&reasonVal)
+	if err != nil {
+		t.Fatalf("query reindex_reason: %v", err)
+	}
+	if reasonVal == "" {
+		t.Error("reindex_reason should not be empty (set by migration 005)")
+	}
+}
+
+// ── Test 12: Migrations 005+006 are idempotent (file-backed DB, second Open) ─
+
+func TestMigration005006_Idempotent(t *testing.T) {
+	dbPath := t.TempDir() + "/test_idempotent.db"
+
+	// First open: applies all 6 migrations.
+	db1, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if err := RunMigrations(db1); err != nil {
+		t.Fatalf("first RunMigrations: %v", err)
+	}
+	if n := countMigrationRows(db1); n != 6 {
+		t.Errorf("after first open: expected 6 migration rows, got %d", n)
+	}
+	db1.Close()
+
+	// Second open: same DB file — migrations must not be re-run.
+	db2, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	t.Cleanup(func() { db2.Close() })
+
+	if err := RunMigrations(db2); err != nil {
+		t.Fatalf("second RunMigrations: %v", err)
+	}
+	if n := countMigrationRows(db2); n != 6 {
+		t.Errorf("after second open: expected 6 migration rows (no re-runs), got %d", n)
+	}
+
+	// Tables from 005/006 still exist.
+	if !tableExists(db2, "document_metadata") {
+		t.Error("document_metadata table missing after second open")
+	}
+	if !tableExists(db2, "governance_metadata") {
+		t.Error("governance_metadata table missing after second open")
+	}
+}
