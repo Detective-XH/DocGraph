@@ -22,7 +22,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~6,750 lines of Go (+ ~5,630 lines of tests) |
+| Codebase | ~6,980 lines of Go (+ ~6,420 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -393,11 +393,11 @@ and SQLite. DocGraph adopts the same core design:
 - **Two-phase resolution**: raw links are extracted during parsing, then
   resolved in a separate pass after all files are indexed — identical to
   CodeGraph's `UnresolvedReference` → `ReferenceResolver` pattern.
-- **MCP tool surface**: the 12 tools (`_context`, `_search`, `_callers`/
-  `_references`, `_callees`/`_links`, `_impact`, `_trace`, `_node`,
-  `_explore`, `_similar`, `_files`, `_status`, `_tags`) mirror CodeGraph's names
-  and semantics so that agents already familiar with one can use the other
-  without learning a new interface.
+- **MCP tool surface**: the 16 tools keep CodeGraph-compatible naming for
+  context, search, references/links, impact, trace, node, explore, similar,
+  files, status, tags, and history, with a distinct opt-in neural embeddings
+  protocol. Agent-facing instructions group these tools behind a compact
+  decision tree so future workflows do not require a growing top-level catalog.
 
 Where they diverge: DocGraph is written in Go (single binary, no Node.js
 runtime), uses the trigram tokenizer for CJK support, and adds workspace

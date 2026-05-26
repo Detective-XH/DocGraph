@@ -6,24 +6,13 @@ DocGraph indexes Markdown files into a searchable knowledge graph with cross-doc
 
 ## Tool selection
 
-| Intent | Tool |
-|--------|------|
-| Find docs about a topic | docgraph_context (start here; includes bounded source content) |
-| Search by keyword | docgraph_search |
-| Who references this doc? | docgraph_references |
-| What does this doc link to? | docgraph_links |
-| Impact of changing a doc | docgraph_impact |
-| Single doc details (use section param to read full heading content) | docgraph_node |
-| Survey multiple docs | docgraph_explore |
-| Path between two docs | docgraph_trace |
-| List indexed files | docgraph_files |
-| Find related docs (no explicit links needed) | docgraph_similar |
-| List/filter by tag | docgraph_tags |
-| Git change history for a doc | docgraph_history |
-| Index health + schema version + reindex state + migration failures | docgraph_status |
-| Get docs needing neural embeddings | docgraph_embeddings_pending |
-| Store a computed embedding vector | docgraph_embeddings_store |
-| Clear embeddings for a model | docgraph_embeddings_clear |
+| Intent | Tool surface |
+|--------|--------------|
+| Topic or task context | docgraph_context (start here; includes bounded source content) |
+| Exact lookup or status | docgraph_search, docgraph_node, docgraph_files, docgraph_status |
+| Reference and impact analysis | docgraph_references, docgraph_links, docgraph_impact, docgraph_trace |
+| Discovery and metadata navigation | docgraph_explore, docgraph_similar, docgraph_tags, docgraph_history |
+| Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
 
 Start with docgraph_context — it combines search + structure + cross-references + bounded source content in one call.
 Only use docgraph_search when you need keyword-level precision or kind filtering.
