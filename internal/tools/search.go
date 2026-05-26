@@ -568,7 +568,7 @@ func appendDriftAuditStats(sb *strings.Builder, st *store.Store) {
 		return
 	}
 	summary := store.SummarizeDriftFindings(findings)
-	sb.WriteString("\n### Policy Drift Audit\n")
+	sb.WriteString("\n### Drift Audit\n")
 	sb.WriteString(fmt.Sprintf("Total findings: %d", summary.TotalFindings))
 	if e := summary.BySeverity["error"]; e > 0 {
 		sb.WriteString(fmt.Sprintf(" | Errors: %d", e))
@@ -642,6 +642,9 @@ func packCapabilityNote(pack domainpacks.Pack) string {
 	suffix := ""
 	if pack.ID == domainpacks.PackPolicyProcess {
 		suffix = ". Use `docgraph_context format=drift_audit` to run the audit."
+	}
+	if pack.ID == domainpacks.PackAssessmentDrift {
+		suffix = ". Use `docgraph_context format=drift_audit`."
 	}
 	// Budget: 120 chars - len(prefix) - len(suffix), minus 3 for "..."
 	budget := 120 - utf8.RuneCountInString(prefix) - utf8.RuneCountInString(suffix)

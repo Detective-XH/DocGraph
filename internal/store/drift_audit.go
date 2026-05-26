@@ -29,16 +29,29 @@ type DriftAuditOpts struct {
 	// AsOf is the reference date for stale-review and overdue checks.
 	// Default time.Now().UTC().
 	AsOf time.Time
+	// UnverifiedAfterDays is the age threshold in days for the
+	// research.unverified_evidence check. A research document whose
+	// last_verified date is older than AsOf minus this many days is flagged.
+	// Default 180.
+	UnverifiedAfterDays int
 }
 
-// Policy/process drift finding codes (F-30). These are the public API contract;
-// F-31 will add research.* codes in the same namespace pattern.
+// Policy/process drift finding codes (F-30).
 const (
 	CodePolicyStaleReview         = "policy.stale_review"
 	CodePolicySupersedeReferenced = "policy.superseded_referenced"
 	CodePolicyDuplicate           = "policy.duplicate"
 	CodePolicyNonCanonical        = "policy.non_canonical"
 	CodePolicyConflicting         = "policy.conflicting"
+)
+
+// Research/assessment drift finding codes (F-31).
+const (
+	CodeResearchStaleAssessment          = "research.stale_assessment"
+	CodeResearchUnverifiedEvidence       = "research.unverified_evidence"
+	CodeResearchCompetingInterpretations = "research.competing_interpretations"
+	CodeResearchSupersededClaim          = "research.superseded_claim"
+	CodeResearchImpactedDeliverable      = "research.impacted_deliverable"
 )
 
 // GetDriftFindings runs the policy/process drift audit and returns advisory
@@ -53,6 +66,9 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 	}
 	if opts.AsOf.IsZero() {
 		opts.AsOf = time.Now().UTC()
+	}
+	if opts.UnverifiedAfterDays <= 0 {
+		opts.UnverifiedAfterDays = 180
 	}
 
 	var all []DriftFinding
@@ -86,6 +102,36 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 		return nil, err
 	}
 	all = append(all, conflicts...)
+
+	staleAssess, err := s.findStaleAssessment(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, staleAssess...)
+
+	unverified, err := s.findUnverifiedEvidence(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, unverified...)
+
+	competing, err := s.findCompetingInterpretations(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, competing...)
+
+	supersededClaim, err := s.findResearchSupersededClaim(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, supersededClaim...)
+
+	impacted, err := s.findImpactedDeliverable(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, impacted...)
 
 	if len(all) > opts.Limit {
 		all = all[:opts.Limit]

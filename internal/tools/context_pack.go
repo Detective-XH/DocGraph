@@ -359,12 +359,12 @@ func writeContextPackField(sb *strings.Builder, label, value string) {
 // topic — the audit scans all indexed documents.
 func (h *handler) renderDriftAudit(task string) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Policy/Process Drift Audit Report\n\n"))
+	sb.WriteString("# Drift Audit Report\n\n")
 	if task != "" {
 		sb.WriteString(fmt.Sprintf("**Context:** %s\n\n", task))
 	}
 	sb.WriteString("- **Format:** docgraph.drift_audit.v1\n")
-	sb.WriteString("- **Pack:** policy_process\n")
+	sb.WriteString("- **Packs:** policy_process, assessment_drift\n")
 	sb.WriteString("- **Findings are advisory** — they highlight candidates for human review, not authoritative rulings.\n\n")
 
 	opts := store.DriftAuditOpts{}
@@ -418,6 +418,11 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 		store.CodePolicyStaleReview,
 		store.CodePolicyDuplicate,
 		store.CodePolicyNonCanonical,
+		store.CodeResearchSupersededClaim,
+		store.CodeResearchCompetingInterpretations,
+		store.CodeResearchStaleAssessment,
+		store.CodeResearchUnverifiedEvidence,
+		store.CodeResearchImpactedDeliverable,
 	}
 	byCode := make(map[string][]store.DriftFinding)
 	for _, f := range findings {

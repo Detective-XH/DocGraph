@@ -13,21 +13,24 @@ func TestSyncDomainPacksPersistsBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomainPacks: %v", err)
 	}
-	if len(packs) != 4 {
-		t.Fatalf("got %d packs, want 4", len(packs))
+	if len(packs) != 5 {
+		t.Fatalf("got %d packs, want 5", len(packs))
 	}
-	// Packs are sorted by ID: entity < governance < policy_process < research_provenance.
-	if packs[0].ID != domainpacks.PackEntity {
-		t.Fatalf("first pack = %q, want %q", packs[0].ID, domainpacks.PackEntity)
+	// Packs are sorted by ID: assessment_drift < entity < governance < policy_process < research_provenance.
+	if packs[0].ID != domainpacks.PackAssessmentDrift {
+		t.Fatalf("first pack = %q, want %q", packs[0].ID, domainpacks.PackAssessmentDrift)
 	}
-	if packs[1].ID != domainpacks.PackGovernance {
-		t.Fatalf("second pack = %q, want %q", packs[1].ID, domainpacks.PackGovernance)
+	if packs[1].ID != domainpacks.PackEntity {
+		t.Fatalf("second pack = %q, want %q", packs[1].ID, domainpacks.PackEntity)
 	}
-	if packs[2].ID != domainpacks.PackPolicyProcess {
-		t.Fatalf("third pack = %q, want %q", packs[2].ID, domainpacks.PackPolicyProcess)
+	if packs[2].ID != domainpacks.PackGovernance {
+		t.Fatalf("third pack = %q, want %q", packs[2].ID, domainpacks.PackGovernance)
 	}
-	if packs[3].ID != domainpacks.PackResearchProvenance {
-		t.Fatalf("fourth pack = %q, want %q", packs[3].ID, domainpacks.PackResearchProvenance)
+	if packs[3].ID != domainpacks.PackPolicyProcess {
+		t.Fatalf("fourth pack = %q, want %q", packs[3].ID, domainpacks.PackPolicyProcess)
+	}
+	if packs[4].ID != domainpacks.PackResearchProvenance {
+		t.Fatalf("fifth pack = %q, want %q", packs[4].ID, domainpacks.PackResearchProvenance)
 	}
 	for _, p := range packs {
 		if len(p.Fields) == 0 {
@@ -39,8 +42,8 @@ func TestSyncDomainPacksPersistsBuiltins(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetDomainPackStats: %v", err)
 	}
-	// policy_process is built-in but EnabledByDefault=false; so 3 enabled, 4 built-in.
-	if stats.TotalPacks != 4 || stats.EnabledPacks != 3 || stats.BuiltInPacks != 4 || stats.OptionalPacks != 0 {
+	// assessment_drift and policy_process are built-in but EnabledByDefault=false; so 3 enabled, 5 built-in.
+	if stats.TotalPacks != 5 || stats.EnabledPacks != 3 || stats.BuiltInPacks != 5 || stats.OptionalPacks != 0 {
 		t.Fatalf("unexpected stats: %#v", stats)
 	}
 }
