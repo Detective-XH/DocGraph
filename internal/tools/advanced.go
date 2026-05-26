@@ -327,14 +327,19 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 				section, node.Name, headingNames(headings))), nil
 		}
 		// Try indexed section chunk first (TOCTOU-safe).
+		const sectionMaxBytes = 2000
 		if st := h.getStoreForNode(target.ID); st != nil {
 			if chunk, ok, err := st.GetSectionChunk(target.ID); err == nil && ok {
 				var rangeStr string
 				if chunk.StartLine != -1 {
 					rangeStr = fmt.Sprintf(", lines %d-%d", chunk.StartLine, chunk.EndLine)
 				}
+				text := chunk.Text
+				if len(text) > sectionMaxBytes {
+					text = text[:sectionMaxBytes] + fmt.Sprintf("\n[content truncated at %d bytes]", sectionMaxBytes)
+				}
 				sb.WriteString(fmt.Sprintf("\n### Content (section %q, indexed snapshot%s)\n", section, rangeStr))
-				sb.WriteString(chunk.Text)
+				sb.WriteString(text)
 				sb.WriteString("\n")
 				return mcp.NewToolResultText(sb.String()), nil
 			}
@@ -345,7 +350,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		if root == "" {
 			return mcp.NewToolResultError("cannot read section content: project root not available"), nil
 		}
-		content, err := store.ReadSectionContent(target.FilePath, target.StartLine, target.EndLine, root, 2000)
+		content, err := store.ReadSectionContent(target.FilePath, target.StartLine, target.EndLine, root, sectionMaxBytes)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("read section content: %v", err)), nil
 		}
