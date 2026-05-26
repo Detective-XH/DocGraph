@@ -40,7 +40,7 @@ type MetadataQualityStats struct {
 	IssueCounts  map[string]int
 }
 
-// GetMetadataQuality evaluates one document or section against F-27 metadata
+// GetMetadataQuality evaluates one document or section against metadata
 // quality signals. Section IDs are resolved to their owning document so callers
 // can use this from search, node, context, or future audit workflows.
 func (s *Store) GetMetadataQuality(nodeID string, asOf time.Time) (*MetadataQualityRecord, error) {

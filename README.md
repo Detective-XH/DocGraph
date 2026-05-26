@@ -43,7 +43,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13.5 MB |
-| Codebase | ~41,400 lines of Go (+ ~37,240 lines of tests) |
+| Codebase | ~41,710 lines of Go (+ ~37,390 lines of tests) |
 | Index speed | ~880 .md files across 19 projects in seconds |
 | Typical graph | ~12,800 nodes, ~13,500 edges |
 
@@ -68,8 +68,8 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
-docgraph install [--clients auto|all|LIST] [--workspace] [--scope user] [--update-skills] [path]      # Configure MCP clients without re-initializing
+docgraph init [--dry-run] [--interactive] [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
+docgraph install [--dry-run] [--interactive] [--clients auto|all|LIST] [--workspace] [--scope user] [--update-skills] [path]      # Configure MCP clients without re-initializing
 docgraph pack list [--workspace] <path>                         # List domain packs and enabled state
 docgraph pack enable [--workspace] [--no-sync] <pack-id> <path>  # Enable a domain pack; code_doc syncs by default
 docgraph pack disable [--workspace] <pack-id> <path>             # Disable a domain pack; code_doc rows are removed
@@ -85,6 +85,8 @@ docgraph version                             # Print build version
 `auto` always writes project-local Claude Code config and also writes Codex,
 Hermes, and OpenCode config when their config directories already exist.
 `all` creates config files for every supported client.
+Use `--dry-run` to print create/update/unchanged actions without writing files.
+Use `--interactive` to print the same review and confirm before writes.
 
 ## Bundled Skills
 

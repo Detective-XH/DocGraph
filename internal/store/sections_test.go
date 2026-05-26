@@ -53,7 +53,7 @@ func TestMigration004_FreshDB(t *testing.T) {
 		t.Error("section_chunks table not found after migration 004")
 	}
 
-	// document_metadata and governance_metadata tables must exist (F-21).
+	// document_metadata and governance_metadata tables must exist.
 	if !tableExists(db, "document_metadata") {
 		t.Error("document_metadata table not found after migration 005")
 	}

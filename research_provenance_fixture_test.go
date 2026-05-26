@@ -9,9 +9,9 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
-func TestF22ResearchProvenanceFixtures(t *testing.T) {
-	// F-22 parallelization guardrail: these fixtures define the frontmatter
-	// shapes that research provenance indexing must consume after F-21 lands.
+func TestResearchProvenanceFixtures(t *testing.T) {
+	// These fixtures define the frontmatter shapes that research provenance
+	// indexing must consume after normalized metadata support is available.
 	// The test intentionally verifies raw frontmatter only; it does not depend
 	// on schema migrations, normalized metadata tables, or typed research indexes.
 	dir := filepath.Join("testdata", "research-provenance")
@@ -78,7 +78,7 @@ func TestF22ResearchProvenanceFixtures(t *testing.T) {
 	}
 }
 
-func TestF22ResearchProvenanceFixtureShapes(t *testing.T) {
+func TestResearchProvenanceFixtureShapes(t *testing.T) {
 	dir := filepath.Join("testdata", "research-provenance")
 
 	valid := mustFixtureFrontmatter(t, dir, "valid-claim.md")
@@ -104,7 +104,7 @@ func TestF22ResearchProvenanceFixtureShapes(t *testing.T) {
 	}
 }
 
-func TestF22ResearchProvenanceFixtureIndexesResearchMetadata(t *testing.T) {
+func TestResearchProvenanceFixtureIndexesResearchMetadata(t *testing.T) {
 	dir := filepath.Join("testdata", "research-provenance")
 	source, err := os.ReadFile(filepath.Join(dir, "valid-claim.md"))
 	if err != nil {

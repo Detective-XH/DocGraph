@@ -38,13 +38,13 @@ func init() {
 				Key:         "symbol_name",
 				Column:      "symbol_name",
 				ValueType:   "string",
-				Description: "Exported symbol name. Used by F-33 docs-code drift audit to match docs referencing code symbols.",
+				Description: "Exported symbol name. Used by docs-code drift audit to match docs referencing code symbols.",
 			},
 			{
 				Key:         "codegraph_anchor",
 				Column:      "codegraph_anchor",
 				ValueType:   "string",
-				Description: "Reserved for F-35 CodeGraph interop. Empty until CodeGraph exposes a stable symbol ID contract.",
+				Description: "Reserved for CodeGraph interop. Empty until CodeGraph exposes a stable symbol ID contract.",
 			},
 		},
 	}); err != nil {

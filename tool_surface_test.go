@@ -16,7 +16,7 @@ import (
 )
 
 func TestToolSurfaceGovernanceRegistry(t *testing.T) {
-	// F-20 guardrail: adding a top-level MCP tool changes the agent-facing
+	// Tool-surface guardrail: adding a top-level MCP tool changes the agent-facing
 	// protocol. This allowlist forces that change to be intentional and reviewed.
 	expected := []string{
 		"docgraph_context",
@@ -40,7 +40,7 @@ func TestToolSurfaceGovernanceRegistry(t *testing.T) {
 	actual := registeredToolNames(t)
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf(
-			"registered MCP tool surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add an F-20 decision record and update the allowlist, server instructions, and docs together.",
+			"registered MCP tool surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
 			strings.Join(expected, ", "),
 			strings.Join(actual, ", "),
 		)
@@ -48,7 +48,7 @@ func TestToolSurfaceGovernanceRegistry(t *testing.T) {
 }
 
 func TestToolSurfaceGovernanceInstructionsStayCompact(t *testing.T) {
-	// F-20 guardrail: generated MCP instructions route users through compact
+	// Tool-surface guardrail: generated MCP instructions route users through compact
 	// decision paths instead of repeating a long one-row-per-tool catalog.
 	section := markdownSection(serverInstructions, "## Tool selection", "## Reducing noise")
 	if section == "" {
@@ -67,7 +67,7 @@ func TestToolSurfaceGovernanceInstructionsStayCompact(t *testing.T) {
 }
 
 func TestCodeGraphInteropInstructionsStayAdvisory(t *testing.T) {
-	// F-35 guardrail: CodeGraph interoperability starts as agent handoff
+	// CodeGraph interoperability guardrail: starts as agent handoff
 	// guidance only. DocGraph must not imply that it owns CodeGraph internals.
 	section := markdownSection(serverInstructions, "## CodeGraph interoperability", "## Managing .docgraphignore")
 	if section == "" {

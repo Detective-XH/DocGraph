@@ -8,13 +8,13 @@ import (
 )
 
 const (
-	// PackGovernance exposes the F-21 governance metadata schema as a domain pack.
+	// PackGovernance exposes the governance metadata schema as a domain pack.
 	PackGovernance = "governance"
 
-	// PackResearchProvenance exposes the F-22 research provenance schema as a domain pack.
+	// PackResearchProvenance exposes the research provenance schema as a domain pack.
 	PackResearchProvenance = "research_provenance"
 
-	// PackEntity exposes the F-29 entity and source graph schema as a domain pack.
+	// PackEntity exposes the entity and source graph schema as a domain pack.
 	PackEntity = "entity"
 )
 
@@ -249,7 +249,7 @@ func BuiltinGovernancePack() Pack {
 	}
 }
 
-// BuiltinEntityPack returns the F-29 entity and source graph schema as a pack.
+// BuiltinEntityPack returns the entity and source graph schema as a pack.
 func BuiltinEntityPack() Pack {
 	return Pack{
 		ID:               PackEntity,

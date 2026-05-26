@@ -1,4 +1,4 @@
-// Package entitygraph implements F-29 entity and source graph runtime.
+// Package entitygraph implements the entity and source graph runtime.
 // Extraction primitives and dedup logic; Entity/Mention types live in
 // internal/store to avoid a circular import (entitygraph → parser → store).
 package entitygraph

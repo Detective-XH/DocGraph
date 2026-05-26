@@ -64,9 +64,9 @@ type MetadataStats struct {
 // valid source values (application-level enum; not SQL CHECK to allow future extension).
 var validSources = map[string]bool{
 	"frontmatter":    true,
-	"docx_core_xml":  true, // F-28: DOCX Dublin Core metadata (peer of frontmatter)
-	"html_meta":      true, // F-28: HTML <meta> tags (peer of frontmatter)
-	"pdf_info":       true, // F-28: PDF Info dict (peer of frontmatter)
+	"docx_core_xml":  true, // DOCX Dublin Core metadata (peer of frontmatter)
+	"html_meta":      true, // HTML <meta> tags (peer of frontmatter)
+	"pdf_info":       true, // PDF Info dict (peer of frontmatter)
 	"extractor":      true,
 	"skill_advisory": true,
 	"derived":        true,
@@ -75,9 +75,9 @@ var validSources = map[string]bool{
 // sourcePriority defines authority ordering: higher value = higher authority.
 var sourcePriority = map[string]int{
 	"frontmatter":    4,
-	"docx_core_xml":  4, // F-28: same authority as frontmatter
-	"html_meta":      4, // F-28: same authority as frontmatter
-	"pdf_info":       4, // F-28: same authority as frontmatter
+	"docx_core_xml":  4, // same authority as frontmatter
+	"html_meta":      4, // same authority as frontmatter
+	"pdf_info":       4, // same authority as frontmatter
 	"extractor":      3,
 	"derived":        2,
 	"skill_advisory": 1,

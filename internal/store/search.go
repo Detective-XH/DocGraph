@@ -15,8 +15,8 @@ const (
 	SearchIntentSection SearchIntent = "section"
 )
 
-// SearchOptions keeps F-24 search quality upgrades extensible without adding
-// new MCP tools. F-25 adds governance/research filtering; F-29 adds entity filtering.
+// SearchOptions keeps search quality upgrades extensible without adding new MCP tools.
+// Governance, research, and entity filters are additive optional constraints.
 type SearchOptions struct {
 	Query      string
 	Kind       string
@@ -27,15 +27,15 @@ type SearchOptions struct {
 	Entity     EntitySearchOptions
 }
 
-// EntitySearchOptions carries F-29 entity/source graph filter constraints.
-// Empty fields are ignored so existing callers keep the pre-F-29 behaviour.
+// EntitySearchOptions carries entity/source graph filter constraints.
+// Empty fields are ignored so existing callers keep their default behavior.
 type EntitySearchOptions struct {
 	EntityType string
 	EntityID   string
 }
 
-// GovernanceSearchOptions carries F-25 governance retrieval constraints. Empty
-// fields are ignored so existing callers keep the pre-F-25 behavior while newer
+// GovernanceSearchOptions carries governance retrieval constraints. Empty
+// fields are ignored so existing callers keep their default behavior while newer
 // tools can opt into policy-aware filtering without adding a top-level MCP tool.
 type GovernanceSearchOptions struct {
 	Status          string
@@ -45,7 +45,7 @@ type GovernanceSearchOptions struct {
 	AsOfDate        string
 }
 
-// ResearchSearchOptions carries F-25 research provenance constraints. These
+// ResearchSearchOptions carries research provenance constraints. These
 // fields intentionally mirror the typed projection columns so future domain
 // packs can map their own fields into the same retrieval policy layer.
 type ResearchSearchOptions struct {
@@ -57,7 +57,7 @@ type ResearchSearchOptions struct {
 
 // HasMetadataFilters reports whether SearchWithOptions must enforce typed
 // governance/research metadata constraints in addition to relevance ranking.
-// Entity filters (F-29) are handled separately by collectEntityFilteredCandidates
+// Entity filters are handled separately by collectEntityFilteredCandidates
 // and must NOT set this flag — they use a different collection path.
 func (opts SearchOptions) HasMetadataFilters() bool {
 	return opts.Governance.Status != "" ||

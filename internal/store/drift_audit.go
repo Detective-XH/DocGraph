@@ -4,7 +4,7 @@ import "time"
 
 // DriftFinding is an advisory finding produced by a drift audit query.
 // Code values use dotted namespace prefixes (e.g. "policy.*", "research.*")
-// so F-31 and future packs can extend the namespace without collision.
+// so future packs can extend the namespace without collision.
 // Messages are human-facing and may change; Code values are stable API.
 type DriftFinding struct {
 	Code          string // stable dotted code, e.g. "policy.stale_review"
@@ -36,7 +36,7 @@ type DriftAuditOpts struct {
 	UnverifiedAfterDays int
 }
 
-// Policy/process drift finding codes (F-30).
+// Policy/process drift finding codes.
 const (
 	CodePolicyStaleReview         = "policy.stale_review"
 	CodePolicySupersedeReferenced = "policy.superseded_referenced"
@@ -45,7 +45,7 @@ const (
 	CodePolicyConflicting         = "policy.conflicting"
 )
 
-// Research/assessment drift finding codes (F-31).
+// Research/assessment drift finding codes.
 const (
 	CodeResearchStaleAssessment          = "research.stale_assessment"
 	CodeResearchUnverifiedEvidence       = "research.unverified_evidence"

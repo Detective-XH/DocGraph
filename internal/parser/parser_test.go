@@ -506,7 +506,7 @@ Final thoughts.
 }
 
 // ---------------------------------------------------------------------------
-// Section chunk tests (F-19 Phase 1B)
+// Section chunk tests
 // ---------------------------------------------------------------------------
 
 func TestSectionChunksDocumentLevel(t *testing.T) {

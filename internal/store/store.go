@@ -496,7 +496,7 @@ func (s *Store) SchemaVersion() (version int, name string, err error) {
 		return 0, "", nil
 	}
 	if err != nil {
-		// Table may not exist yet (pre-migration DB that hasn't been opened since F-18).
+		// Table may not exist yet for a legacy DB that has not been migrated.
 		return 0, "", nil
 	}
 	return version, name, nil

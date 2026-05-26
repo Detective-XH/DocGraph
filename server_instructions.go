@@ -76,6 +76,7 @@ Workspace-level .docgraphignore (at the workspace root) excludes entire projects
 - docgraph init --install-clients auto <path>: after local setup, auto-detects Claude Code, Codex, Hermes, and OpenCode config locations and writes DocGraph MCP entries where detected.
 - docgraph init --with-skills <path>: after local setup, installs bundled skills into .claude/skills/ (skip-if-exists). Currently ships docgraph-drift-audit for auditing .md file DocGraph compatibility.
 - docgraph install --clients all <path>: non-interactive installer for Claude Code, Codex, Hermes, and OpenCode. Use --workspace to configure workspace mode instead of single-project mode.
+- Use --dry-run on init/install to review create/update/unchanged actions without writes. Use --interactive to show the same review and ask before writing.
 - docgraph pack list <path>: lists domain packs and enabled state.
 - docgraph pack enable code_doc <path>: enables code documentation surfaces and runs an incremental sync so kind=code_file results are available.
 - docgraph pack disable code_doc <path>: disables code documentation surfaces and removes indexed code_file rows.
@@ -130,7 +131,7 @@ To install for Claude Code:
 
 Skills are installed with skip-if-exists policy — safe to re-run.
 
-## Neural Embeddings (F-16)
+## Neural Embeddings
 
 DocGraph supports neural embeddings via an agent-driven pull-then-push protocol.
 DocGraph never calls an LLM provider itself; the agent does.

@@ -1,6 +1,6 @@
 ---
 name: policy-drift-audit
-description: Run the F-30 policy/process drift audit. Surfaces stale, superseded, duplicate, non-canonical, and conflicting policy documents using DocGraph's built-in drift engine. Presents findings and optional remediation suggestions without writing governance decisions.
+description: Run the policy/process drift audit. Surfaces stale, superseded, duplicate, non-canonical, and conflicting policy documents using DocGraph's built-in drift engine. Presents findings and optional remediation suggestions without writing governance decisions.
 triggers:
   - policy audit
   - policy drift
@@ -13,7 +13,7 @@ triggers:
 
 > **Invocation** — Claude Code: `Skill("policy-drift-audit")` | OpenCode / Codex: use triggers above.
 
-Runs the DocGraph F-30 policy/process drift audit and presents findings for human review.
+Runs the DocGraph policy/process drift audit and presents findings for human review.
 The audit is advisory — findings highlight candidates for action, not authoritative rulings.
 
 ## Execution

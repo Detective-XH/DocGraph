@@ -44,7 +44,7 @@ func ExtractMetadataTuples(fm map[string]interface{}) []store.MetadataTuple {
 			continue
 		}
 		if k == "entities" {
-			// F-29: entity data is handled by internal/entitygraph — skip here
+			// Entity data is handled by internal/entitygraph, so skip it here.
 			// to prevent double-storage in document_metadata.
 			continue
 		}

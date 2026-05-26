@@ -19,6 +19,8 @@ func cmdInit(args []string) {
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
 	withSkills := fset.Bool("with-skills", false, "Copy bundled skills to .claude/skills/ (skips existing directories)")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
+	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
+	interactive := fset.Bool("interactive", false, "Review planned changes and ask before writing")
 	fset.Parse(args)
 	dir := "."
 	if fset.NArg() > 0 {
@@ -27,6 +29,20 @@ func cmdInit(args []string) {
 	root, err := filepath.Abs(dir)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if *dryRun || *interactive {
+		printInitPlan(root, *installClients, install.Options{
+			Clients:   *installClients,
+			Workspace: *workspaceMode,
+			Scope:     *scope,
+		}, *withSkills, *updateSkills)
+		if *dryRun {
+			return
+		}
+		if !confirm(os.Stdin, os.Stderr, "Apply init changes?") {
+			fmt.Fprintln(os.Stderr, "Init cancelled")
+			return
+		}
 	}
 	if err := initProject(root); err != nil {
 		log.Fatal(err)
@@ -53,6 +69,71 @@ func cmdInit(args []string) {
 			log.Fatal(err)
 		}
 	}
+}
+
+func printInitPlan(root, installClients string, opts install.Options, withSkills, updateSkills bool) {
+	fmt.Fprintln(os.Stderr, "Init review:")
+	for _, item := range planInitProject(root) {
+		fmt.Fprintf(os.Stderr, "  %-9s %s — %s\n", item.action, item.path, item.detail)
+	}
+	if installClients != "" {
+		planned, err := install.Plan(root, opts)
+		if err != nil {
+			log.Fatal(err)
+		}
+		printInstallPlan(planned)
+	}
+	if withSkills {
+		fmt.Fprintf(os.Stderr, "  skills    %s — install bundled skills, skip existing\n", filepath.Join(root, ".claude", "skills"))
+	}
+	if updateSkills {
+		fmt.Fprintf(os.Stderr, "  skills    %s — overwrite bundled skills\n", filepath.Join(root, ".claude", "skills"))
+	}
+}
+
+type initPlanItem struct {
+	action string
+	path   string
+	detail string
+}
+
+func planInitProject(root string) []initPlanItem {
+	return []initPlanItem{
+		planDir(filepath.Join(root, ".docgraph")),
+		planFile(filepath.Join(root, ".docgraphignore"), "create DocGraph ignore template"),
+		planGitignore(filepath.Join(root, ".gitignore"), ".docgraph/"),
+		planFile(filepath.Join(root, ".mcp.json"), "create project-local MCP config when missing"),
+	}
+}
+
+func planDir(path string) initPlanItem {
+	if fi, err := os.Stat(path); err == nil && fi.IsDir() {
+		return initPlanItem{action: "unchanged", path: path, detail: "directory exists"}
+	}
+	return initPlanItem{action: "create", path: path, detail: "create directory"}
+}
+
+func planFile(path, createDetail string) initPlanItem {
+	if _, err := os.Stat(path); err == nil {
+		return initPlanItem{action: "unchanged", path: path, detail: "file exists"}
+	}
+	return initPlanItem{action: "create", path: path, detail: createDetail}
+}
+
+func planGitignore(path, line string) initPlanItem {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return initPlanItem{action: "create", path: path, detail: "create .gitignore with " + line}
+	}
+	if err != nil {
+		return initPlanItem{action: "inspect", path: path, detail: err.Error()}
+	}
+	for _, existing := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(existing) == line {
+			return initPlanItem{action: "unchanged", path: path, detail: line + " already present"}
+		}
+	}
+	return initPlanItem{action: "update", path: path, detail: "append " + line}
 }
 
 func initProject(root string) error {

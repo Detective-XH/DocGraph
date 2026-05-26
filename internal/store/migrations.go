@@ -335,7 +335,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_mentions_unique ON entity_mentions(entity_
 `
 
 // migrations is the ordered, append-only list of forward-only migrations.
-// F-18 delivers 001–003; F-19 delivers 004; F-21 delivers 005–006; F-22 delivers 007; F-23 delivers 008; F-24 delivers 009; F-29 delivers 010.
+// Migration sequence: initial schema, section chunks, metadata projections,
+// domain packs, section search, and entity/source graph tables.
 // Future migrations (011+) are added by their corresponding F-feature.
 var migrations = []Migration{
 	{Version: 1, Name: "initial_schema", SQL: migration001SQL},
@@ -405,21 +406,21 @@ func runMigrationsList(db *sql.DB, migs []Migration) error {
 		}
 	}
 
-	// Step 2: Baseline detection — pre-F-18 DB has no schema_migrations rows.
+	// Step 2: Baseline detection — legacy DB has no schema_migrations rows.
 	var appliedCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&appliedCount); err != nil {
 		return fmt.Errorf("count schema_migrations: %w", err)
 	}
 
 	if appliedCount == 0 {
-		// Check if the pre-F-18 tables already exist.
+		// Check if the legacy tables already exist.
 		var tableCount int
 		err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('nodes','edges','files')`).Scan(&tableCount)
 		if err != nil {
 			return fmt.Errorf("check existing tables: %w", err)
 		}
 		if tableCount == 3 {
-			// Pre-F-18 DB: mark only the legacy baseline migrations as applied.
+			// Legacy DB: mark only the legacy baseline migrations as applied.
 			// Later migrations still need to run so their tables actually exist.
 			now := time.Now().Unix()
 			for _, m := range migs {

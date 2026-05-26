@@ -22,7 +22,7 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
-// Comment kind constants — stable strings; F-33 reads these from node metadata.
+// Comment kind constants are stable strings consumed by docs-code drift checks.
 const (
 	KindFileHeader  = "file_header"
 	KindTestFunc    = "test_func"
@@ -38,7 +38,7 @@ const (
 
 // CodeDocEntry is an extracted code documentation block returned by language extractors.
 type CodeDocEntry struct {
-	SymbolName  string // exported symbol name; "" for file_header. F-33 reads this.
+	SymbolName  string // exported symbol name; "" for file_header.
 	CommentKind string // KindFileHeader | KindTestFunc | KindExampleFunc | KindDocComment
 	HeadingPath string // "File Header", "Tests > TestFoo", "Examples > ExampleFoo", "DocComment > Bar"
 	Text        string // extracted comment/doc text
@@ -68,7 +68,7 @@ func RegisterExtractor(lang string, fn extractFunc, exts ...string) {
 }
 
 // Extract dispatches to the language-specific extractor and returns a ParseResult
-// shaped identically to the Markdown/F-28 pipeline output.
+// shaped identically to the document extraction pipeline output.
 // Returns (nil, error) for unsupported extensions or parse failures.
 func Extract(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
 	ext := strings.ToLower(filepath.Ext(relPath))
@@ -180,7 +180,7 @@ func entryMeta(e CodeDocEntry) string {
 		"comment_kind":     e.CommentKind,
 		"file_type":        e.FileType,
 		"symbol_name":      e.SymbolName,
-		"codegraph_anchor": "", // reserved for F-35
+		"codegraph_anchor": "", // reserved for future CodeGraph interop
 	})
 }
 

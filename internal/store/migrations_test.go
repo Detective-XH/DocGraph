@@ -32,8 +32,8 @@ func openRawDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// buildV001Fixture creates a DB with the pre-F-18 schema (no schema_migrations table).
-// This simulates an existing database that was created before F-18.
+// buildV001Fixture creates a DB with the legacy schema (no schema_migrations table).
+// This simulates an existing database that was created before schema migrations.
 func buildV001Fixture(t *testing.T) *sql.DB {
 	t.Helper()
 	db := openRawDB(t)

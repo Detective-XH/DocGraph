@@ -731,7 +731,7 @@ func appendResearchSection(r *store.ResearchRecord) string {
 	return sb.String()
 }
 
-// appendMetadataQualitySection formats advisory F-27 metadata quality signals.
+// appendMetadataQualitySection formats advisory metadata quality signals.
 func appendMetadataQualitySection(q *store.MetadataQualityRecord) string {
 	if q == nil {
 		return ""

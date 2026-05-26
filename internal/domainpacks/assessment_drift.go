@@ -1,13 +1,13 @@
 package domainpacks
 
-// PackAssessmentDrift is the ID of the F-31 assessment drift audit pack.
+// PackAssessmentDrift is the ID of the assessment drift audit pack.
 const PackAssessmentDrift = "assessment_drift"
 
 func init() {
 	mustRegister(BuiltinAssessmentDriftPack())
 }
 
-// BuiltinAssessmentDriftPack returns the F-31 assessment drift audit schema as a
+// BuiltinAssessmentDriftPack returns the assessment drift audit schema as a
 // bundled optional pack. EnabledByDefault is false — users opt in per project.
 func BuiltinAssessmentDriftPack() Pack {
 	return Pack{

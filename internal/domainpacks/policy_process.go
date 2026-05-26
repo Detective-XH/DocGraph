@@ -1,13 +1,13 @@
 package domainpacks
 
-// PackPolicyProcess is the ID of the F-30 policy/process drift audit pack.
+// PackPolicyProcess is the ID of the policy/process drift audit pack.
 const PackPolicyProcess = "policy_process"
 
 func init() {
 	mustRegister(BuiltinPolicyProcessPack())
 }
 
-// BuiltinPolicyProcessPack returns the F-30 policy/process drift audit schema as a
+// BuiltinPolicyProcessPack returns the policy/process drift audit schema as a
 // bundled optional pack. EnabledByDefault is false — users opt in per project.
 func BuiltinPolicyProcessPack() Pack {
 	return Pack{

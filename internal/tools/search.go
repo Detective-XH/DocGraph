@@ -31,8 +31,8 @@ var searchTool = mcp.NewTool("docgraph_search",
 	mcp.WithString("source_type", mcp.Description("Filter by research source_type (e.g. primary, secondary, internal). Requires metadata reindex.")),
 	mcp.WithString("confidence", mcp.Description("Filter by research confidence (e.g. high, medium, low). Requires metadata reindex.")),
 	mcp.WithString("analyst_status", mcp.Description("Filter by research analyst_status. Requires metadata reindex.")),
-	mcp.WithString("entity_type", mcp.Description("Filter to documents that mention entities of this type (e.g. person, organization). F-29 entity graph.")),
-	mcp.WithString("entity_id", mcp.Description("Filter to documents that mention a specific entity UUID. F-29 entity graph.")),
+	mcp.WithString("entity_type", mcp.Description("Filter to documents that mention entities of this type (e.g. person, organization).")),
+	mcp.WithString("entity_id", mcp.Description("Filter to documents that mention a specific entity UUID.")),
 )
 
 var filesTool = mcp.NewTool("docgraph_files",

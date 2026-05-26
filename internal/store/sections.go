@@ -8,14 +8,14 @@ import (
 // SectionChunk is an indexed snapshot of a section's content captured at index time.
 // It backs reads and diffs without live file I/O (resolves TOCTOU limitation L-8).
 //
-// start_line and end_line are -1 for non-line-based sources (e.g. F-28 multi-format).
+// start_line and end_line are -1 for non-line-based sources.
 type SectionChunk struct {
 	NodeID      string
 	FilePath    string
 	StartLine   int
 	EndLine     int
 	ContentHash string // file-level SHA-256 at index time
-	SectionHash string // SHA-256 of section text; diff primitive for F-30/F-31
+	SectionHash string // SHA-256 of section text; drift/diff primitive
 	HeadingPath string // breadcrumb "Parent > Child"; "" for document nodes
 	Text        string // bounded section content (≤ 10KB, H-19)
 }

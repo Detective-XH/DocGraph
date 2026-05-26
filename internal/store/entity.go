@@ -6,11 +6,11 @@ import (
 	"time"
 )
 
-// Entity is a canonical entity or source node (F-29).
+// Entity is a canonical entity or source node.
 // UUID PK is never changed on upsert so FK references in entity_mentions stay stable.
 type Entity struct {
 	ID                      string
-	EntityType              string            // pack vocab value or "" for generic
+	EntityType              string // pack vocab value or "" for generic
 	CanonicalName           string
 	CanonicalNameNormalized string            // lowercase trimmed; used for UNIQUE dedup
 	Aliases                 []string          // JSON array, capped at MaxEntityAliases entries

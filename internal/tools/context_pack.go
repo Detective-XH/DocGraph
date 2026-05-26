@@ -428,7 +428,7 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 	for _, f := range findings {
 		byCode[f.Code] = append(byCode[f.Code], f)
 	}
-	// Also collect any unknown codes (future F-31 research.* codes).
+	// Also collect any unknown future research.* codes.
 	seen := make(map[string]bool)
 	for _, c := range codeOrder {
 		seen[c] = true

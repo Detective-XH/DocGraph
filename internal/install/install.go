@@ -29,12 +29,15 @@ type Options struct {
 	Clients   string
 	Workspace bool
 	Scope     string
+	DryRun    bool
 }
 
 // Result records one client configuration file updated by the installer.
 type Result struct {
 	Client string
 	Path   string
+	Action string
+	Detail string
 }
 
 type mcpServer struct {
@@ -46,6 +49,9 @@ type mcpServer struct {
 // The installer is intentionally non-interactive so it can be used from
 // scripted setup flows and tested without terminal prompts.
 func Apply(root string, opts Options) ([]Result, error) {
+	if opts.DryRun {
+		return Plan(root, opts)
+	}
 	absRoot, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -91,9 +97,72 @@ func Apply(root string, opts Options) ([]Result, error) {
 		if err != nil {
 			return nil, err
 		}
-		results = append(results, Result{Client: client, Path: path})
+		results = append(results, Result{Client: client, Path: path, Action: "configured"})
 	}
 	return results, nil
+}
+
+// Plan returns the installer actions without writing files or invoking external
+// commands. It is used for dry-run output and interactive conflict review.
+func Plan(root string, opts Options) ([]Result, error) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	clients, err := resolveClients(absRoot, opts.Clients)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]Result, 0, len(clients))
+	for _, client := range clients {
+		result, err := planClient(absRoot, client, opts)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
+	}
+	return results, nil
+}
+
+func planClient(root, client string, opts Options) (Result, error) {
+	switch client {
+	case clientClaude:
+		if opts.Scope == "user" {
+			return Result{
+				Client: client,
+				Path:   "~/.claude.json",
+				Action: "command",
+				Detail: "would run: claude mcp add --scope user docgraph",
+			}, nil
+		}
+		path := filepath.Join(root, ".mcp.json")
+		action, detail, err := planJSONMCP(path, localServer(root, opts.Workspace))
+		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
+	case clientCodex:
+		path, err := codexConfigPath()
+		if err != nil {
+			return Result{}, err
+		}
+		action, detail, err := planCodexTOML(path, globalServer(root, opts.Workspace))
+		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
+	case clientHermes:
+		path, err := hermesConfigPath()
+		if err != nil {
+			return Result{}, err
+		}
+		action, detail, err := planHermesYAML(path, globalServer(root, opts.Workspace))
+		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
+	case clientOpenCode:
+		path, err := openCodeConfigPath(root)
+		if err != nil {
+			return Result{}, err
+		}
+		action, detail, err := planJSONMCP(path, globalServer(root, opts.Workspace))
+		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
+	default:
+		return Result{}, fmt.Errorf("unsupported client %q", client)
+	}
 }
 
 func resolveClients(root, raw string) ([]string, error) {
@@ -170,6 +239,111 @@ func globalServer(root string, workspace bool) mcpServer {
 		mode = "--workspace"
 	}
 	return mcpServer{Command: "docgraph", Args: []string{"serve", mode, root}}
+}
+
+func planJSONMCP(path string, server mcpServer) (action, detail string, err error) {
+	data, readErr := os.ReadFile(path)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return "create", "will create mcpServers.docgraph", nil
+	}
+	if readErr != nil {
+		return "", "", readErr
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "update", "will add mcpServers.docgraph to empty file", nil
+	}
+	doc := map[string]any{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return "", "", fmt.Errorf("parse %s: %w", path, err)
+	}
+	servers, _ := doc["mcpServers"].(map[string]any)
+	if servers == nil || servers["docgraph"] == nil {
+		return "update", "will add mcpServers.docgraph", nil
+	}
+	if sameJSONServer(servers["docgraph"], server) {
+		return "unchanged", "existing docgraph entry already matches", nil
+	}
+	return "update", "will replace existing mcpServers.docgraph entry", nil
+}
+
+func sameJSONServer(raw any, server mcpServer) bool {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	var got mcpServer
+	if err := json.Unmarshal(b, &got); err != nil {
+		return false
+	}
+	return got.Command == server.Command && equalStrings(got.Args, server.Args)
+}
+
+func planCodexTOML(path string, server mcpServer) (action, detail string, err error) {
+	data, readErr := os.ReadFile(path)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return "create", "will create DocGraph managed block", nil
+	}
+	if readErr != nil {
+		return "", "", readErr
+	}
+	existing := string(data)
+	block := codexBlock(server)
+	if strings.Contains(existing, block) {
+		return "unchanged", "existing DocGraph managed block already matches", nil
+	}
+	if strings.Contains(existing, "# BEGIN DocGraph MCP") {
+		return "update", "will replace existing DocGraph managed block", nil
+	}
+	return "update", "will append DocGraph managed block", nil
+}
+
+func planHermesYAML(path string, server mcpServer) (action, detail string, err error) {
+	data, readErr := os.ReadFile(path)
+	if errors.Is(readErr, os.ErrNotExist) {
+		return "create", "will create mcp_servers.docgraph", nil
+	}
+	if readErr != nil {
+		return "", "", readErr
+	}
+	if len(bytes.TrimSpace(data)) == 0 {
+		return "update", "will add mcp_servers.docgraph to empty file", nil
+	}
+	doc := map[string]any{}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return "", "", fmt.Errorf("parse %s: %w", path, err)
+	}
+	servers, _ := doc["mcp_servers"].(map[string]any)
+	if servers == nil || servers["docgraph"] == nil {
+		return "update", "will add mcp_servers.docgraph", nil
+	}
+	if sameYAMLServer(servers["docgraph"], server) {
+		return "unchanged", "existing docgraph entry already matches", nil
+	}
+	return "update", "will replace existing mcp_servers.docgraph entry", nil
+}
+
+func sameYAMLServer(raw any, server mcpServer) bool {
+	b, err := yaml.Marshal(raw)
+	if err != nil {
+		return false
+	}
+	var got mcpServer
+	if err := yaml.Unmarshal(b, &got); err != nil {
+		return false
+	}
+	return got.Command == server.Command && equalStrings(got.Args, server.Args)
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func writeJSONMCP(path string, server mcpServer) error {

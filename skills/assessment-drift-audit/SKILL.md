@@ -1,6 +1,6 @@
 ---
 name: assessment-drift-audit
-description: Run the F-31 assessment/research drift audit. Surfaces stale assessments, unverified evidence, competing interpretations, superseded research claims, and impacted deliverables using DocGraph's built-in drift engine. Presents findings and optional remediation suggestions without writing research decisions.
+description: Run the assessment/research drift audit. Surfaces stale assessments, unverified evidence, competing interpretations, superseded research claims, and impacted deliverables using DocGraph's built-in drift engine. Presents findings and optional remediation suggestions without writing research decisions.
 triggers:
   - assessment audit
   - assessment drift
@@ -15,7 +15,7 @@ triggers:
 
 > **Invocation** — Claude Code: `Skill("assessment-drift-audit")` | OpenCode / Codex: use triggers above.
 
-Runs the DocGraph F-31 assessment drift audit and presents findings for human review.
+Runs the DocGraph assessment drift audit and presents findings for human review.
 The audit is advisory — findings highlight candidates for action, not authoritative rulings.
 
 ## Execution
