@@ -124,41 +124,6 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func (h *handler) getWorkspaceMetadataFilteredNodes(status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) []store.Node {
-	var out []store.Node
-	for _, p := range h.workspace.Projects {
-		ns, err := h.getMetadataFilteredNodes(p.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus, limit)
-		if err == nil {
-			for i := range ns {
-				ns[i].ProjectName = p.Name
-				if ns[i].QualifiedName != "" && !strings.HasPrefix(ns[i].QualifiedName, "[") {
-					ns[i].QualifiedName = "[" + p.Name + "] " + ns[i].QualifiedName
-				}
-			}
-			out = append(out, ns...)
-		}
-	}
-	return out
-}
-
-func nodeMatchesSearchQuery(n store.Node, query, kind string) bool {
-	if kind != "" && n.Kind != kind {
-		return false
-	}
-	haystack := strings.ToLower(strings.Join([]string{
-		n.Name,
-		n.QualifiedName,
-		n.BodyExcerpt,
-		n.Metadata,
-	}, "\n"))
-	for _, word := range strings.Fields(strings.ToLower(query)) {
-		if !strings.Contains(haystack, word) {
-			return false
-		}
-	}
-	return true
-}
-
 func describeSearchFilters(opts store.SearchOptions) string {
 	parts := []string{
 		fmt.Sprintf("status=%q", opts.Governance.Status),
@@ -172,47 +137,4 @@ func describeSearchFilters(opts store.SearchOptions) string {
 		fmt.Sprintf("analyst_status=%q", opts.Research.AnalystStatus),
 	}
 	return strings.Join(parts, " ")
-}
-
-func (h *handler) getMetadataFilteredNodes(st *store.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) ([]store.Node, error) {
-	useGovernance := status != "" || sensitivity != ""
-	useResearch := claimID != "" || sourceType != "" || confidence != "" || analystStatus != ""
-
-	var candidates []store.Node
-	if useResearch {
-		nodes, err := st.GetNodesByResearch(claimID, sourceType, confidence, analystStatus, limit)
-		if err != nil {
-			return nil, err
-		}
-		candidates = nodes
-	} else if useGovernance {
-		nodes, err := st.GetNodesByGovernance(status, sensitivity, limit)
-		if err != nil {
-			return nil, err
-		}
-		candidates = nodes
-	}
-
-	if useResearch && useGovernance {
-		govNodes, err := st.GetNodesByGovernance(status, sensitivity, 0)
-		if err != nil {
-			return nil, err
-		}
-		govIDs := make(map[string]bool, len(govNodes))
-		for _, n := range govNodes {
-			govIDs[n.ID] = true
-		}
-		filtered := candidates[:0]
-		for _, n := range candidates {
-			if govIDs[n.ID] {
-				filtered = append(filtered, n)
-			}
-		}
-		candidates = filtered
-	}
-
-	if limit > 0 && len(candidates) > limit {
-		candidates = candidates[:limit]
-	}
-	return candidates, nil
 }

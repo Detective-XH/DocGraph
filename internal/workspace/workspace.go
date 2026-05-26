@@ -233,10 +233,6 @@ func ReindexProject(p *Project) {
 	}
 }
 
-func indexProjectNoGitignore(p *Project, noGitignore bool) error {
-	return indexProjectOpts(p, noGitignore, p.SimilarityThreshold)
-}
-
 func indexProject(p *Project) error {
 	return indexProjectOpts(p, p.NoGitignore, p.SimilarityThreshold)
 }

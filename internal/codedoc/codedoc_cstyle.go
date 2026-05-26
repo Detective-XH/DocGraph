@@ -169,13 +169,6 @@ func extractCStyle(lang, relPath string, src []byte) ([]CodeDocEntry, error) {
 
 	var entries []CodeDocEntry
 
-	// State machine
-	type commentBlock struct {
-		text  string
-		start int // 1-based
-		end   int // 1-based
-	}
-
 	// --- Phase 1: file header ---
 	// The file header is the first comment block (// run or /* */ block) that
 	// appears before any substantive code.

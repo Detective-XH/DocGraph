@@ -23,9 +23,6 @@ func init() {
 // ──────────────────────────────────────────────────────────────────────────────
 
 var (
-	// luaLongComment matches --[[ ... ]] long-bracket comment blocks.
-	luaLongCommentRe = regexp.MustCompile(`(?s)^(\s*--\[\[.*?]])\s*`)
-
 	// luaFuncRe matches bare and local function declarations.
 	luaFuncRe = regexp.MustCompile(`(?i)^(?:local\s+)?function\s+([A-Za-z_][A-Za-z0-9_.]*)`)
 

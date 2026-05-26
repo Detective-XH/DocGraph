@@ -10,9 +10,6 @@ import (
 
 // ---- compiled regexps -------------------------------------------------------
 
-// jsdocOpen matches the opening /** of a JSDoc block (must be double asterisk).
-var jsdocOpenRe = regexp.MustCompile(`^\s*/\*\*\s*$|^\s*/\*\*\s+`)
-
 // jsdocClose matches the closing */ of a JSDoc block.
 var jsdocCloseLine = regexp.MustCompile(`\*/\s*$`)
 
