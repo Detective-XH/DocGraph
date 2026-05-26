@@ -119,6 +119,9 @@ Each skill is matched to its agent. Currently available:
 | Agent | Skill | Purpose |
 |-------|-------|---------|
 | Claude Code | docgraph-drift-audit | Audit .md files for DocGraph compatibility |
+| Claude Code | policy-drift-audit | Triage policy/process drift findings from format=drift_audit |
+| Claude Code | assessment-drift-audit | Triage research assessment drift findings from format=drift_audit |
+| Claude Code | code-doc-drift-audit | Triage docs-code drift findings (code.*) when code_doc pack is enabled |
 
 The docgraph-drift-audit skill checks: frontmatter presence, outgoing links,
 broken wikilinks (unresolved refs), heading structure, and similarity islands.
