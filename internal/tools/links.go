@@ -74,19 +74,13 @@ func (h *handler) handleReferences(ctx context.Context, request mcp.CallToolRequ
 		return mcp.NewToolResultError(fmt.Sprintf("document not found: %s — try docgraph_search to find the correct name or path", document)), nil
 	}
 
-	var edges []store.Edge
-	if h.workspace != nil {
-		for _, p := range h.workspace.Projects {
-			if es, err := p.Store.GetIncomingEdges(node.ID); err == nil {
-				edges = append(edges, es...)
-			}
-		}
-	} else {
-		var err error
-		edges, err = h.store.GetIncomingEdges(node.ID)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get incoming edges failed: %v", err)), nil
-		}
+	st := h.getStoreForResolvedNode(node)
+	if st == nil {
+		return mcp.NewToolResultError("store unavailable"), nil
+	}
+	edges, err := st.GetIncomingEdges(node.ID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("get incoming edges failed: %v", err)), nil
 	}
 
 	if limit > 0 && len(edges) > limit {
@@ -97,7 +91,7 @@ func (h *handler) handleReferences(ctx context.Context, request mcp.CallToolRequ
 	sb.WriteString(fmt.Sprintf("## References to %q\n\nFound %d incoming references.\n", node.Name, len(edges)))
 
 	for i, e := range edges {
-		src := h.getNodeByID(e.Source)
+		src := h.getNodeByIDFromStore(st, e.Source)
 		if src == nil {
 			sb.WriteString(fmt.Sprintf("\n### %d. (unknown node %s)\n", i+1, e.Source))
 			sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
@@ -132,19 +126,13 @@ func (h *handler) handleLinks(ctx context.Context, request mcp.CallToolRequest) 
 		return mcp.NewToolResultError(fmt.Sprintf("document not found: %s — try docgraph_search to find the correct name or path", document)), nil
 	}
 
-	var oedges []store.Edge
-	if h.workspace != nil {
-		for _, p := range h.workspace.Projects {
-			if es, err := p.Store.GetOutgoingEdges(node.ID); err == nil {
-				oedges = append(oedges, es...)
-			}
-		}
-	} else {
-		var err error
-		oedges, err = h.store.GetOutgoingEdges(node.ID)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get outgoing edges failed: %v", err)), nil
-		}
+	st := h.getStoreForResolvedNode(node)
+	if st == nil {
+		return mcp.NewToolResultError("store unavailable"), nil
+	}
+	oedges, err := st.GetOutgoingEdges(node.ID)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("get outgoing edges failed: %v", err)), nil
 	}
 	edges := oedges
 
@@ -164,7 +152,7 @@ func (h *handler) handleLinks(ctx context.Context, request mcp.CallToolRequest) 
 			continue
 		}
 
-		tgt := h.getNodeByID(e.Target)
+		tgt := h.getNodeByIDFromStore(st, e.Target)
 		if tgt == nil {
 			sb.WriteString(fmt.Sprintf("\n### %d. (unknown node %s)\n", i+1, e.Target))
 			sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
@@ -182,12 +170,28 @@ func (h *handler) getNodeByID(id string) *store.Node {
 	if h.workspace != nil {
 		for _, p := range h.workspace.Projects {
 			if n, err := p.Store.GetNodeByID(id); err == nil && n != nil {
+				n.ProjectName = p.Name
 				return n
 			}
 		}
 		return nil
 	}
 	n, _ := h.store.GetNodeByID(id)
+	return n
+}
+
+func (h *handler) getNodeByIDForNode(node *store.Node, id string) *store.Node {
+	if st := h.getStoreForResolvedNode(node); st != nil {
+		return h.getNodeByIDFromStore(st, id)
+	}
+	return h.getNodeByID(id)
+}
+
+func (h *handler) getNodeByIDFromStore(st *store.Store, id string) *store.Node {
+	if st == nil {
+		return nil
+	}
+	n, _ := st.GetNodeByID(id)
 	return n
 }
 

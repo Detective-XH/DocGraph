@@ -44,10 +44,30 @@ func (h *handler) getStoreForNode(nodeID string) *store.Store {
 	return h.store
 }
 
-func (h *handler) getProjectRootForNode(nodeID string) string {
+func (h *handler) getStoreForResolvedNode(node *store.Node) *store.Store {
+	if node == nil {
+		return nil
+	}
+	if h.workspace != nil && node.ProjectName != "" {
+		if p := h.workspace.FindProject(node.ProjectName); p != nil {
+			return p.Store
+		}
+	}
+	return h.getStoreForNode(node.ID)
+}
+
+func (h *handler) getProjectRootForResolvedNode(node *store.Node) string {
+	if node == nil {
+		return ""
+	}
+	if h.workspace != nil && node.ProjectName != "" {
+		if p := h.workspace.FindProject(node.ProjectName); p != nil {
+			return p.Path
+		}
+	}
 	if h.workspace != nil {
 		for _, p := range h.workspace.Projects {
-			if n, err := p.Store.GetNodeByID(nodeID); err == nil && n != nil {
+			if n, err := p.Store.GetNodeByID(node.ID); err == nil && n != nil {
 				return p.Path
 			}
 		}
@@ -58,8 +78,23 @@ func (h *handler) getProjectRootForNode(nodeID string) string {
 
 func (h *handler) getHeadings(node *store.Node) []store.Node {
 	if h.workspace != nil {
+		if node.ProjectName != "" {
+			if p := h.workspace.FindProject(node.ProjectName); p != nil {
+				hs, _ := p.Store.GetChildHeadings(node.FilePath)
+				for i := range hs {
+					hs[i].ProjectName = p.Name
+					if hs[i].QualifiedName != "" && !strings.HasPrefix(hs[i].QualifiedName, "[") {
+						hs[i].QualifiedName = "[" + p.Name + "] " + hs[i].QualifiedName
+					}
+				}
+				return hs
+			}
+		}
 		for _, p := range h.workspace.Projects {
 			if hs, err := p.Store.GetChildHeadings(node.FilePath); err == nil && len(hs) > 0 {
+				for i := range hs {
+					hs[i].ProjectName = p.Name
+				}
 				return hs
 			}
 		}
@@ -69,21 +104,30 @@ func (h *handler) getHeadings(node *store.Node) []store.Node {
 	return hs
 }
 
-func (h *handler) getEdgeCounts(nodeID string) (inCount, outCount int) {
+func (h *handler) getEdgeCounts(node *store.Node) (inCount, outCount int) {
 	if h.workspace != nil {
+		if st := h.getStoreForResolvedNode(node); st != nil {
+			if es, err := st.GetIncomingEdges(node.ID); err == nil {
+				inCount = len(es)
+			}
+			if es, err := st.GetOutgoingEdges(node.ID); err == nil {
+				outCount = len(es)
+			}
+			return
+		}
 		for _, p := range h.workspace.Projects {
-			if es, err := p.Store.GetIncomingEdges(nodeID); err == nil {
+			if es, err := p.Store.GetIncomingEdges(node.ID); err == nil {
 				inCount += len(es)
 			}
-			if es, err := p.Store.GetOutgoingEdges(nodeID); err == nil {
+			if es, err := p.Store.GetOutgoingEdges(node.ID); err == nil {
 				outCount += len(es)
 			}
 		}
 	} else {
-		if es, err := h.store.GetIncomingEdges(nodeID); err == nil {
+		if es, err := h.store.GetIncomingEdges(node.ID); err == nil {
 			inCount = len(es)
 		}
-		if es, err := h.store.GetOutgoingEdges(nodeID); err == nil {
+		if es, err := h.store.GetOutgoingEdges(node.ID); err == nil {
 			outCount = len(es)
 		}
 	}
@@ -141,7 +185,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 	for i, sr := range results {
 		node := sr.Node
 		headings := h.getHeadings(&node)
-		inCount, outCount := h.getEdgeCounts(node.ID)
+		inCount, outCount := h.getEdgeCounts(&node)
 
 		sb.WriteString(fmt.Sprintf("\n### %d. %s\n", i+1, node.Name))
 		sb.WriteString(fmt.Sprintf("**Path:** %s | **Headings:** %d | **Refs in:** %d | **Refs out:** %d\n",
@@ -164,7 +208,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		}
 
 		// Governance metadata — appended when available.
-		if st := h.getStoreForNode(node.ID); st != nil {
+		if st := h.getStoreForResolvedNode(&node); st != nil {
 			if gov, err := st.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
 				sb.WriteString(appendGovernanceSection(gov))
 			}
@@ -179,7 +223,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 
 func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, maxBytes int) {
 	// Try indexed section chunk first (avoids live file I/O, TOCTOU-safe).
-	if st := h.getStoreForNode(node.ID); st != nil {
+	if st := h.getStoreForResolvedNode(node); st != nil {
 		if chunk, ok, err := st.GetSectionChunk(node.ID); err == nil && ok {
 			text := strings.TrimRight(chunk.Text, "\n")
 			if text == "" {
@@ -202,7 +246,7 @@ func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, max
 	}
 
 	// Fallback: live file read (chunk not yet indexed).
-	root := h.getProjectRootForNode(node.ID)
+	root := h.getProjectRootForResolvedNode(node)
 	if root == "" {
 		sb.WriteString("\n#### Content\n[content unavailable: project root not available]\n")
 		return
@@ -249,7 +293,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	headings := h.getHeadings(node)
 
 	var inEdges, outEdges []store.Edge
-	if s := h.getStoreForNode(node.ID); s != nil {
+	if s := h.getStoreForResolvedNode(node); s != nil {
 		inEdges, _ = s.GetIncomingEdges(node.ID)
 		outEdges, _ = s.GetOutgoingEdges(node.ID)
 	}
@@ -271,7 +315,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	if len(inEdges) > 0 {
 		sb.WriteString(fmt.Sprintf("\n### Incoming References (%d)\n", len(inEdges)))
 		for _, e := range inEdges {
-			if src := h.getNodeByID(e.Source); src != nil {
+			if src := h.getNodeByIDForNode(node, e.Source); src != nil {
 				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", src.Name, e.Kind))
 			} else {
 				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", e.Source, e.Kind))
@@ -283,7 +327,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		for _, e := range outEdges {
 			if e.Kind == "links_external" {
 				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", extractURL(e.Metadata), e.Kind))
-			} else if tgt := h.getNodeByID(e.Target); tgt != nil {
+			} else if tgt := h.getNodeByIDForNode(node, e.Target); tgt != nil {
 				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", tgt.Name, e.Kind))
 			} else {
 				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", e.Target, e.Kind))
@@ -299,7 +343,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	}
 
 	// Governance metadata section.
-	if s := h.getStoreForNode(node.ID); s != nil {
+	if s := h.getStoreForResolvedNode(node); s != nil {
 		if gov, err := s.GetGovernanceMetadata(node.ID); err == nil && !store.IsGovernanceEmpty(gov) {
 			sb.WriteString(appendGovernanceSection(gov))
 		}
@@ -308,7 +352,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		}
 	}
 
-	if s := h.getStoreForNode(node.ID); s != nil {
+	if s := h.getStoreForResolvedNode(node); s != nil {
 		if hist, err := s.GetFileHistory(node.FilePath); err == nil && hist != nil && hist.CommitCount > 0 {
 			sb.WriteString("\n### History\n")
 			amendWord := "time"
@@ -348,7 +392,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		}
 		// Try indexed section chunk first (TOCTOU-safe).
 		const sectionMaxBytes = 2000
-		if st := h.getStoreForNode(target.ID); st != nil {
+		if st := h.getStoreForResolvedNode(target); st != nil {
 			if chunk, ok, err := st.GetSectionChunk(target.ID); err == nil && ok {
 				var rangeStr string
 				if chunk.StartLine != -1 {
@@ -366,7 +410,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		}
 
 		// Fallback: live file read (chunk not yet indexed).
-		root := h.getProjectRootForNode(node.ID)
+		root := h.getProjectRootForResolvedNode(node)
 		if root == "" {
 			return mcp.NewToolResultError("cannot read section content: project root not available"), nil
 		}
@@ -409,7 +453,7 @@ func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest
 	for i, sr := range results {
 		node := sr.Node
 		headings := h.getHeadings(&node)
-		inCount, outCount := h.getEdgeCounts(node.ID)
+		inCount, outCount := h.getEdgeCounts(&node)
 
 		headingNames := make([]string, len(headings))
 		for j, hd := range headings {

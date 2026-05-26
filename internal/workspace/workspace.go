@@ -109,7 +109,7 @@ func (w *Workspace) Search(query, kind string, limit int) ([]store.SearchResult,
 			continue
 		}
 		for i := range results {
-			results[i].Node.QualifiedName = "[" + p.Name + "] " + results[i].Node.QualifiedName
+			annotateNode(p, &results[i].Node)
 		}
 		all = append(all, results...)
 	}
@@ -160,6 +160,7 @@ func (w *Workspace) GetOutgoingEdges(projectName, nodeID string) ([]store.Edge, 
 func (w *Workspace) FindNodeByName(name string) (*store.Node, string, error) {
 	for _, p := range w.Projects {
 		if n, err := p.Store.FindNodeByName(name); err == nil && n != nil {
+			annotateNode(p, n)
 			return n, p.Name, nil
 		}
 	}
@@ -168,10 +169,21 @@ func (w *Workspace) FindNodeByName(name string) (*store.Node, string, error) {
 func (w *Workspace) FindNodeByPath(path string) (*store.Node, string, error) {
 	for _, p := range w.Projects {
 		if n, err := p.Store.FindNodeByPath(path); err == nil && n != nil {
+			annotateNode(p, n)
 			return n, p.Name, nil
 		}
 	}
 	return nil, "", nil
+}
+
+func annotateNode(p *Project, n *store.Node) {
+	if p == nil || n == nil {
+		return
+	}
+	n.ProjectName = p.Name
+	if n.QualifiedName != "" && !strings.HasPrefix(n.QualifiedName, "[") {
+		n.QualifiedName = "[" + p.Name + "] " + n.QualifiedName
+	}
 }
 func ReindexProject(p *Project) {
 	if err := indexProject(p); err != nil {
@@ -206,6 +218,9 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 			nSkip++
 			continue
 		}
+		// Delete derived rows before DeleteFileData so cascade-deleted node IDs are still reachable.
+		p.Store.DeleteSectionChunksByFile(e.RelPath)
+		p.Store.DeleteDocumentMetadataByFile(e.RelPath)
 		p.Store.DeleteFileData(e.RelPath)
 		res, err := parser.ParseFile(e.Path, e.RelPath, src, hash)
 		if err != nil {
@@ -218,6 +233,20 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		res.FileInfo.ModifiedAt = e.ModifiedAt
 		if err := p.Store.InsertNodes(nodes); err != nil {
 			return err
+		}
+		if len(res.SectionChunks) > 0 {
+			if err := p.Store.UpsertSectionChunks(res.SectionChunks); err != nil {
+				return err
+			}
+		}
+		if len(res.MetadataTuples) > 0 {
+			if err := p.Store.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("[%s] metadata %s: %w", p.Name, e.RelPath, err)
+			} else if err := p.Store.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("[%s] governance %s: %w", p.Name, e.RelPath, err)
+			} else if err := p.Store.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("[%s] research %s: %w", p.Name, e.RelPath, err)
+			}
 		}
 		if err := p.Store.InsertEdges(res.Edges); err != nil {
 			return err
@@ -258,6 +287,20 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		}
 		if err := similarity.ComputeSimilarityIncremental(p.Store, changedDocIDs, threshold); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] similarity: %v\n", p.Name, err)
+		}
+
+		// Clear schema reindex markers only after a full parse pass for this project.
+		if nSkip == 0 {
+			scope, _, _ := p.Store.GetProjectMeta(store.MetaKeyReindexScope)
+			if scope == "sections" || scope == "metadata" {
+				if err := p.Store.DeleteProjectMeta(
+					store.MetaKeyReindexRequired,
+					store.MetaKeyReindexScope,
+					store.MetaKeyReindexReason,
+				); err != nil {
+					fmt.Fprintf(os.Stderr, "[%s] clear reindex marker: %v\n", p.Name, err)
+				}
+			}
 		}
 	}
 	return nil

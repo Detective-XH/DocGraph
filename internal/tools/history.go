@@ -28,7 +28,7 @@ func (h *handler) handleHistory(ctx context.Context, req mcp.CallToolRequest) (*
 		return mcp.NewToolResultError(fmt.Sprintf("document not found: %s — try docgraph_search to find the correct name or path", document)), nil
 	}
 
-	s := h.getStoreForNode(node.ID)
+	s := h.getStoreForResolvedNode(node)
 	if s == nil {
 		return mcp.NewToolResultError("store unavailable"), nil
 	}

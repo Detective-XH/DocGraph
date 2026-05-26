@@ -1,11 +1,24 @@
 package tools
 
 import (
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/Detective-XH/docgraph/internal/workspace"
 )
+
+func openToolTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
+}
 
 func TestHandleSearchResearchFilter(t *testing.T) {
 	h, st := newTestHandler(t)
@@ -112,6 +125,140 @@ func TestHandleSearchResearchFilterAppliesLimitAfterFTS(t *testing.T) {
 	}
 	if strings.Contains(text, "AAA Nonmatch") {
 		t.Errorf("did not expect non-FTS result, got:\n%s", text)
+	}
+}
+
+func TestHandleSearchResearchFilterDoesNotDropLowRankMetadataHit(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	var nodes []store.Node
+	for i := 0; i < 8; i++ {
+		id := fmt.Sprintf("non-metadata-%02d.md", i)
+		nodes = append(nodes, store.Node{
+			ID:            id,
+			Kind:          "document",
+			Name:          fmt.Sprintf("Alpha Non Metadata %02d", i),
+			QualifiedName: id,
+			FilePath:      id,
+			StartLine:     1,
+			EndLine:       10,
+			BodyExcerpt:   "alpha common body",
+			UpdatedAt:     1,
+		})
+	}
+	target := store.Node{
+		ID:            "zzzz-research-hit.md",
+		Kind:          "document",
+		Name:          "ZZZZ Research Hit",
+		QualifiedName: "zzzz-research-hit.md",
+		FilePath:      "zzzz-research-hit.md",
+		StartLine:     1,
+		EndLine:       10,
+		BodyExcerpt:   "alpha common body",
+		UpdatedAt:     1,
+	}
+	nodes = append(nodes, target)
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes: %v", err)
+	}
+	if err := st.UpsertResearchMetadata(target.ID, []store.MetadataTuple{
+		{Key: "source_type", Value: "primary", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertResearchMetadata: %v", err)
+	}
+
+	res, err := callTool(h, h.handleSearch, map[string]interface{}{
+		"query":       "alpha",
+		"source_type": "primary",
+		"confidence":  "high",
+		"limit":       float64(1),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %v", res.Content)
+	}
+
+	text := extractText(res)
+	if !strings.Contains(text, "ZZZZ Research Hit") {
+		t.Errorf("expected metadata hit even when it is not in the first FTS page, got:\n%s", text)
+	}
+}
+
+func TestHandleContextWorkspaceUsesResultProjectStore(t *testing.T) {
+	storeA := openToolTestStore(t)
+	storeB := openToolTestStore(t)
+
+	sharedA := store.Node{
+		ID:            "shared.md",
+		Kind:          "document",
+		Name:          "Shared A",
+		QualifiedName: "shared.md",
+		FilePath:      "shared.md",
+		StartLine:     1,
+		EndLine:       5,
+		BodyExcerpt:   "alpha only",
+		UpdatedAt:     1,
+	}
+	sharedB := store.Node{
+		ID:            "shared.md",
+		Kind:          "document",
+		Name:          "Shared B",
+		QualifiedName: "shared.md",
+		FilePath:      "shared.md",
+		StartLine:     1,
+		EndLine:       5,
+		BodyExcerpt:   "target research body",
+		UpdatedAt:     1,
+	}
+	if err := storeA.InsertNodes([]store.Node{sharedA}); err != nil {
+		t.Fatalf("InsertNodes storeA: %v", err)
+	}
+	if err := storeB.InsertNodes([]store.Node{sharedB}); err != nil {
+		t.Fatalf("InsertNodes storeB: %v", err)
+	}
+	if err := storeB.UpsertSectionChunks([]store.SectionChunk{{
+		NodeID:      "shared.md",
+		FilePath:    "shared.md",
+		StartLine:   1,
+		EndLine:     5,
+		ContentHash: "hash-b",
+		SectionHash: "section-b",
+		Text:        "target project-b chunk",
+	}}); err != nil {
+		t.Fatalf("UpsertSectionChunks: %v", err)
+	}
+	if err := storeB.UpsertResearchMetadata("shared.md", []store.MetadataTuple{
+		{Key: "claim_id", Value: "claim-project-b", ValueType: "string", Source: "frontmatter"},
+		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertResearchMetadata: %v", err)
+	}
+
+	h := &handler{workspace: &workspace.Workspace{Projects: []*workspace.Project{
+		{Name: "project-a", Path: t.TempDir(), Store: storeA},
+		{Name: "project-b", Path: t.TempDir(), Store: storeB},
+	}}}
+
+	res, err := callTool(h, h.handleContext, map[string]interface{}{
+		"task":            "target",
+		"maxNodes":        float64(1),
+		"maxContentBytes": float64(2000),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %v", res.Content)
+	}
+
+	text := extractText(res)
+	for _, want := range []string{"Shared B", "target project-b chunk", "claim-project-b"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q from project-b scoped store, got:\n%s", want, text)
+		}
 	}
 }
 

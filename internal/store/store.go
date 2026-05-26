@@ -22,18 +22,20 @@ type Node struct {
 	Name          string
 	QualifiedName string
 	FilePath      string
-	StartLine     int
-	EndLine       int
-	Level         int
-	Metadata      string
-	BodyExcerpt   string
-	UpdatedAt     int64
+	// ProjectName is runtime-only workspace context. It is not persisted in SQLite.
+	ProjectName string
+	StartLine   int
+	EndLine     int
+	Level       int
+	Metadata    string
+	BodyExcerpt string
+	UpdatedAt   int64
 }
 
 type Edge struct {
 	Source   string
-	Target  string
-	Kind    string
+	Target   string
+	Kind     string
 	Metadata string
 	Line     int
 }
@@ -535,4 +537,3 @@ func ReadSectionContent(filePath string, startLine, endLine int, projectRoot str
 
 	return content, nil
 }
-

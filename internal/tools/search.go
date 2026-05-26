@@ -74,24 +74,11 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 			candidateNodes = ns
 		}
 
-		// Further narrow by FTS query if a query is provided.
-		ftsResults, err := func() ([]store.SearchResult, error) {
-			if h.workspace != nil {
-				return h.workspace.Search(query, kind, limit*4)
-			}
-			return h.store.Search(query, kind, limit*4)
-		}()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
-		}
-		ftsIDs := make(map[string]bool, len(ftsResults))
-		for _, r := range ftsResults {
-			ftsIDs[r.Node.ID] = true
-		}
-
+		// Metadata filters are applied before the text query so a low-ranked but
+		// valid metadata hit cannot disappear behind an arbitrary FTS cap.
 		var filtered []store.Node
 		for _, n := range candidateNodes {
-			if ftsIDs[n.ID] {
+			if nodeMatchesSearchQuery(n, query, kind) {
 				filtered = append(filtered, n)
 			}
 		}
@@ -114,7 +101,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 			}
 		}
 		for i, n := range filtered {
-			path := n.FilePath
+			path := formatNodePath(n)
 			sb.WriteString(fmt.Sprintf("\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine))
 			if n.BodyExcerpt != "" {
 				firstLine := strings.SplitN(strings.TrimRight(n.BodyExcerpt, "\n"), "\n", 2)[0]
@@ -143,7 +130,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 
 	for i, sr := range results {
 		n := sr.Node
-		path := n.FilePath
+		path := formatNodePath(n)
 		if n.Kind == "heading" && n.QualifiedName != "" {
 			path = n.QualifiedName
 		}
@@ -167,10 +154,41 @@ func (h *handler) getWorkspaceMetadataFilteredNodes(status, sensitivity, claimID
 	for _, p := range h.workspace.Projects {
 		ns, err := h.getMetadataFilteredNodes(p.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus, limit)
 		if err == nil {
+			for i := range ns {
+				ns[i].ProjectName = p.Name
+				if ns[i].QualifiedName != "" && !strings.HasPrefix(ns[i].QualifiedName, "[") {
+					ns[i].QualifiedName = "[" + p.Name + "] " + ns[i].QualifiedName
+				}
+			}
 			out = append(out, ns...)
 		}
 	}
 	return out
+}
+
+func nodeMatchesSearchQuery(n store.Node, query, kind string) bool {
+	if kind != "" && n.Kind != kind {
+		return false
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		n.Name,
+		n.QualifiedName,
+		n.BodyExcerpt,
+		n.Metadata,
+	}, "\n"))
+	for _, word := range strings.Fields(strings.ToLower(query)) {
+		if !strings.Contains(haystack, word) {
+			return false
+		}
+	}
+	return true
+}
+
+func formatNodePath(n store.Node) string {
+	if n.ProjectName == "" {
+		return n.FilePath
+	}
+	return "[" + n.ProjectName + "] " + n.FilePath
 }
 
 func (h *handler) getMetadataFilteredNodes(st *store.Store, status, sensitivity, claimID, sourceType, confidence, analystStatus string, limit int) ([]store.Node, error) {
