@@ -244,6 +244,41 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_ai_summaries_updated ON ai_summaries(updated_at);
 
+CREATE TABLE IF NOT EXISTS agent_enrichment_runs (
+    run_id        TEXT    PRIMARY KEY,
+    node_id       TEXT    NOT NULL,
+    provider      TEXT    NOT NULL DEFAULT '',
+    model_id      TEXT    NOT NULL,
+    agent_id      TEXT    NOT NULL DEFAULT '',
+    content_hash  TEXT    NOT NULL,
+    summary_hash  TEXT    NOT NULL DEFAULT '',
+    metadata_hash TEXT    NOT NULL DEFAULT '',
+    created_at    INTEGER NOT NULL,
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_enrichment_current (
+    node_id    TEXT    PRIMARY KEY,
+    run_id     TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+    FOREIGN KEY (run_id) REFERENCES agent_enrichment_runs(run_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_metadata_provenance (
+    node_id    TEXT    NOT NULL,
+    key        TEXT    NOT NULL,
+    run_id     TEXT    NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (node_id, key),
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE,
+    FOREIGN KEY (run_id) REFERENCES agent_enrichment_runs(run_id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_enrichment_runs_node ON agent_enrichment_runs(node_id);
+CREATE INDEX IF NOT EXISTS idx_agent_enrichment_runs_model ON agent_enrichment_runs(model_id);
+CREATE INDEX IF NOT EXISTS idx_agent_metadata_provenance_run ON agent_metadata_provenance(run_id);
+
 CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes BEGIN
     INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata_text)
     VALUES (NEW.rowid, NEW.name, NEW.qualified_name, NEW.body_excerpt, NEW.metadata);

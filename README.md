@@ -51,7 +51,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~52,000 lines of Go (+ ~45,720 lines of tests) |
+| Codebase | ~52,180 lines of Go (+ ~45,810 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -188,12 +188,15 @@ content, and the caller decides which model or provider to use.
    `doc_id`, `content_hash`, and bounded content.
 2. The agent infers a concise summary and optional metadata JSON object.
 3. `docgraph_enrichment(operation=store, doc_id, content_hash, summary,
-   metadata, confidence, model_hint)` stores the result. The `content_hash`
-   must match the pending response.
+   metadata, confidence, model_id, provider, agent_id)` stores the result.
+   `model_id` is required, and `content_hash` must match the pending response.
 
 Inferred metadata never overrides authored frontmatter or extracted document
 metadata. Stored summaries appear in `docgraph_node`, `docgraph_context`, and
 context packs. `docgraph_status` reports enrichment coverage and stale results.
+Normal retrieval uses one current enrichment per document, while DocGraph keeps
+an internal run ledger with model, provider, agent, and content-hash provenance.
+Agent-inferred summaries and metadata are advisory context, not source of truth.
 
 **Privacy**: `docgraph_enrichment operation=pending` returns document content that your
 agent may send to an external provider. Get user consent before proceeding.

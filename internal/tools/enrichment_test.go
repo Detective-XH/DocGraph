@@ -64,7 +64,8 @@ func TestHandleEnrichmentStore_StoresSummaryAndAgentMetadata(t *testing.T) {
 		"summary":      "Agent summary.",
 		"metadata":     `{"status":"draft","confidence":"medium","review_due":"2026-12-31","tags":["policy","pdf"]}`,
 		"confidence":   0.8,
-		"model_hint":   "test-agent",
+		"model_id":     "test-model",
+		"agent_id":     "test-agent",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,6 +80,9 @@ func TestHandleEnrichmentStore_StoresSummaryAndAgentMetadata(t *testing.T) {
 	}
 	if summary == nil || summary.Summary != "Agent summary." {
 		t.Fatalf("summary was not stored: %+v", summary)
+	}
+	if summary.ModelID != "test-model" || summary.AgentID != "test-agent" {
+		t.Fatalf("summary lineage was not stored: %+v", summary)
 	}
 
 	tuples, err := st.GetDocumentMetadata("a.pdf")
@@ -106,12 +110,30 @@ func TestHandleEnrichmentStore_RejectsUnsupportedMetadata(t *testing.T) {
 		"doc_id":       "a.pdf",
 		"content_hash": "hash-a",
 		"metadata":     `{"nested":{"unsupported":true}}`,
+		"model_id":     "test-model",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.IsError {
 		t.Fatal("expected error for nested metadata object")
+	}
+}
+
+func TestHandleEnrichmentStore_RequiresModelID(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+
+	res, err := callTool(h, h.handleEnrichmentStore, map[string]interface{}{
+		"doc_id":       "a.pdf",
+		"content_hash": "hash-a",
+		"summary":      "Agent summary.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "model_id") {
+		t.Fatalf("expected model_id error, got: %+v", res)
 	}
 }
 
@@ -138,6 +160,7 @@ func TestHandleEnrichmentFacade_RoutesOperations(t *testing.T) {
 		"doc_id":       "a.pdf",
 		"content_hash": "hash-a",
 		"summary":      "Facade summary.",
+		"model_id":     "test-model",
 	})
 	if err != nil {
 		t.Fatal(err)

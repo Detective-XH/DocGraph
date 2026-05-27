@@ -5,6 +5,7 @@
 Agent metadata enrichment and dependency maintenance release.
 
 - Added an agent-driven workflow for enriching frontmatter-less documents with inferred summaries and metadata
+- Enrichment writes now record model provenance while keeping only the current inferred summary active for retrieval
 - Inferred summaries now appear in document, context, and context-pack outputs
 - `docgraph_status` now reports metadata enrichment coverage and stale enrichment state
 - SQLite upgraded to 3.53.1 via `modernc.org/sqlite` bump

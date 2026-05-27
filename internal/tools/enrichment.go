@@ -30,7 +30,9 @@ var enrichmentTool = mcp.NewTool("docgraph_enrichment",
 	mcp.WithString("summary", mcp.Description("Concise agent-inferred summary, max 4000 bytes")),
 	mcp.WithString("metadata", mcp.Description("JSON object of inferred metadata fields. Values may be strings, numbers, booleans, or arrays of scalar values.")),
 	mcp.WithNumber("confidence", mcp.Description("Optional confidence from 0.0 to 1.0 applied to all metadata fields")),
-	mcp.WithString("model_hint", mcp.Description("Optional model or agent identifier for auditability")),
+	mcp.WithString("model_id", mcp.Description("store: required model identifier that produced this enrichment, for example gpt-5.4 or claude-sonnet-4.6")),
+	mcp.WithString("provider", mcp.Description("store: optional provider identifier, for example openai, anthropic, ollama")),
+	mcp.WithString("agent_id", mcp.Description("store: optional calling agent or workflow identifier")),
 )
 
 func (h *handler) handleEnrichment(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -133,7 +135,12 @@ func (h *handler) handleEnrichmentStore(ctx context.Context, request mcp.CallToo
 	}
 	summary := sanitizeArg(getStringArg(args, "summary", ""), maxArgLength)
 	metadataRaw := getStringArg(args, "metadata", "")
-	modelHint := sanitizeArg(getStringArg(args, "model_hint", ""), 200)
+	modelID := sanitizeArg(getStringArg(args, "model_id", ""), 200)
+	if modelID == "" {
+		return mcp.NewToolResultError("model_id parameter is required"), nil
+	}
+	provider := sanitizeArg(getStringArg(args, "provider", ""), 100)
+	agentID := sanitizeArg(getStringArg(args, "agent_id", ""), 200)
 
 	confidence, err := getOptionalConfidence(args, "confidence")
 	if err != nil {
@@ -165,7 +172,9 @@ func (h *handler) handleEnrichmentStore(ctx context.Context, request mcp.CallToo
 	err = targetStore.UpsertAgentEnrichment(store.AgentEnrichment{
 		DocID:       docID,
 		Summary:     summary,
-		ModelHint:   modelHint,
+		Provider:    provider,
+		ModelID:     modelID,
+		AgentID:     agentID,
 		ContentHash: contentHash,
 		Metadata:    tuples,
 	})
@@ -174,8 +183,8 @@ func (h *handler) handleEnrichmentStore(ctx context.Context, request mcp.CallToo
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf(
-		"Stored agent enrichment for doc %q: summary=%t, metadata_fields=%d, source=agent_inferred.",
-		docID, summary != "", len(tuples))), nil
+		"Stored current agent enrichment for doc %q: summary=%t, metadata_fields=%d, source=agent_inferred, authority=advisory, model_id=%q.",
+		docID, summary != "", len(tuples), modelID)), nil
 }
 
 func getOptionalConfidence(args map[string]any, key string) (*float64, error) {
@@ -303,9 +312,15 @@ func appendAISummarySection(summary *store.AISummary) string {
 	for line := range strings.SplitSeq(strings.TrimRight(summary.Summary, "\n"), "\n") {
 		fmt.Fprintf(&sb, "> %s\n", line)
 	}
-	sb.WriteString("**Source:** agent_inferred")
-	if summary.ModelHint != "" {
-		fmt.Fprintf(&sb, " | **Model:** %s", summary.ModelHint)
+	sb.WriteString("**Source:** agent_inferred | **Authority:** advisory, non-authoritative")
+	if summary.ModelID != "" {
+		fmt.Fprintf(&sb, " | **Model:** %s", summary.ModelID)
+	}
+	if summary.AgentID != "" {
+		fmt.Fprintf(&sb, " | **Agent:** %s", summary.AgentID)
+	}
+	if summary.RunID != "" {
+		fmt.Fprintf(&sb, " | **Run:** `%s`", summary.RunID)
 	}
 	if summary.ContentHash != "" {
 		fmt.Fprintf(&sb, " | **Content hash:** `%s`", summary.ContentHash)

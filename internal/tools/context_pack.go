@@ -148,7 +148,10 @@ func (h *handler) appendContextPackMetadata(sb *strings.Builder, st *store.Store
 		sb.WriteString("#### Agent-Inferred Summary\n")
 		writeContextPackField(sb, "Summary", summary.Summary)
 		writeContextPackField(sb, "Source", "agent_inferred")
-		writeContextPackField(sb, "Model", summary.ModelHint)
+		writeContextPackField(sb, "Authority", "advisory, non-authoritative")
+		writeContextPackField(sb, "Model", summary.ModelID)
+		writeContextPackField(sb, "Agent", summary.AgentID)
+		writeContextPackField(sb, "Run ID", summary.RunID)
 		writeContextPackField(sb, "Content hash", summary.ContentHash)
 	}
 	if !store.IsGovernanceEmpty(gov) {

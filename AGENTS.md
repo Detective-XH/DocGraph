@@ -97,8 +97,10 @@ Need metadata enrichment for frontmatter-less docs?
   -> docgraph_enrichment(operation=pending, content_mode=full|excerpt)
   -> get user consent — content may go to an external provider
   -> infer summary and metadata with your provider
-  -> docgraph_enrichment(operation=store, doc_id, content_hash, summary, metadata, confidence, model_hint)
-  -> treat source=agent_inferred as lowest authority; human frontmatter wins
+  -> docgraph_enrichment(operation=store, doc_id, content_hash, summary, metadata, confidence, model_id, provider, agent_id)
+  -> model_id is required; provider and agent_id are optional provenance fields
+  -> normal retrieval uses the current enrichment only; historical runs remain in an internal model/agent provenance ledger
+  -> treat source=agent_inferred as advisory and lowest authority; human frontmatter wins
 
 Need neural semantic similarity (agentic pull-then-push workflow)?
   -> docgraph_embeddings_pending(model_id, content_mode=full|excerpt)
@@ -249,7 +251,9 @@ ask the user before running `codegraph init -i`.
 - DocGraph never executes indexed files.
 - Agent metadata enrichment is agent-driven; `docgraph_enrichment operation=pending`
   returns document text that may be sent to an external provider. Get user
-  consent first. Stored metadata uses `agent_inferred` and is lowest-authority.
+  consent first. Stored metadata uses `agent_inferred`, requires `model_id`,
+  and is lowest-authority. LLM summaries are advisory context, not source of
+  truth.
 - Neural embeddings are agent-driven; `docgraph_embeddings_pending` returns
   document text that may be sent to an external provider. Get user consent first.
 - Context packs use indexed section snapshots only for evidence text.
