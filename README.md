@@ -32,7 +32,7 @@ Three domain packs are enabled by default — **governance** (`status`, `owner`,
 `confidence`…), and **entity** (`entity_type`, `canonical_name`…) — plus three
 opt-in packs for policy/SOP drift, assessment contradiction audit, and code
 documentation surfaces. No code knowledge required for the governance and
-research packs: they work on any Markdown vault.
+research packs: they work on any document collection (.md, .docx, .html, .pdf).
 
 DocGraph's value scales with **how connected your documents are**:
 
@@ -323,7 +323,7 @@ supersedes_claim: CLM-099
 ### Drift Audit Findings
 
 `docgraph_context format=drift_audit` surfaces advisory findings from enabled packs.
-No code knowledge is needed — governance and research packs work on any Markdown vault.
+No code knowledge is needed — governance and research packs work on any document collection (.md, .docx, .html, .pdf).
 
 | Finding | Pack(s) required | What it detects |
 |---------|-----------------|-----------------|

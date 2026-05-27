@@ -8,7 +8,7 @@ link to each other; governance metadata (`status`, `owner`, `review_due`,
 `sensitivity`); research provenance (`claim_id`, `evidence`, `confidence`);
 cross-project docs; or documentation that needs impact analysis and drift
 detection. No code knowledge required for governance and research packs — they
-work on any Markdown vault. Skip DocGraph for small, flat, isolated notes where
+work on any document collection (.md, .docx, .html, .pdf). Skip DocGraph for small, flat, isolated notes where
 grep/read tools are enough.
 
 ---
@@ -151,7 +151,7 @@ docgraph pack enable code_doc <path>        # also triggers incremental sync
 ### Drift Audit Findings by Pack
 
 `format=drift_audit` in `docgraph_context` surfaces findings from all enabled packs.
-Governance and research packs work on any Markdown vault — no code required.
+Governance and research packs work on any document collection (.md, .docx, .html, .pdf) — no code required.
 
 | Finding | Pack(s) required |
 |---------|-----------------|
