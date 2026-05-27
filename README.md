@@ -4,7 +4,7 @@
 
 ### Documentation knowledge graph MCP server for LLM agents
 
-**Cross-reference tracking · Impact analysis · Topic similarity · Multi-format**
+**Governance metadata · Research provenance · Drift audit · Cross-reference tracking · Topic similarity · Multi-format**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://go.dev)
@@ -27,9 +27,16 @@ Documentation knowledge graph MCP server. Indexes `.md`, `.docx`, `.html`,
 cross-references and topic similarity, and exposes the graph through 16 MCP
 tools over stdio.
 
+Three domain packs are enabled by default — **governance** (`status`, `owner`,
+`review_due`, `sensitivity`…), **research_provenance** (`claim_id`, `evidence`,
+`confidence`…), and **entity** (`entity_type`, `canonical_name`…) — plus three
+opt-in packs for policy/SOP drift, assessment contradiction audit, and code
+documentation surfaces. No code knowledge required for the governance and
+research packs: they work on any Markdown vault.
+
 DocGraph's value scales with **how connected your documents are**:
 
-- **High value**: docs that cross-reference each other (`[links](other.md)`, `[[wikilinks]]`, frontmatter `related_to`). Examples: ADR networks, Obsidian vaults, governance docs, [LLM wiki](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) collections with interlinks.
+- **High value**: docs that cross-reference each other (`[links](other.md)`, `[[wikilinks]]`, frontmatter `related_to`), or carry governance/research frontmatter (`status`, `owner`, `claim_id`, `confidence`). Examples: ADR networks, Obsidian vaults, policy/SOP libraries, research assessment corpora.
 - **Medium value**: docs with shared tags/frontmatter but few explicit links. Similarity engine still finds topic clusters.
 - **Low value**: flat, isolated documents with no links or metadata. `grep` is simpler and faster.
 
@@ -175,14 +182,17 @@ or `serve`; lower values create more `similar_to` edges.
 ### Neural Embeddings (agent-driven)
 
 DocGraph never calls an LLM itself. Instead, your agent computes embeddings
-with any provider and pushes the vectors back:
+with any provider and pushes the vectors back — a pull-then-push agentic
+workflow that enables semantic search far beyond TF-IDF vocabulary matching:
 
-1. `docgraph_embeddings_pending(model_id="text-embedding-3-small")` — returns docs without up-to-date embeddings
-2. Your agent computes vectors with its own provider
-3. `docgraph_embeddings_store(doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges
-4. `docgraph_similar` automatically surfaces neural results alongside TF-IDF results
+1. `docgraph_embeddings_pending(model_id, limit, content_mode)` — returns docs without up-to-date embeddings, including content and `content_hash`. `content_mode=full` (default) reads the full section from disk; `content_mode=excerpt` uses the stored body excerpt. Different `model_id` values are partitioned separately and never compared with each other.
+2. Your agent computes vectors with its own provider (OpenAI, Ollama, Nomic, etc.)
+3. `docgraph_embeddings_store(doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges. Pass `content_hash` exactly as returned by step 1.
+4. `docgraph_similar` deduplicates TF-IDF and neural results for the same pair, preferring neural when both exist.
 
-**Privacy**: `docgraph_embeddings_pending` returns document content that your agent will send to an external provider. User consent is required before proceeding.
+In workspace mode, `docgraph_embeddings_pending` and `docgraph_embeddings_store` automatically locate the correct per-project store by `doc_id`.
+
+**Privacy**: `docgraph_embeddings_pending` returns document content that your agent will send to an external provider. Get user consent before proceeding.
 
 Use `docgraph_embeddings_clear(model_id)` to delete all vectors for a model and reclaim space. `docgraph_status` shows a Neural Embeddings table listing stored models, total vectors, and stale count.
 
@@ -239,6 +249,110 @@ nodes when the `code_doc` domain pack is enabled.
 **Common rules:**
 - Respects `.gitignore` and `.docgraphignore`
 - Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, and similar
+
+## Domain Packs
+
+Domain packs extend the metadata schema for specific use cases. Three packs are
+enabled by default; three are opt-in.
+
+| Pack | Default | Domain | Purpose |
+|------|---------|--------|---------|
+| `governance` | On | governance | Lifecycle status, ownership, sensitivity, review scheduling, audience access controls, and document supersession |
+| `research_provenance` | On | research | Claims, evidence, source type, confidence, analyst workflow, event/assessment dates, and temporal validity |
+| `entity` | On | entity | Entity classification, canonical naming, and alias declaration; activates the entity source graph |
+| `code_doc` | **Off** | code | File headers, doc comments, test names, and example names from Go, Python, JS/TS, Rust, and 20+ more languages |
+| `policy_process` | **Off** | policy_process | Policy/SOP drift detection — conflicting, stale, duplicated, superseded, and non-canonical documents |
+| `assessment_drift` | **Off** | research | Assessment drift detection — stale assessments, unverified evidence, and competing research interpretations |
+
+### Frontmatter Fields by Pack
+
+Each pack reads specific keys from your Markdown frontmatter.
+
+**governance** — lifecycle and access control:
+```yaml
+status: active            # Governance lifecycle status
+owner: alice              # Accountable person or role
+sensitivity: internal     # Sets retrieval boundaries
+allowed_audience: [engineering, legal]
+review_due: 2026-12-31    # Triggers policy.stale_review when overdue
+effective_date: 2026-01-01
+canonical_source: true    # Marks as the authoritative copy among duplicates
+approver: bob
+department: Engineering
+supersedes: old-policy.md
+superseded_by: new-policy.md
+```
+
+**research_provenance** — evidence and provenance tracking:
+```yaml
+claim_id: CLM-001
+source_type: primary      # primary | secondary | internal
+confidence: high
+analyst_status: verified
+assessment_date: 2026-05-01
+event_date: 2026-04-15
+last_verified: 2026-05-20
+valid_until: 2026-11-01   # Triggers research.stale_assessment when expired
+evidence: [doc/evidence-a.md, doc/evidence-b.md]
+client: ACME
+deliverable_id: RPT-42
+```
+
+**entity** — canonical entity declaration:
+```yaml
+entity_type: organization   # person | organization | location | …
+canonical_name: Acme Corp
+aliases: [ACME, Acme Corporation]
+```
+
+**policy_process** (opt-in) — SOP and policy enrichment:
+```yaml
+sop_category: onboarding
+policy_domain: HR           # HR | Security | Finance | …
+process_owner: People Ops
+version: "2.1"
+conflict_resolution: supersedes-v2.0
+```
+
+**assessment_drift** (opt-in) — competing research tracking:
+```yaml
+contradicts: assessment-2026-03.md
+supersedes_claim: CLM-099
+```
+
+### Drift Audit Findings
+
+`docgraph_context format=drift_audit` surfaces advisory findings from enabled packs.
+No code knowledge is needed — governance and research packs work on any Markdown vault.
+
+| Finding | Pack(s) required | What it detects |
+|---------|-----------------|-----------------|
+| `policy.stale_review` | governance | `review_due` has passed |
+| `policy.superseded_referenced` | governance | Superseded doc is still cited by others |
+| `policy.duplicate` | governance | Near-duplicate content detected via similarity |
+| `policy.non_canonical` | governance | No `canonical_source` marker among near-duplicates |
+| `policy.conflicting` | governance | Similar docs with conflicting status or effective dates |
+| `research.stale_assessment` | research_provenance | `valid_until` has expired |
+| `research.unverified_evidence` | research_provenance | Evidence reference cannot be resolved |
+| `research.competing_interpretations` | research_provenance + assessment_drift | Conflicting claims on the same topic |
+| `research.superseded_claim` | research_provenance + assessment_drift | Outdated claim still cited |
+| `research.impacted_deliverable` | research_provenance | Deliverable depends on a stale claim |
+| `code.missing_symbol` | code_doc | Doc references a code symbol that no longer exists |
+| `code.undocumented_export` | code_doc | Exported symbol has no doc comment |
+| `code.unanchored_feature` | code_doc + governance | Feature mentioned in docs has no matching code |
+
+### Managing Packs
+
+```bash
+docgraph pack list /path/to/project                                # Show all packs and enabled state
+docgraph pack enable policy_process /path/to/project               # Enable an opt-in pack
+docgraph pack enable assessment_drift /path/to/project
+docgraph pack enable code_doc /path/to/project                     # Also triggers incremental sync
+docgraph pack disable code_doc /path/to/project                    # Removes code_file rows
+docgraph pack enable --workspace policy_process /path/to/workspace # Apply to all child projects
+```
+
+`--force` re-index resets all pack state — re-run `docgraph pack enable <pack-id> <path>` after a force rebuild.
 
 ## Workspace Mode
 
@@ -455,10 +569,14 @@ MCP server instructions. DocGraph does not call CodeGraph, read `.codegraph/`,
 or import CodeGraph symbol anchors. The reserved `codegraph_anchor` metadata
 field stays empty until CodeGraph exposes a stable export/API contract.
 
-For docs-code work, enable DocGraph's `code_doc` pack for comments, tests,
-examples, and file headers, then hand symbol existence, callers/callees, call
-traces, routes, and code impact questions to `codegraph_*` tools when the agent
-environment exposes them.
+For docs-code work, enable DocGraph's `code_doc` pack — it is the interface
+layer between DocGraph and CodeGraph. DocGraph indexes documentation surfaces
+(file headers, exported doc comments, test names, example names); CodeGraph
+indexes code structure (symbols, callers/callees, call graphs, type resolution).
+Together they give a complete picture: `format=drift_audit` with `code_doc`
+enabled can surface `code.missing_symbol`, `code.undocumented_export`, and
+`code.unanchored_feature` findings, then hand symbol-level questions to
+`codegraph_*` tools when the agent environment exposes them.
 
 ## Inspired By
 

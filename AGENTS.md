@@ -4,9 +4,12 @@ This file is the LLM-facing guide. Use it to decide whether installing or using
 DocGraph will materially help in the current project.
 
 **TL;DR:** Use DocGraph when a project has connected knowledge: documents that
-link to each other, governance/research metadata, cross-project docs, or
-documentation that needs impact analysis. Skip it for small, flat, isolated
-notes where grep/read tools are enough.
+link to each other; governance metadata (`status`, `owner`, `review_due`,
+`sensitivity`); research provenance (`claim_id`, `evidence`, `confidence`);
+cross-project docs; or documentation that needs impact analysis and drift
+detection. No code knowledge required for governance and research packs — they
+work on any Markdown vault. Skip DocGraph for small, flat, isolated notes where
+grep/read tools are enough.
 
 ---
 
@@ -80,11 +83,13 @@ Need provenance/status?
   -> docgraph_history for git history
   -> docgraph_status for schema, packs, reindex, embeddings, drift summary
 
-Need neural semantic similarity?
-  -> docgraph_embeddings_pending
-  -> compute embeddings externally only with user consent
-  -> docgraph_embeddings_store
-  -> docgraph_embeddings_clear to remove a model
+Need neural semantic similarity (agentic pull-then-push workflow)?
+  -> docgraph_embeddings_pending(model_id, content_mode=full|excerpt)
+  -> get user consent — content goes to an external provider
+  -> compute embeddings with your provider (OpenAI, Ollama, Nomic, etc.)
+  -> docgraph_embeddings_store(doc_id, model_id, vector, content_hash)
+  -> docgraph_similar returns neural results (prefers neural over TF-IDF for same pair)
+  -> docgraph_embeddings_clear to remove a model's vectors
 ```
 
 ---
@@ -118,6 +123,53 @@ Scale reference (measured): 40–80 code files sync in 1–4s; 300+ mixed-langua
 (Python, SQL, TypeScript) in ~12s. A 127-file Go codebase adds ~127 `code_file` nodes in
 under 1s (incremental, files already hashed). `format=drift_audit` with `code_doc` enabled
 typically surfaces 50–100+ `code.undocumented_export` findings on a real codebase.
+
+---
+
+## Domain Packs
+
+DocGraph has six built-in domain packs. Three are on by default; three require explicit opt-in.
+
+| Pack | Default | Frontmatter keys | Filters |
+|------|---------|-----------------|---------|
+| `governance` | On | `status`, `owner`, `sensitivity`, `allowed_audience`, `review_due`, `effective_date`, `canonical_source`, `approver`, `department`, `supersedes`, `superseded_by` | `status`, `sensitivity`, `canonical_source`, `allowed_audience`, `as_of_date` |
+| `research_provenance` | On | `claim_id`, `source_type`, `confidence`, `analyst_status`, `assessment_date`, `event_date`, `last_verified`, `valid_until`, `evidence`, `client`, `deliverable_id` | `claim_id`, `source_type`, `confidence`, `analyst_status` |
+| `entity` | On | `entity_type`, `canonical_name`, `aliases` | `entity_type`, `entity_id` |
+| `code_doc` | Off | _(file-driven, no frontmatter keys)_ | `kind=code_file` |
+| `policy_process` | Off | `sop_category`, `policy_domain`, `process_owner`, `version`, `conflict_resolution` | _(enriches drift_audit; no search filter)_ |
+| `assessment_drift` | Off | `contradicts`, `supersedes_claim` | _(enriches drift_audit; no search filter)_ |
+
+Enable opt-in packs before expecting their drift findings:
+
+```
+docgraph pack list <path>
+docgraph pack enable policy_process <path>
+docgraph pack enable assessment_drift <path>
+docgraph pack enable code_doc <path>        # also triggers incremental sync
+```
+
+### Drift Audit Findings by Pack
+
+`format=drift_audit` in `docgraph_context` surfaces findings from all enabled packs.
+Governance and research packs work on any Markdown vault — no code required.
+
+| Finding | Pack(s) required |
+|---------|-----------------|
+| `policy.stale_review` | governance |
+| `policy.superseded_referenced` | governance |
+| `policy.duplicate` | governance |
+| `policy.non_canonical` | governance |
+| `policy.conflicting` | governance |
+| `research.stale_assessment` | research_provenance |
+| `research.unverified_evidence` | research_provenance |
+| `research.competing_interpretations` | research_provenance + assessment_drift |
+| `research.superseded_claim` | research_provenance + assessment_drift |
+| `research.impacted_deliverable` | research_provenance |
+| `code.missing_symbol` | code_doc |
+| `code.undocumented_export` | code_doc |
+| `code.unanchored_feature` | code_doc + governance |
+
+`docgraph_status` includes a compact drift summary when policy or research findings exist.
 
 ---
 
