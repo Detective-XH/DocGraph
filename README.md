@@ -130,7 +130,7 @@ Available skills bundled in the binary:
 
 | # | Tool | Description |
 |---|------|-------------|
-| 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) |
+| 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) with section-level results, field-weighted ranking, graph-aware reranking, and governance/research/entity filters |
 | 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process, research, and (when `code_doc` is enabled) docs-code drift audit reports |
 | 3 | `docgraph_references` | Incoming links (who references this doc) |
 | 4 | `docgraph_links` | Outgoing links (what this doc links to) |
