@@ -45,7 +45,7 @@ jobs:
           go-version: 'stable'
       - run: go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
       - run: cyclonedx-gomod mod -licenses -type library -json -output docgraph.cdx.json .
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: docgraph-sbom
           path: docgraph.cdx.json
