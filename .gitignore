@@ -2,6 +2,8 @@
 .codegraph/
 scripts/
 .claude/
+.agents/
+.codex/
 CLAUDE.md
 plans/
 release/
