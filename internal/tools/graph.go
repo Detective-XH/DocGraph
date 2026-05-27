@@ -199,7 +199,7 @@ func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, erro
 		queue = next
 	}
 	if !found {
-		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nNo path found within 10 hops.\n", fNode.Name, tNode.Name)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nNo wikilink path found within 10 hops. This does NOT mean the documents are unrelated — use operation=incoming or operation=outgoing to check citation connections.\n", fNode.Name, tNode.Name)), nil
 	}
 	var path, kinds []string
 	for cur := tID; cur != fID; {

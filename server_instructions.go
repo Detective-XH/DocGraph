@@ -30,7 +30,7 @@ docgraph_search adds governance filters (status=, sensitivity=, canonical_source
 
 ## Path formats
 
-Search results use [project/]doc.md#heading:line-end — strip the [project/] prefix and :line suffix before passing to docgraph_node. docgraph_files path= expects a bare directory name (e.g. path=docs).
+Search results use [project/]doc.md#heading:line-end — strip the [project/] prefix and :line suffix before passing to docgraph_node. docgraph_files path= expects a bare directory name (e.g. path=docs). docgraph_node section= takes the exact heading text (e.g. "Neural Embeddings (agent-driven)"), not the URL slug (neural-embeddings-agent-driven) seen in anchors.
 
 ## Reducing noise
 

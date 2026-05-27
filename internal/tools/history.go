@@ -10,7 +10,7 @@ import (
 )
 
 var historyTool = mcp.NewTool("docgraph_history",
-	mcp.WithDescription("Show git commit history for a document: how many times it was amended, by how many authors, first/last change dates, and the most recent commit message."),
+	mcp.WithDescription("Show git commit history for a document: how many times it was amended, by how many authors, first/last change dates, and the most recent commit message. Returns empty for files not tracked by git (gitignored or untracked)."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
 )
 
