@@ -73,11 +73,13 @@ Need task/topic context?
 Need exact lookup?
   -> docgraph_search for keywords, filters, tags, metadata, entities
   -> docgraph_node for one known document or section
+     section= takes exact heading text ("Neural Embeddings (agent-driven)"), not URL slug
 
 Need graph relationships?
   -> docgraph_graph
      operation=incoming|outgoing|impact|trace
      document=... for incoming/outgoing/impact; from=... and to=... for trace
+     "no wikilink path" ≠ unrelated — follow with operation=incoming/outgoing
 
 Need discovery?
   -> docgraph_similar for related documents
