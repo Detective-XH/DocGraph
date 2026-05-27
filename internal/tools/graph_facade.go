@@ -10,7 +10,7 @@ import (
 )
 
 var graphFacadeTool = mcp.NewTool("docgraph_graph",
-	mcp.WithDescription("Document graph traversal facade. Operations: incoming (references), outgoing (links), impact (transitive incoming references), trace (shortest outgoing reference path)."),
+	mcp.WithDescription("Document graph traversal facade. Operations:\n  incoming — documents that cite/reference this document\n  outgoing — documents this document links to\n  impact   — transitive incoming references (who depends on this)\n  trace    — shortest wikilink click-chain from document A to document B (follows hyperlinks, not citation edges; \"no path\" ≠ \"unrelated\")"),
 	mcp.WithString("operation", mcp.Required(), mcp.Description("Graph operation: incoming, outgoing, impact, or trace")),
 	mcp.WithString("document", mcp.Description("Document name or path for incoming, outgoing, and impact")),
 	mcp.WithString("from", mcp.Description("Starting document name or path for trace")),

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "docgraph": {
+      "command": "docgraph",
+      "args": [
+        "serve",
+        "--path",
+        "."
+      ]
+    }
+  }
+}

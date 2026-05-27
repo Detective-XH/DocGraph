@@ -14,7 +14,7 @@ import (
 )
 
 var statusTool = mcp.NewTool("docgraph_status",
-	mcp.WithDescription("Index health: file count, node count, edge count, unresolved references, DB size. Use to verify the index is ready before other operations, or to inspect embedding model state, domain packs, and drift findings."),
+	mcp.WithDescription("Index health: file count, node count, edge count, unresolved references, DB size. Use to verify the index is ready before other operations, or to inspect embedding model state, domain packs, and drift findings. Metadata quality scores (0–100) reflect frontmatter completeness; deductions for missing status, owner, or review_due are the most common and do not affect content reliability."),
 )
 
 func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

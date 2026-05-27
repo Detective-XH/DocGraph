@@ -10,8 +10,8 @@ import (
 )
 
 var filesTool = mcp.NewTool("docgraph_files",
-	mcp.WithDescription("List indexed Markdown files. Use path filter to narrow scope. For a single known doc, use docgraph_node instead."),
-	mcp.WithString("path", mcp.Description("Filter to directory subtree")),
+	mcp.WithDescription("List all indexed files (.md, .docx, .html, .pdf). Use path filter to narrow scope (bare directory name, e.g. path=docs). For a single known doc, use docgraph_node instead."),
+	mcp.WithString("path", mcp.Description("Filter to directory subtree (bare directory name, e.g. docs or reports/2024)")),
 	mcp.WithNumber("limit", mcp.Description("Max files to return (default 50)")),
 )
 

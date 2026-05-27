@@ -11,8 +11,8 @@ import (
 )
 
 var similarTool = mcp.NewTool("docgraph_similar",
-	mcp.WithDescription("Find documents that are topically similar to a given document, even without explicit links. Uses TF-IDF text similarity + shared references + tag overlap. If neural embeddings have been stored via docgraph_embeddings_store, results also include neural similarity scores (engine: neural). For explicit link tracking, use docgraph_references instead."),
-	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
+	mcp.WithDescription("Find documents that are topically similar to a given document, even without explicit links. Uses TF-IDF text similarity + shared references + tag overlap. If neural embeddings have been stored via docgraph_embeddings action=store, results also include neural similarity scores (engine: neural). For explicit link tracking, use docgraph_graph instead. Returns empty if no similarity edges have been computed for the document (check docgraph_status → edge count). Accepts document paths only — heading anchors (doc.md#heading) return empty."),
+	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path (document paths only; heading anchors return empty)")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
 )
 

@@ -193,7 +193,7 @@ Governance and research packs work on any document collection (.md, .docx, .html
 | Task | Why DocGraph helps |
 |------|--------------------|
 | "Who references this ADR/policy/glossary term?" | Incoming reference edges are precomputed. |
-| "What documents are impacted if this changes?" | `docgraph_impact` walks incoming references transitively. |
+| "What documents are impacted if this changes?" | `docgraph_graph operation=impact` walks incoming references transitively. |
 | "Give me a reviewable evidence pack." | `format=context_pack` includes indexed text, hashes, metadata, citations, and impact. |
 | "Find stale or conflicting governance/research docs." | `format=drift_audit` uses metadata, dates, references, and similarity. |
 | "Search across many repos under one workspace." | Workspace mode fans out over per-project indexes. |

@@ -11,7 +11,7 @@ import (
 )
 
 var contextTool = mcp.NewTool("docgraph_context",
-	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes governance-aware search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead."),
+	mcp.WithDescription("PRIMARY TOOL. Build relevant documentation context for a task or topic. Composes governance-aware search + node details + cross-references + bounded source content in one call. For a single known document, use docgraph_node instead. For broad queries, set includeContent=false or reduce maxContentBytes (default 2000, hard cap 6000) to avoid large responses; a 10-node query with default settings can produce 20–50 KB of output."),
 	mcp.WithString("task", mcp.Required(), mcp.Description("Description of the task/topic to find context for")),
 	mcp.WithString("format", mcp.Description("Output format: summary (default), context_pack for a reviewable evidence pack, or drift_audit for a drift audit report (finding codes: policy.stale_review, policy.superseded_referenced, policy.duplicate, policy.non_canonical, policy.conflicting, research.stale_assessment, research.unverified_evidence, research.competing_interpretations, research.superseded_claim, research.impacted_deliverable; when code_doc is enabled: code.missing_symbol, code.undocumented_export, code.unanchored_feature).")),
 	mcp.WithNumber("maxNodes", mcp.Description("Max documents to return (default 10)")),
