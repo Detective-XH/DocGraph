@@ -24,9 +24,7 @@
 
 Documentation knowledge graph MCP server. Indexes `.md`, `.docx`, `.html`,
 `.pdf`, and optional code-documentation surfaces into SQLite, extracts
-cross-references and topic similarity, and exposes the graph through 17 MCP
-compatibility tools over stdio. Optional MCP tool profiles can expose a smaller
-LLM-facing surface with a graph facade.
+cross-references and topic similarity, and exposes the graph through 12 MCP tools over stdio.
 
 Three domain packs are enabled by default — **governance** (`status`, `owner`,
 `review_due`, `sensitivity`…), **research_provenance** (`claim_id`, `evidence`,
@@ -51,7 +49,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~52,290 lines of Go (+ ~46,070 lines of tests) |
+| Codebase | ~52,210 lines of Go (+ ~45,980 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -76,16 +74,16 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [--dry-run] [--interactive] [--install-clients auto|all|LIST] [--workspace] [--scope user] [--tool-profile full|compact|dual] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
-docgraph install [--dry-run] [--interactive] [--clients auto|all|LIST] [--workspace] [--scope user] [--tool-profile full|compact|dual] [--update-skills] [path]      # Configure MCP clients without re-initializing
+docgraph init [--dry-run] [--interactive] [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
+docgraph install [--dry-run] [--interactive] [--clients auto|all|LIST] [--workspace] [--scope user] [--update-skills] [path]      # Configure MCP clients without re-initializing
 docgraph pack list [--workspace] <path>                         # List domain packs and enabled state
 docgraph pack enable [--workspace] [--no-sync] <pack-id> <path>  # Enable a domain pack; code_doc syncs by default
 docgraph pack disable [--workspace] <pack-id> <path>             # Disable a domain pack; code_doc rows are removed
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--threshold N] [--no-gitignore] [--tool-profile full|compact|dual] --path <path>     # MCP stdio server (single project)
-docgraph serve [--threshold N] [--no-gitignore] [--tool-profile full|compact|dual] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 docgraph version                             # Print build version
 ```
 
@@ -95,8 +93,6 @@ Hermes, and OpenCode config when their config directories already exist.
 `all` creates config files for every supported client.
 Use `--dry-run` to print create/update/unchanged actions without writing files.
 Use `--interactive` to print the same review and confirm before writes.
-`--tool-profile` defaults to `full`; installer-generated configs omit the flag
-unless `compact` or `dual` is explicitly selected.
 
 ## Bundled Skills
 
@@ -138,38 +134,26 @@ Available skills bundled in the binary:
 
 ## MCP Tools
 
-### Tool Profiles
-
-| Profile | Tool surface | Purpose |
-|---------|--------------|---------|
-| `full` | Current 17 compatibility tools | Default behavior and backwards compatibility |
-| `compact` | 12 tools including `docgraph_graph` and `docgraph_embeddings`; hides fine-grained graph and embedding tools | Lower decision load for LLM agents |
-| `dual` | Full profile plus `docgraph_graph` and `docgraph_embeddings` | Migration and parity testing |
-
 `docgraph_graph` supports `operation=incoming|outgoing|impact|trace`. Use
 `document` for incoming, outgoing, and impact; use `from` and `to` for trace.
+`--tool-profile full` and `--tool-profile dual` are deprecated and ignored.
 
-### Full Profile Tools
+### Tools
 
 | # | Tool | Description |
 |---|------|-------------|
 | 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) with section-level results, field-weighted ranking, graph-aware reranking, and governance/research/entity filters |
 | 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process, research, and (when `code_doc` is enabled) docs-code drift audit reports |
-| 3 | `docgraph_references` | Incoming links (who references this doc) |
-| 4 | `docgraph_links` | Outgoing links (what this doc links to) |
-| 5 | `docgraph_impact` | Blast radius analysis (BFS over incoming refs, configurable depth) |
-| 6 | `docgraph_node` | Single document details with metadata, structure, and edges |
-| 7 | `docgraph_explore` | Survey multiple related documents in one call |
-| 8 | `docgraph_trace` | Shortest reference path between two docs (BFS, max 10 hops) |
-| 9 | `docgraph_files` | Indexed file tree |
-| 10 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
-| 11 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
-| 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
-| 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
-| 14 | `docgraph_enrichment` | Pull or store inferred summaries and metadata for documents without frontmatter |
-| 15 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |
-| 16 | `docgraph_embeddings_store` | Store a neural embedding vector for a document and recompute neural similarity edges |
-| 17 | `docgraph_embeddings_clear` | Delete all stored embeddings for a model and their associated neural similarity edges |
+| 3 | `docgraph_graph` | Graph traversal facade. `operation=incoming` (who references this doc), `operation=outgoing` (what this doc links to), `operation=impact` (blast radius, configurable depth), `operation=trace` (shortest path between two docs). Use `document=` for incoming/outgoing/impact; `from=` and `to=` for trace |
+| 4 | `docgraph_node` | Single document details with metadata, structure, and edges |
+| 5 | `docgraph_explore` | Survey multiple related documents in one call |
+| 6 | `docgraph_files` | Indexed file tree |
+| 7 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
+| 8 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
+| 9 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
+| 10 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
+| 11 | `docgraph_enrichment` | Pull or store inferred summaries and metadata for documents without frontmatter |
+| 12 | `docgraph_embeddings` | Neural embedding workflow facade. `action=pending` lists docs needing embeddings; `action=store` saves a vector and recomputes neural similarity; `action=clear` deletes all embeddings for a model |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
@@ -225,12 +209,9 @@ or `serve`; lower values create more `similar_to` edges.
 DocGraph never calls an LLM itself. Instead, your agent computes embeddings
 with any provider and pushes the vectors back — a pull-then-push agentic
 workflow that enables semantic search far beyond TF-IDF vocabulary matching.
-The full profile exposes the legacy three-tool workflow; the compact profile
-uses the equivalent `docgraph_embeddings(action=pending|store|clear)` facade:
-
-1. `docgraph_embeddings_pending(model_id, limit, content_mode)` or `docgraph_embeddings(action=pending, model_id, limit, content_mode)` — returns docs without up-to-date embeddings, including content and `content_hash`. `content_mode=full` (default) reads the full section from disk; `content_mode=excerpt` uses the stored body excerpt. Different `model_id` values are partitioned separately and never compared with each other.
+1. `docgraph_embeddings(action=pending, model_id, limit, content_mode)` — returns docs without up-to-date embeddings, including content and `content_hash`. `content_mode=full` (default) reads the full section from disk; `content_mode=excerpt` uses the stored body excerpt. Different `model_id` values are partitioned separately and never compared with each other.
 2. Your agent computes vectors with its own provider (OpenAI, Ollama, Nomic, etc.)
-3. `docgraph_embeddings_store(doc_id, model_id, vector, content_hash)` or `docgraph_embeddings(action=store, doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges. Pass `content_hash` exactly as returned by step 1.
+3. `docgraph_embeddings(action=store, doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges. Pass `content_hash` exactly as returned by step 1.
 4. `docgraph_similar` deduplicates TF-IDF and neural results for the same pair, preferring neural when both exist.
 
 In workspace mode, both embedding workflows automatically locate the correct per-project store by `doc_id`.
@@ -633,12 +614,7 @@ and SQLite. DocGraph adopts the same core design:
 - **Two-phase resolution**: raw links are extracted during parsing, then
   resolved in a separate pass after all files are indexed — identical to
   CodeGraph's `UnresolvedReference` → `ReferenceResolver` pattern.
-- **MCP tool surface**: the 17 tools keep CodeGraph-compatible naming for
-  context, search, references/links, impact, trace, node, explore, similar,
-  files, status, tags, and history, with distinct opt-in neural embeddings and
-  metadata enrichment protocols. Compact and dual profiles add facade tools for
-  graph traversal and embedding workflows so agent-facing instructions can stay
-  grouped behind a compact decision tree instead of a growing top-level catalog.
+- **MCP tool surface**: 12 tools with CodeGraph-compatible naming for context, search, node, explore, similar, files, status, tags, and history. Graph traversal (`docgraph_graph`) and neural embeddings (`docgraph_embeddings`) are facade tools that group fine-grained operations behind a single dispatch parameter, keeping agent-facing instructions compact.
 
 Where they diverge: DocGraph is written in Go (single binary, no Node.js
 runtime), uses the trigram tokenizer for CJK support, and adds workspace

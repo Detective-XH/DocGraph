@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/server"
@@ -11,37 +12,24 @@ import (
 type ToolProfile string
 
 const (
-	ToolProfileFull    ToolProfile = "full"
 	ToolProfileCompact ToolProfile = "compact"
-	ToolProfileDual    ToolProfile = "dual"
 )
 
-// ParseToolProfile normalizes user input while preserving the historical
-// default: an empty profile means the full compatibility surface.
+// ParseToolProfile normalizes user input to ToolProfileCompact.
 func ParseToolProfile(raw string) (ToolProfile, error) {
 	switch ToolProfile(strings.ToLower(strings.TrimSpace(raw))) {
-	case "", ToolProfileFull:
-		return ToolProfileFull, nil
-	case ToolProfileCompact:
+	case "", "compact":
 		return ToolProfileCompact, nil
-	case ToolProfileDual:
-		return ToolProfileDual, nil
+	case "full", "dual":
+		fmt.Fprintf(os.Stderr, "warning: --tool-profile %q is deprecated; using compact\n", raw)
+		return ToolProfileCompact, nil
 	default:
-		return "", fmt.Errorf("invalid tool profile %q: valid profiles are full, compact, dual", raw)
+		return "", fmt.Errorf("invalid tool profile %q: valid profile is compact", raw)
 	}
 }
 
 func registerTools(s *server.MCPServer, h *handler, profile ToolProfile) {
-	switch profile {
-	case ToolProfileCompact:
-		registerCompactTools(s, h)
-	case ToolProfileDual:
-		registerFullTools(s, h)
-		registerGraphFacadeTool(s, h)
-		registerEmbeddingsFacadeTool(s, h)
-	default:
-		registerFullTools(s, h)
-	}
+	registerCompactTools(s, h)
 }
 
 func registerFullTools(s *server.MCPServer, h *handler) {

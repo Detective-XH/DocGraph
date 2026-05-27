@@ -13,10 +13,10 @@ func TestParseToolProfile(t *testing.T) {
 		raw  string
 		want ToolProfile
 	}{
-		{raw: "", want: ToolProfileFull},
-		{raw: "full", want: ToolProfileFull},
+		{raw: "", want: ToolProfileCompact},
+		{raw: "full", want: ToolProfileCompact},
 		{raw: " compact ", want: ToolProfileCompact},
-		{raw: "DUAL", want: ToolProfileDual},
+		{raw: "DUAL", want: ToolProfileCompact},
 	}
 
 	for _, tc := range cases {

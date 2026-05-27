@@ -18,7 +18,7 @@ func cmdInit(args []string) {
 	installClients := fset.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure installed clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
-	toolProfileRaw := fset.String("tool-profile", "full", "MCP tool profile for installed clients: full, compact, or dual")
+	toolProfileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	withSkills := fset.Bool("with-skills", false, "Copy bundled skills to .claude/skills/ (skips existing directories)")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
@@ -165,9 +165,6 @@ func initProject(root string, toolProfile tools.ToolProfile) error {
 	mcpConfig := filepath.Join(root, ".mcp.json")
 	if _, err := os.Stat(mcpConfig); errors.Is(err, os.ErrNotExist) {
 		args := `["serve", "--path", "."]`
-		if toolProfile != tools.ToolProfileFull {
-			args = fmt.Sprintf(`["serve", "--path", ".", "--tool-profile", %q]`, string(toolProfile))
-		}
 		content := fmt.Sprintf(`{
   "mcpServers": {
     "docgraph": {

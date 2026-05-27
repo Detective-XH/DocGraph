@@ -15,22 +15,9 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-func TestToolSurfaceFullProfileRegistry(t *testing.T) {
-	// Tool-surface guardrail: adding a top-level MCP tool changes the agent-facing
-	// protocol. This allowlist forces that change to be intentional and reviewed.
-	expected := fullProfileToolNames()
+const maxInstructionsBytes = 2700
 
-	actual := registeredToolNames(t, tools.ToolProfileFull)
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatalf(
-			"registered MCP full profile surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
-			strings.Join(expected, ", "),
-			strings.Join(actual, ", "),
-		)
-	}
-}
-
-func TestToolSurfaceCompactProfileRegistry(t *testing.T) {
+func TestToolSurfaceRegistry(t *testing.T) {
 	expected := []string{
 		"docgraph_context",
 		"docgraph_embeddings",
@@ -49,68 +36,42 @@ func TestToolSurfaceCompactProfileRegistry(t *testing.T) {
 	actual := registeredToolNames(t, tools.ToolProfileCompact)
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf(
-			"registered MCP compact profile surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
+			"registered MCP tool surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
 			strings.Join(expected, ", "),
 			strings.Join(actual, ", "),
 		)
 	}
 }
 
-func TestToolSurfaceDualProfileRegistry(t *testing.T) {
-	expected := append(fullProfileToolNames(), "docgraph_embeddings", "docgraph_graph")
-	sort.Strings(expected)
-
-	actual := registeredToolNames(t, tools.ToolProfileDual)
-	if !reflect.DeepEqual(actual, expected) {
-		t.Fatalf(
-			"registered MCP dual profile surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
-			strings.Join(expected, ", "),
-			strings.Join(actual, ", "),
-		)
-	}
-}
-
-func TestToolSurfaceFullInstructionsStayCompact(t *testing.T) {
-	// Tool-surface guardrail: generated MCP instructions route users through compact
-	// decision paths instead of repeating a long one-row-per-tool catalog.
-	section := markdownSection(serverInstructionsForProfile(tools.ToolProfileFull), "## Tool selection", "## Reducing noise")
+func TestToolSurfaceInstructionsStayCompact(t *testing.T) {
+	section := markdownSection(serverInstructions, "## Tool selection", "## Reducing noise")
 	if section == "" {
-		t.Fatal("serverInstructions must include a Tool selection section before Reducing noise")
-	}
-
-	dataRows := countMarkdownDataRows(section)
-	if dataRows > 6 {
-		t.Fatalf("Tool selection table has %d data rows; keep generated instructions to a compact decision tree", dataRows)
-	}
-
-	table := firstMarkdownTable(section)
-	if strings.Count(table, "docgraph_") > 16 {
-		t.Fatalf("Tool selection section repeats too many tool names; route through grouped primary surfaces instead")
-	}
-}
-
-func TestToolSurfaceCompactInstructionsStayCompact(t *testing.T) {
-	instructions := serverInstructionsForProfile(tools.ToolProfileCompact)
-	section := markdownSection(instructions, "## Tool selection", "## Reducing noise")
-	if section == "" {
-		t.Fatal("compact server instructions must include a Tool selection section before Reducing noise")
+		t.Fatal("server instructions must include a Tool selection section before Reducing noise")
 	}
 	for _, hidden := range []string{"docgraph_references", "docgraph_links", "docgraph_impact", "docgraph_trace", "docgraph_embeddings_pending", "docgraph_embeddings_store", "docgraph_embeddings_clear"} {
 		if strings.Contains(section, hidden) {
-			t.Fatalf("compact instructions must not name hidden tool %s", hidden)
+			t.Fatalf("server instructions must not name hidden tool %s", hidden)
 		}
 	}
 	if !strings.Contains(section, "docgraph_graph") {
-		t.Fatal("compact instructions must route graph work through docgraph_graph")
+		t.Fatal("server instructions must route graph work through docgraph_graph")
 	}
 	if !strings.Contains(section, "docgraph_embeddings(action=pending/store/clear)") {
-		t.Fatal("compact instructions must route embedding work through docgraph_embeddings facade")
+		t.Fatal("server instructions must route embedding work through docgraph_embeddings facade")
+	}
+	dataRows := countMarkdownDataRows(section)
+	if dataRows > 6 {
+		t.Fatalf("Tool selection table has %d data rows; keep to <= 6", dataRows)
+	}
+}
+
+func TestServerInstructionsFitBudget(t *testing.T) {
+	if len(serverInstructions) > maxInstructionsBytes {
+		t.Fatalf("serverInstructions is %d bytes; must be <= %d to fit injection budget", len(serverInstructions), maxInstructionsBytes)
 	}
 }
 
 func TestCodeGraphInteropInstructionsStayAdvisory(t *testing.T) {
-	// CodeGraph interoperability guardrail: starts as agent handoff
-	// guidance only. DocGraph must not imply that it owns CodeGraph internals.
 	section := markdownSection(serverInstructions, "## CodeGraph interoperability", "")
 	if section == "" {
 		t.Fatal("serverInstructions must include CodeGraph interoperability guidance")
@@ -129,28 +90,6 @@ func TestCodeGraphInteropInstructionsStayAdvisory(t *testing.T) {
 		if !strings.Contains(section, phrase) {
 			t.Fatalf("CodeGraph interoperability guidance missing %q", phrase)
 		}
-	}
-}
-
-func fullProfileToolNames() []string {
-	return []string{
-		"docgraph_context",
-		"docgraph_embeddings_clear",
-		"docgraph_embeddings_pending",
-		"docgraph_embeddings_store",
-		"docgraph_enrichment",
-		"docgraph_explore",
-		"docgraph_files",
-		"docgraph_history",
-		"docgraph_impact",
-		"docgraph_links",
-		"docgraph_node",
-		"docgraph_references",
-		"docgraph_search",
-		"docgraph_similar",
-		"docgraph_status",
-		"docgraph_tags",
-		"docgraph_trace",
 	}
 }
 
@@ -273,19 +212,4 @@ func countMarkdownDataRows(markdown string) int {
 		rows++
 	}
 	return rows
-}
-
-func firstMarkdownTable(markdown string) string {
-	var lines []string
-	for line := range strings.SplitSeq(markdown, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|") {
-			lines = append(lines, line)
-			continue
-		}
-		if len(lines) > 0 {
-			break
-		}
-	}
-	return strings.Join(lines, "\n")
 }

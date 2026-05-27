@@ -20,7 +20,7 @@ func cmdInstall(args []string) {
 	clients := fset.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
-	toolProfileRaw := fset.String("tool-profile", "full", "MCP tool profile for installed clients: full, compact, or dual")
+	toolProfileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
 	interactive := fset.Bool("interactive", false, "Review planned changes and ask before writing")

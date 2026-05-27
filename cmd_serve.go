@@ -36,7 +36,7 @@ func cmdServe(args []string) {
 	fset := flag.NewFlagSet("serve", flag.ExitOnError)
 	p := fset.String("path", "", "Project directory to index and serve")
 	ws := fset.String("workspace", "", "Workspace root (index all child dirs as projects)")
-	profileRaw := fset.String("tool-profile", "full", "MCP tool profile: full, compact, or dual")
+	profileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	fset.Parse(args)
@@ -46,7 +46,7 @@ func cmdServe(args []string) {
 		log.Fatal(err)
 	}
 
-	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructionsForProfile(profile)))
+	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
 
 	if *ws != "" {
 		warm := anyProjectDBExists(*ws)

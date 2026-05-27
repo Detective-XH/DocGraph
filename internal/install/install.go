@@ -255,11 +255,7 @@ func globalServer(root string, workspace bool, profile string) mcpServer {
 }
 
 func appendToolProfile(args []string, profile string) []string {
-	profile = strings.TrimSpace(profile)
-	if profile == "" || profile == "full" {
-		return args
-	}
-	return append(args, "--tool-profile", profile)
+	return args
 }
 
 func appendProfilePlanDetail(detail string, server mcpServer) string {
@@ -279,11 +275,7 @@ func serverToolProfileArg(server mcpServer) string {
 }
 
 func toolProfileArg(profile string) string {
-	profile = strings.TrimSpace(profile)
-	if profile == "" || profile == "full" {
-		return ""
-	}
-	return "--tool-profile " + profile
+	return ""
 }
 
 func planJSONMCP(path string, server mcpServer) (action, detail string, err error) {

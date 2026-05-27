@@ -78,35 +78,25 @@ args = []
 	}
 }
 
-func TestInstallCompactProfileAddsServerArg(t *testing.T) {
+func TestInstallProfileNeverAddsServerArg(t *testing.T) {
 	root := t.TempDir()
 
-	server := localServer(root, false, "compact")
-	want := []string{"serve", "--path", ".", "--tool-profile", "compact"}
-	if !equalStrings(server.Args, want) {
-		t.Fatalf("compact local server args = %#v, want %#v", server.Args, want)
-	}
-
-	server = globalServer(root, true, "compact")
-	want = []string{"serve", "--workspace", root, "--tool-profile", "compact"}
-	if !equalStrings(server.Args, want) {
-		t.Fatalf("compact workspace server args = %#v, want %#v", server.Args, want)
-	}
-}
-
-func TestInstallFullProfileOmitsServerArg(t *testing.T) {
-	root := t.TempDir()
-
-	for _, profile := range []string{"", "full"} {
-		server := globalServer(root, false, profile)
-		want := []string{"serve", "--path", root}
+	for _, profile := range []string{"", "full", "compact"} {
+		server := localServer(root, false, profile)
+		want := []string{"serve", "--path", "."}
 		if !equalStrings(server.Args, want) {
-			t.Fatalf("full profile %q args = %#v, want %#v", profile, server.Args, want)
+			t.Fatalf("profile %q local server args = %#v, want %#v", profile, server.Args, want)
+		}
+
+		server = globalServer(root, true, profile)
+		want = []string{"serve", "--workspace", root}
+		if !equalStrings(server.Args, want) {
+			t.Fatalf("profile %q workspace server args = %#v, want %#v", profile, server.Args, want)
 		}
 	}
 }
 
-func TestPlanCompactProfileShowsServerArg(t *testing.T) {
+func TestPlanOmitsToolProfileServerArg(t *testing.T) {
 	root := t.TempDir()
 
 	results, err := Plan(root, Options{Clients: "claude", ToolProfile: "compact"})
@@ -116,8 +106,8 @@ func TestPlanCompactProfileShowsServerArg(t *testing.T) {
 	if len(results) != 1 {
 		t.Fatalf("Plan returned %d results, want 1", len(results))
 	}
-	if !strings.Contains(results[0].Detail, "--tool-profile compact") {
-		t.Fatalf("compact profile plan detail does not show server arg: %q", results[0].Detail)
+	if strings.Contains(results[0].Detail, "--tool-profile") {
+		t.Fatalf("plan detail must not include --tool-profile: %q", results[0].Detail)
 	}
 }
 

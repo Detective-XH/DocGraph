@@ -14,7 +14,7 @@ import (
 // flag. Callers should pass true before a cold-start background index and
 // false (via defer) when it finishes.
 func Register(s *server.MCPServer, st *store.Store, projectRoot string) func(bool) {
-	return RegisterWithProfile(s, st, projectRoot, ToolProfileFull)
+	return RegisterWithProfile(s, st, projectRoot, ToolProfileCompact)
 }
 
 // RegisterWithProfile registers the MCP tools selected by profile and returns
@@ -28,7 +28,7 @@ func RegisterWithProfile(s *server.MCPServer, st *store.Store, projectRoot strin
 // RegisterWorkspace registers all tools for a workspace and returns the same
 // indexing-flag setter.
 func RegisterWorkspace(s *server.MCPServer, w *workspace.Workspace) func(bool) {
-	return RegisterWorkspaceWithProfile(s, w, ToolProfileFull)
+	return RegisterWorkspaceWithProfile(s, w, ToolProfileCompact)
 }
 
 // RegisterWorkspaceWithProfile registers the MCP tools selected by profile for

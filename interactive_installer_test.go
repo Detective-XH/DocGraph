@@ -27,15 +27,15 @@ func TestCmdInitDryRunDoesNotWriteSetupArtifacts(t *testing.T) {
 	}
 }
 
-func TestInitCompactProfileDryRunShowsServerArg(t *testing.T) {
+func TestInitDryRunOmitsToolProfileServerArg(t *testing.T) {
 	projectDir := t.TempDir()
 
 	output := captureStderr(t, func() {
 		cmdInit([]string{"--dry-run", "--install-clients", "claude", "--tool-profile", "compact", projectDir})
 	})
 
-	if !strings.Contains(output, "--tool-profile compact") {
-		t.Fatalf("compact init dry-run output does not show server arg:\n%s", output)
+	if strings.Contains(output, "--tool-profile") {
+		t.Fatalf("init dry-run must not include --tool-profile in server args:\n%s", output)
 	}
 }
 

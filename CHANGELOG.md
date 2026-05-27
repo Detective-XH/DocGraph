@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.2.2 — Streamlined MCP tool surface
+
+Consolidates the MCP tool surface to 12 tools.
+
+### Breaking Changes
+
+Seven fine-grained tools are removed — use the facade equivalents:
+- `docgraph_references` → `docgraph_graph(operation=incoming)`
+- `docgraph_links` → `docgraph_graph(operation=outgoing)`
+- `docgraph_impact` → `docgraph_graph(operation=impact)`
+- `docgraph_trace` → `docgraph_graph(operation=trace)`
+- `docgraph_embeddings_pending` → `docgraph_embeddings(action=pending)`
+- `docgraph_embeddings_store` → `docgraph_embeddings(action=store)`
+- `docgraph_embeddings_clear` → `docgraph_embeddings(action=clear)`
+
+`--tool-profile full` and `--tool-profile dual` are deprecated and emit a warning. Installer-generated configs no longer write a `--tool-profile` flag.
+
+---
+
 ## v0.2.1 — 2026-05-27
 
 Agent metadata enrichment and dependency maintenance release.
