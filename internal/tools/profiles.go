@@ -61,6 +61,7 @@ func registerFullTools(s *server.MCPServer, h *handler) {
 	s.AddTool(embeddingsPendingTool, g(h.handleEmbeddingsPending))
 	s.AddTool(embeddingsStoreTool, g(h.handleEmbeddingsStore))
 	s.AddTool(embeddingsClearTool, g(h.handleEmbeddingsClear))
+	s.AddTool(enrichmentTool, g(h.handleEnrichment))
 }
 
 func registerCompactTools(s *server.MCPServer, h *handler) {
@@ -77,5 +78,6 @@ func registerCompactTools(s *server.MCPServer, h *handler) {
 	s.AddTool(embeddingsPendingTool, g(h.handleEmbeddingsPending))
 	s.AddTool(embeddingsStoreTool, g(h.handleEmbeddingsStore))
 	s.AddTool(embeddingsClearTool, g(h.handleEmbeddingsClear))
+	s.AddTool(enrichmentTool, g(h.handleEnrichment))
 	registerGraphFacadeTool(s, h)
 }

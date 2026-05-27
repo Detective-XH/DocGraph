@@ -95,6 +95,9 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			fmt.Fprintf(&sb, "Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs)
 			fmt.Fprintf(&sb, "Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs)
 		}
+		if enrichmentStats, err := h.store.GetEnrichmentStats(); err == nil && enrichmentStats.EligibleDocs > 0 {
+			appendEnrichmentStats(&sb, enrichmentStats)
+		}
 
 		if qualityStats, err := h.store.GetMetadataQualityStats(time.Time{}); err == nil {
 			appendMetadataQualityStats(&sb, qualityStats)
@@ -115,6 +118,17 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+func appendEnrichmentStats(sb *strings.Builder, stats store.EnrichmentStats) {
+	sb.WriteString("\n### Agent Metadata Enrichment\n")
+	fmt.Fprintf(sb, "Eligible frontmatter-less documents: %d\n", stats.EligibleDocs)
+	fmt.Fprintf(sb, "Enriched summaries: %d", stats.EnrichedDocs)
+	if stats.StaleDocs > 0 {
+		fmt.Fprintf(sb, " | Stale: %d", stats.StaleDocs)
+	}
+	sb.WriteString("\n")
+	sb.WriteString("Use `docgraph_enrichment operation=pending` for the pull-then-push enrichment workflow.\n")
 }
 
 func appendMetadataQualityStats(sb *strings.Builder, stats store.MetadataQualityStats) {

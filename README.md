@@ -24,7 +24,7 @@
 
 Documentation knowledge graph MCP server. Indexes `.md`, `.docx`, `.html`,
 `.pdf`, and optional code-documentation surfaces into SQLite, extracts
-cross-references and topic similarity, and exposes the graph through 16 MCP
+cross-references and topic similarity, and exposes the graph through 17 MCP
 compatibility tools over stdio. Optional MCP tool profiles can expose a smaller
 LLM-facing surface with a graph facade.
 
@@ -51,7 +51,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~51,230 lines of Go (+ ~45,410 lines of tests) |
+| Codebase | ~52,000 lines of Go (+ ~45,720 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -142,8 +142,8 @@ Available skills bundled in the binary:
 
 | Profile | Tool surface | Purpose |
 |---------|--------------|---------|
-| `full` | Current 16 compatibility tools | Default behavior and backwards compatibility |
-| `compact` | 13 tools including `docgraph_graph`; hides `docgraph_references`, `docgraph_links`, `docgraph_impact`, and `docgraph_trace` | Lower decision load for LLM agents |
+| `full` | Current 17 compatibility tools | Default behavior and backwards compatibility |
+| `compact` | 14 tools including `docgraph_graph`; hides `docgraph_references`, `docgraph_links`, `docgraph_impact`, and `docgraph_trace` | Lower decision load for LLM agents |
 | `dual` | Full profile plus `docgraph_graph` | Migration and parity testing |
 
 `docgraph_graph` supports `operation=incoming|outgoing|impact|trace`. Use
@@ -166,15 +166,37 @@ Available skills bundled in the binary:
 | 11 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
 | 12 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 13 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
-| 14 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |
-| 15 | `docgraph_embeddings_store` | Store a neural embedding vector for a document and recompute neural similarity edges |
-| 16 | `docgraph_embeddings_clear` | Delete all stored embeddings for a model and their associated neural similarity edges |
+| 14 | `docgraph_enrichment` | Pull or store inferred summaries and metadata for documents without frontmatter |
+| 15 | `docgraph_embeddings_pending` | List documents that need neural embeddings (no embedding yet, or content changed since last embed) |
+| 16 | `docgraph_embeddings_store` | Store a neural embedding vector for a document and recompute neural similarity edges |
+| 17 | `docgraph_embeddings_clear` | Delete all stored embeddings for a model and their associated neural similarity edges |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
 to drill into specifics.
 
 For agent-facing fit checks and tool-selection rules, see [`AGENTS.md`](AGENTS.md).
+
+## Agent Metadata Enrichment
+
+DocGraph can enrich `.docx`, `.pdf`, `.html`, and other documents that do not
+have frontmatter. The workflow is agent-driven: DocGraph returns candidate
+content, and the caller decides which model or provider to use.
+
+1. `docgraph_enrichment(operation=pending, limit, content_mode)` returns
+   frontmatter-less documents without a current inferred summary, including
+   `doc_id`, `content_hash`, and bounded content.
+2. The agent infers a concise summary and optional metadata JSON object.
+3. `docgraph_enrichment(operation=store, doc_id, content_hash, summary,
+   metadata, confidence, model_hint)` stores the result. The `content_hash`
+   must match the pending response.
+
+Inferred metadata never overrides authored frontmatter or extracted document
+metadata. Stored summaries appear in `docgraph_node`, `docgraph_context`, and
+context packs. `docgraph_status` reports enrichment coverage and stale results.
+
+**Privacy**: `docgraph_enrichment operation=pending` returns document content that your
+agent may send to an external provider. Get user consent before proceeding.
 
 ## Semantic Similarity
 
@@ -606,11 +628,12 @@ and SQLite. DocGraph adopts the same core design:
 - **Two-phase resolution**: raw links are extracted during parsing, then
   resolved in a separate pass after all files are indexed — identical to
   CodeGraph's `UnresolvedReference` → `ReferenceResolver` pattern.
-- **MCP tool surface**: the 16 tools keep CodeGraph-compatible naming for
+- **MCP tool surface**: the 17 tools keep CodeGraph-compatible naming for
   context, search, references/links, impact, trace, node, explore, similar,
-  files, status, tags, and history, with a distinct opt-in neural embeddings
-  protocol. Agent-facing instructions group these tools behind a compact
-  decision tree so future workflows do not require a growing top-level catalog.
+  files, status, tags, and history, with distinct opt-in neural embeddings and
+  metadata enrichment protocols. Agent-facing instructions group these tools
+  behind a compact decision tree so future workflows do not require a growing
+  top-level catalog.
 
 Where they diverge: DocGraph is written in Go (single binary, no Node.js
 runtime), uses the trigram tokenizer for CJK support, and adds workspace

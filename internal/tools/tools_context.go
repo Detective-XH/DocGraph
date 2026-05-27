@@ -138,6 +138,9 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		// Governance metadata — appended when available.
 		if st := h.getStoreForResolvedNode(&node); st != nil {
 			docID := contextPackDocID(node)
+			if summary, err := st.GetAISummary(docID); err == nil && summary != nil {
+				sb.WriteString(appendAISummarySection(summary))
+			}
 			if gov, err := st.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
 				sb.WriteString(appendGovernanceSection(gov))
 			}

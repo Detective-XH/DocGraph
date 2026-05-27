@@ -9,7 +9,7 @@ import (
 )
 
 // MetadataTuple is a normalized key/value pair extracted from a document.
-// source must be one of: "frontmatter", "extractor", "skill_advisory", "derived".
+// source must be one of the application-level validSources values.
 // value_type must be one of: "string", "number", "date", "bool", "list", "ref".
 // list values are JSON-encoded arrays. Confidence is only set for skill_advisory/derived.
 type MetadataTuple struct {
@@ -70,7 +70,7 @@ var validSources = map[string]bool{
 	"extractor":      true,
 	"skill_advisory": true,
 	"derived":        true,
-	"agent_inferred": true, // LLM-inferred metadata backfilled via docgraph_enrichment_store
+	"agent_inferred": true, // LLM-inferred metadata backfilled via docgraph_enrichment
 }
 
 // sourcePriority defines authority ordering: higher value = higher authority.

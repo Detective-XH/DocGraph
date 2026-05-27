@@ -14,9 +14,10 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Exact lookup or status | docgraph_search, docgraph_node, docgraph_files, docgraph_status |
 | Reference and impact analysis | docgraph_references, docgraph_links, docgraph_impact, docgraph_trace |
 | Discovery and metadata navigation | docgraph_explore, docgraph_similar, docgraph_tags, docgraph_history |
-| Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
+| Neural embedding workflow | docgraph_embeddings_* |
+| Agent metadata enrichment workflow | docgraph_enrichment |
 
-docgraph_context is the primary entry point — combines search + structure + cross-references + bounded source content in one call. See its format= parameter for context_pack and drift_audit output modes; see docgraph_embeddings_pending for the neural embedding workflow.
+docgraph_context is the primary entry point — combines search + structure + cross-references + bounded source content in one call. See its format= parameter for context_pack and drift_audit output modes; use docgraph_embeddings_pending or docgraph_enrichment operation=pending to start pull-then-push agent workflows.
 docgraph_search adds governance filters (status=, sensitivity=, canonical_source=, allowed_audience=, as_of_date=), research filters (claim_id=, source_type=, confidence=, analyst_status=), and entity graph filters (entity_type=, entity_id=).
 
 ## Reducing noise
@@ -51,9 +52,10 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Exact lookup or status | docgraph_search, docgraph_node, docgraph_files, docgraph_status |
 | Reference, link, impact, or trace analysis | docgraph_graph |
 | Discovery and metadata navigation | docgraph_explore, docgraph_similar, docgraph_tags, docgraph_history |
-| Neural embedding workflow | docgraph_embeddings_pending, docgraph_embeddings_store, docgraph_embeddings_clear |
+| Neural embedding workflow | docgraph_embeddings_* |
+| Agent metadata enrichment workflow | docgraph_enrichment |
 
-docgraph_context is the primary entry point — combines search + structure + cross-references + bounded source content in one call. See its format= parameter for context_pack and drift_audit output modes; see docgraph_embeddings_pending for the neural embedding workflow.
+docgraph_context is the primary entry point — combines search + structure + cross-references + bounded source content in one call. See its format= parameter for context_pack and drift_audit output modes; use docgraph_embeddings_pending or docgraph_enrichment operation=pending to start pull-then-push agent workflows.
 docgraph_graph groups graph traversal through operation=incoming, outgoing, impact, or trace. Use document for incoming/outgoing/impact; use from and to for trace.
 docgraph_search adds governance filters (status=, sensitivity=, canonical_source=, allowed_audience=, as_of_date=), research filters (claim_id=, source_type=, confidence=, analyst_status=), and entity graph filters (entity_type=, entity_id=).
 

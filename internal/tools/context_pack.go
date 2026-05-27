@@ -137,12 +137,20 @@ func (h *handler) appendContextPackMetadata(sb *strings.Builder, st *store.Store
 	if st == nil {
 		return
 	}
+	summary, _ := st.GetAISummary(docID)
 	gov, _ := st.GetGovernanceMetadata(docID)
 	research, _ := st.GetResearchMetadata(docID)
-	if store.IsGovernanceEmpty(gov) && store.IsResearchEmpty(research) {
+	if (summary == nil || summary.Summary == "") && store.IsGovernanceEmpty(gov) && store.IsResearchEmpty(research) {
 		return
 	}
 	sb.WriteString("\n### Retrieval Metadata\n")
+	if summary != nil && summary.Summary != "" {
+		sb.WriteString("#### Agent-Inferred Summary\n")
+		writeContextPackField(sb, "Summary", summary.Summary)
+		writeContextPackField(sb, "Source", "agent_inferred")
+		writeContextPackField(sb, "Model", summary.ModelHint)
+		writeContextPackField(sb, "Content hash", summary.ContentHash)
+	}
 	if !store.IsGovernanceEmpty(gov) {
 		sb.WriteString("#### Governance\n")
 		writeContextPackField(sb, "Status", gov.Status)

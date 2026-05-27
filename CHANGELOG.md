@@ -2,8 +2,11 @@
 
 ## v0.2.1 — 2026-05-27
 
-Dependency maintenance release. No behavior changes.
+Agent metadata enrichment and dependency maintenance release.
 
+- Added an agent-driven workflow for enriching frontmatter-less documents with inferred summaries and metadata
+- Inferred summaries now appear in document, context, and context-pack outputs
+- `docgraph_status` now reports metadata enrichment coverage and stale enrichment state
 - SQLite upgraded to 3.53.1 via `modernc.org/sqlite` bump
 - `mcp-go` updated to support MCP spec 2025-11-25
 - CI actions (`checkout`, `upload-artifact`) bumped to current major versions
