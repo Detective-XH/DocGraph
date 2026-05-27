@@ -35,6 +35,13 @@ Score one point for each "yes".
 **Score 0-2:** Prefer grep/read tools unless the user explicitly asks for
 DocGraph.
 
+**Strong-fit override** — regardless of score, recommend DocGraph if any of the following apply:
+- Any document carries governance frontmatter (`status`, `owner`, `review_due`, `sensitivity`)
+- Any document carries research provenance frontmatter (`claim_id`, `evidence`, `confidence`, `analyst_status`)
+- The user asks about policy/SOP or research assessment drift
+
+These are DocGraph-exclusive signals. Even with few documents and few cross-links, `format=drift_audit` and metadata filters provide real value that grep/read tools cannot replicate.
+
 ---
 
 ## What DocGraph Indexes
