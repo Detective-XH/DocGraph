@@ -485,33 +485,33 @@ use cases rather than code navigation. DocGraph also adds hybrid topic
 similarity (TF-IDF + graph Jaccard + tags) to discover conceptual
 relationships that neither explicit links nor code structure can capture.
 
-## Release v0.1.9 — SHA-256 Checksums
+## Release v0.2.0 — SHA-256 Checksums
 
 Signed by `EDB0808F3F248B66F53837B4888293C4BA30EEF6` (Xavier).
 
 **docgraph-darwin-arm64.tar.gz**
 ```
-c3ae298b3320f93d533f3e9a7617e1ab2fc2370ab5141b5492c3f7099976dd90
+23844073cbe23993b5e5e80f5176e6fdadcd3c1df4ffdf5459c9106dac575a5e
 ```
 
 **docgraph-darwin-amd64.tar.gz**
 ```
-154b24324b3b784df918a0b88d6af985ce8f50f64312df389ca80eb9c50fdeca
+c7873bba82e7996cb3a495e5d917176c6c930b9013eb3bba834c0001d757b991
 ```
 
 **docgraph-linux-amd64.tar.gz**
 ```
-afe9adf657b6538cf9e77ef198f6da01139112fc472fbf968986fd98b7e3e425
+26523fa45c9620a61ddd00c86a78d239ab4042927f61ada31f60c072de76c833
 ```
 
 **docgraph-linux-arm64.tar.gz**
 ```
-ee1bc9c63ef1444520c60956a653f73cdd77014bdf41f44fb9020a8c953a5321
+7b1ff40014429dba8bd9acb5224c29157a1224a87b5e3f2642bb2e0fa8ab1c44
 ```
 
 **docgraph-windows-amd64.zip**
 ```
-605ce33dbb9401986c58a279a0990d110da93d01565c3c99d6d64ce60f0e56e4
+a111b5737ec3165c277e70ef602e258c792777487e2fe7cf11a953f69842876d
 ```
 
 Verify:
