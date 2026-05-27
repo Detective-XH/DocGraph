@@ -233,6 +233,17 @@ CREATE INDEX IF NOT EXISTS idx_mentions_node          ON entity_mentions(node_id
 CREATE INDEX IF NOT EXISTS idx_mentions_file          ON entity_mentions(file_path);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mentions_unique ON entity_mentions(entity_id, node_id, line);
 
+CREATE TABLE IF NOT EXISTS ai_summaries (
+    node_id      TEXT    PRIMARY KEY,
+    summary      TEXT    NOT NULL,
+    model_hint   TEXT    NOT NULL DEFAULT '',
+    content_hash TEXT    NOT NULL,
+    updated_at   INTEGER NOT NULL,
+    FOREIGN KEY (node_id) REFERENCES nodes(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_summaries_updated ON ai_summaries(updated_at);
+
 CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes BEGIN
     INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata_text)
     VALUES (NEW.rowid, NEW.name, NEW.qualified_name, NEW.body_excerpt, NEW.metadata);

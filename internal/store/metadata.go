@@ -70,6 +70,7 @@ var validSources = map[string]bool{
 	"extractor":      true,
 	"skill_advisory": true,
 	"derived":        true,
+	"agent_inferred": true, // LLM-inferred metadata backfilled via docgraph_enrichment_store
 }
 
 // sourcePriority defines authority ordering: higher value = higher authority.
@@ -81,6 +82,7 @@ var sourcePriority = map[string]int{
 	"extractor":      3,
 	"derived":        2,
 	"skill_advisory": 1,
+	"agent_inferred": 1, // lowest authority; never overwrites frontmatter/extractor in typed projections
 }
 
 // InsertDocumentMetadata upserts normalized metadata tuples for a document node.
