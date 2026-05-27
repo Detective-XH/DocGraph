@@ -90,6 +90,23 @@ func TestGraphFacadeTraceMatchesTrace(t *testing.T) {
 	assertSameToolResult(t, facade, legacy)
 }
 
+func TestTraceNoPathMessage(t *testing.T) {
+	h, _ := newGraphFacadeTestHandler(t)
+
+	// d.md has no outgoing edges, so d.md → c.md has no path.
+	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "trace", "from": "d.md", "to": "c.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := extractText(res)
+	if !strings.Contains(text, "No wikilink path found within 10 hops") {
+		t.Errorf("expected no-path message with wikilink caveat, got: %s", text)
+	}
+	if !strings.Contains(text, "does NOT mean the documents are unrelated") {
+		t.Errorf("expected 'not unrelated' caveat in no-path output, got: %s", text)
+	}
+}
+
 func TestGraphFacadeRejectsUnknownOperation(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
