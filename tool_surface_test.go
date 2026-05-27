@@ -69,7 +69,7 @@ func TestToolSurfaceGovernanceInstructionsStayCompact(t *testing.T) {
 func TestCodeGraphInteropInstructionsStayAdvisory(t *testing.T) {
 	// CodeGraph interoperability guardrail: starts as agent handoff
 	// guidance only. DocGraph must not imply that it owns CodeGraph internals.
-	section := markdownSection(serverInstructions, "## CodeGraph interoperability", "## Managing .docgraphignore")
+	section := markdownSection(serverInstructions, "## CodeGraph interoperability", "")
 	if section == "" {
 		t.Fatal("serverInstructions must include CodeGraph interoperability guidance")
 	}
@@ -185,21 +185,20 @@ func registeredToolNames(t *testing.T) []string {
 }
 
 func markdownSection(markdown, startHeading, endHeading string) string {
-	start := strings.Index(markdown, startHeading)
-	if start < 0 {
+	_, rest, found := strings.Cut(markdown, startHeading)
+	if !found {
 		return ""
 	}
-	rest := markdown[start+len(startHeading):]
-	end := strings.Index(rest, endHeading)
-	if end < 0 {
+	if endHeading == "" {
 		return strings.TrimSpace(rest)
 	}
-	return strings.TrimSpace(rest[:end])
+	section, _, _ := strings.Cut(rest, endHeading)
+	return strings.TrimSpace(section)
 }
 
 func countMarkdownDataRows(markdown string) int {
 	rows := 0
-	for _, line := range strings.Split(markdown, "\n") {
+	for line := range strings.SplitSeq(markdown, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
 			continue
@@ -214,7 +213,7 @@ func countMarkdownDataRows(markdown string) int {
 
 func firstMarkdownTable(markdown string) string {
 	var lines []string
-	for _, line := range strings.Split(markdown, "\n") {
+	for line := range strings.SplitSeq(markdown, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "|") && strings.HasSuffix(line, "|") {
 			lines = append(lines, line)
