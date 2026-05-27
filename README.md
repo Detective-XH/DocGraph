@@ -51,7 +51,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~52,180 lines of Go (+ ~45,810 lines of tests) |
+| Codebase | ~52,290 lines of Go (+ ~46,070 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -143,8 +143,8 @@ Available skills bundled in the binary:
 | Profile | Tool surface | Purpose |
 |---------|--------------|---------|
 | `full` | Current 17 compatibility tools | Default behavior and backwards compatibility |
-| `compact` | 14 tools including `docgraph_graph`; hides `docgraph_references`, `docgraph_links`, `docgraph_impact`, and `docgraph_trace` | Lower decision load for LLM agents |
-| `dual` | Full profile plus `docgraph_graph` | Migration and parity testing |
+| `compact` | 12 tools including `docgraph_graph` and `docgraph_embeddings`; hides fine-grained graph and embedding tools | Lower decision load for LLM agents |
+| `dual` | Full profile plus `docgraph_graph` and `docgraph_embeddings` | Migration and parity testing |
 
 `docgraph_graph` supports `operation=incoming|outgoing|impact|trace`. Use
 `document` for incoming, outgoing, and impact; use `from` and `to` for trace.
@@ -224,18 +224,20 @@ or `serve`; lower values create more `similar_to` edges.
 
 DocGraph never calls an LLM itself. Instead, your agent computes embeddings
 with any provider and pushes the vectors back — a pull-then-push agentic
-workflow that enables semantic search far beyond TF-IDF vocabulary matching:
+workflow that enables semantic search far beyond TF-IDF vocabulary matching.
+The full profile exposes the legacy three-tool workflow; the compact profile
+uses the equivalent `docgraph_embeddings(action=pending|store|clear)` facade:
 
-1. `docgraph_embeddings_pending(model_id, limit, content_mode)` — returns docs without up-to-date embeddings, including content and `content_hash`. `content_mode=full` (default) reads the full section from disk; `content_mode=excerpt` uses the stored body excerpt. Different `model_id` values are partitioned separately and never compared with each other.
+1. `docgraph_embeddings_pending(model_id, limit, content_mode)` or `docgraph_embeddings(action=pending, model_id, limit, content_mode)` — returns docs without up-to-date embeddings, including content and `content_hash`. `content_mode=full` (default) reads the full section from disk; `content_mode=excerpt` uses the stored body excerpt. Different `model_id` values are partitioned separately and never compared with each other.
 2. Your agent computes vectors with its own provider (OpenAI, Ollama, Nomic, etc.)
-3. `docgraph_embeddings_store(doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges. Pass `content_hash` exactly as returned by step 1.
+3. `docgraph_embeddings_store(doc_id, model_id, vector, content_hash)` or `docgraph_embeddings(action=store, doc_id, model_id, vector, content_hash)` per doc — stores the vector and recomputes neural `similar_to` edges. Pass `content_hash` exactly as returned by step 1.
 4. `docgraph_similar` deduplicates TF-IDF and neural results for the same pair, preferring neural when both exist.
 
-In workspace mode, `docgraph_embeddings_pending` and `docgraph_embeddings_store` automatically locate the correct per-project store by `doc_id`.
+In workspace mode, both embedding workflows automatically locate the correct per-project store by `doc_id`.
 
-**Privacy**: `docgraph_embeddings_pending` returns document content that your agent will send to an external provider. Get user consent before proceeding.
+**Privacy**: pending embedding actions return document content that your agent will send to an external provider. Get user consent before proceeding.
 
-Use `docgraph_embeddings_clear(model_id)` to delete all vectors for a model and reclaim space. `docgraph_status` shows a Neural Embeddings table listing stored models, total vectors, and stale count.
+Use `docgraph_embeddings_clear(model_id)` or `docgraph_embeddings(action=clear, model_id)` to delete all vectors for a model and reclaim space. `docgraph_status` shows a Neural Embeddings table listing stored models, total vectors, and stale count.
 
 ## Node and Edge Kinds
 
@@ -634,9 +636,9 @@ and SQLite. DocGraph adopts the same core design:
 - **MCP tool surface**: the 17 tools keep CodeGraph-compatible naming for
   context, search, references/links, impact, trace, node, explore, similar,
   files, status, tags, and history, with distinct opt-in neural embeddings and
-  metadata enrichment protocols. Agent-facing instructions group these tools
-  behind a compact decision tree so future workflows do not require a growing
-  top-level catalog.
+  metadata enrichment protocols. Compact and dual profiles add facade tools for
+  graph traversal and embedding workflows so agent-facing instructions can stay
+  grouped behind a compact decision tree instead of a growing top-level catalog.
 
 Where they diverge: DocGraph is written in Go (single binary, no Node.js
 runtime), uses the trigram tokenizer for CJK support, and adds workspace

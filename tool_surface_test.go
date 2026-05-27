@@ -33,9 +33,7 @@ func TestToolSurfaceFullProfileRegistry(t *testing.T) {
 func TestToolSurfaceCompactProfileRegistry(t *testing.T) {
 	expected := []string{
 		"docgraph_context",
-		"docgraph_embeddings_clear",
-		"docgraph_embeddings_pending",
-		"docgraph_embeddings_store",
+		"docgraph_embeddings",
 		"docgraph_enrichment",
 		"docgraph_explore",
 		"docgraph_files",
@@ -59,7 +57,7 @@ func TestToolSurfaceCompactProfileRegistry(t *testing.T) {
 }
 
 func TestToolSurfaceDualProfileRegistry(t *testing.T) {
-	expected := append(fullProfileToolNames(), "docgraph_graph")
+	expected := append(fullProfileToolNames(), "docgraph_embeddings", "docgraph_graph")
 	sort.Strings(expected)
 
 	actual := registeredToolNames(t, tools.ToolProfileDual)
@@ -97,13 +95,16 @@ func TestToolSurfaceCompactInstructionsStayCompact(t *testing.T) {
 	if section == "" {
 		t.Fatal("compact server instructions must include a Tool selection section before Reducing noise")
 	}
-	for _, hidden := range []string{"docgraph_references", "docgraph_links", "docgraph_impact", "docgraph_trace"} {
+	for _, hidden := range []string{"docgraph_references", "docgraph_links", "docgraph_impact", "docgraph_trace", "docgraph_embeddings_pending", "docgraph_embeddings_store", "docgraph_embeddings_clear"} {
 		if strings.Contains(section, hidden) {
-			t.Fatalf("compact instructions must not name hidden graph tool %s", hidden)
+			t.Fatalf("compact instructions must not name hidden tool %s", hidden)
 		}
 	}
 	if !strings.Contains(section, "docgraph_graph") {
 		t.Fatal("compact instructions must route graph work through docgraph_graph")
+	}
+	if !strings.Contains(section, "docgraph_embeddings(action=pending/store/clear)") {
+		t.Fatal("compact instructions must route embedding work through docgraph_embeddings facade")
 	}
 }
 

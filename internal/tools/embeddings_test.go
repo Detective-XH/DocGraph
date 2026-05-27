@@ -237,6 +237,268 @@ func TestHandleEmbeddingsClear_EmptyStore(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// docgraph_embeddings facade
+// ---------------------------------------------------------------------------
+
+func TestEmbeddingsFacadePendingMatchesLegacy(t *testing.T) {
+	h, st := newTestHandler(t)
+	nodes := []store.Node{
+		{ID: "a.md", Kind: "document", Name: "A", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 5, BodyExcerpt: "some text", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]interface{}{
+		"model_id":     "test-model",
+		"content_mode": "excerpt",
+	}
+	legacy, err := callTool(h, h.handleEmbeddingsPending, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facadeArgs := map[string]interface{}{
+		"action":       "pending",
+		"model_id":     "test-model",
+		"content_mode": "excerpt",
+	}
+	facade, err := callTool(h, h.handleEmbeddingsFacade, facadeArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.IsError || facade.IsError {
+		t.Fatalf("unexpected error: legacy=%v facade=%v", legacy.IsError, facade.IsError)
+	}
+	if extractText(facade) != extractText(legacy) {
+		t.Fatalf("facade pending output did not match legacy.\nlegacy:\n%s\nfacade:\n%s", extractText(legacy), extractText(facade))
+	}
+}
+
+func TestEmbeddingsFacadeStoreMatchesLegacy(t *testing.T) {
+	h, st := newTestHandler(t)
+	if err := st.InsertNodes([]store.Node{
+		{ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md", FilePath: "doc.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]interface{}{
+		"doc_id":       "doc.md",
+		"model_id":     "m",
+		"vector":       "[0.1, 0.2, 0.3]",
+		"content_hash": "hash1",
+	}
+	legacy, err := callTool(h, h.handleEmbeddingsStore, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facadeArgs := map[string]interface{}{
+		"action":       "store",
+		"doc_id":       "doc.md",
+		"model_id":     "m",
+		"vector":       "[0.1, 0.2, 0.3]",
+		"content_hash": "hash1",
+	}
+	facade, err := callTool(h, h.handleEmbeddingsFacade, facadeArgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.IsError || facade.IsError {
+		t.Fatalf("unexpected error: legacy=%v facade=%v", legacy.IsError, facade.IsError)
+	}
+	if extractText(facade) != extractText(legacy) {
+		t.Fatalf("facade store output did not match legacy.\nlegacy:\n%s\nfacade:\n%s", extractText(legacy), extractText(facade))
+	}
+}
+
+func TestEmbeddingsFacadeClearMatchesLegacy(t *testing.T) {
+	h, st := newTestHandler(t)
+	nodes := []store.Node{
+		{ID: "a.md", Kind: "document", Name: "A", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+		{ID: "b.md", Kind: "document", Name: "B", QualifiedName: "b.md", FilePath: "b.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+	for _, docID := range []string{"a.md", "b.md"} {
+		if err := st.UpsertEmbedding(store.Embedding{DocID: docID, ModelID: "m", Dim: 2, Vector: []float64{1, 0}, ContentHash: "h"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	legacy, err := callTool(h, h.handleEmbeddingsClear, map[string]interface{}{"model_id": "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, docID := range []string{"a.md", "b.md"} {
+		if err := st.UpsertEmbedding(store.Embedding{DocID: docID, ModelID: "m", Dim: 2, Vector: []float64{1, 0}, ContentHash: "h"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	facade, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{"action": "clear", "model_id": "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if legacy.IsError || facade.IsError {
+		t.Fatalf("unexpected error: legacy=%v facade=%v", legacy.IsError, facade.IsError)
+	}
+	if extractText(facade) != extractText(legacy) {
+		t.Fatalf("facade clear output did not match legacy.\nlegacy:\n%s\nfacade:\n%s", extractText(legacy), extractText(facade))
+	}
+}
+
+func TestEmbeddingsFacadeRejectsUnknownAction(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{"action": "delete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "pending, store, clear") {
+		t.Fatalf("expected valid action error, got: %#v", res)
+	}
+}
+
+func TestEmbeddingsFacadePendingRequiresModelID(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{"action": "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error when model_id is missing")
+	}
+}
+
+func TestEmbeddingsFacadePendingRejectsInvalidContentMode(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":       "pending",
+		"model_id":     "m",
+		"content_mode": "summary",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "content_mode") {
+		t.Fatalf("expected content_mode error, got: %#v", res)
+	}
+}
+
+func TestEmbeddingsFacadeStoreRequiresDocID(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":       "store",
+		"model_id":     "m",
+		"vector":       "[0.1]",
+		"content_hash": "h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error when doc_id is missing")
+	}
+}
+
+func TestEmbeddingsFacadeStoreRequiresVector(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":       "store",
+		"doc_id":       "doc.md",
+		"model_id":     "m",
+		"content_hash": "h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error when vector is missing")
+	}
+}
+
+func TestEmbeddingsFacadeStoreRejectsInvalidVectorJSON(t *testing.T) {
+	h, st := newTestHandler(t)
+	if err := st.InsertNodes([]store.Node{
+		{ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md", FilePath: "doc.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":       "store",
+		"doc_id":       "doc.md",
+		"model_id":     "m",
+		"vector":       "not-json",
+		"content_hash": "h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "invalid vector JSON") {
+		t.Fatalf("expected vector JSON error, got: %#v", res)
+	}
+}
+
+func TestEmbeddingsFacadeStoreRejectsEmptyVector(t *testing.T) {
+	h, st := newTestHandler(t)
+	if err := st.InsertNodes([]store.Node{
+		{ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md", FilePath: "doc.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":       "store",
+		"doc_id":       "doc.md",
+		"model_id":     "m",
+		"vector":       "[]",
+		"content_hash": "h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "must not be empty") {
+		t.Fatalf("expected empty vector error, got: %#v", res)
+	}
+}
+
+func TestEmbeddingsFacadeClearRequiresModelID(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{"action": "clear"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error when model_id is missing")
+	}
+}
+
+func TestEmbeddingsFacadeClearRejectsStoreArgs(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":   "clear",
+		"model_id": "m",
+		"doc_id":   "doc.md",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "not valid for action=clear") {
+		t.Fatalf("expected invalid clear argument error, got: %#v", res)
+	}
+}
+
+func TestEmbeddingsFacadeClearRejectsPendingArgs(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]interface{}{
+		"action":   "clear",
+		"model_id": "m",
+		"limit":    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError || !strings.Contains(extractText(res), "not valid for action=clear") {
+		t.Fatalf("expected invalid clear argument error, got: %#v", res)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // handleSimilar deduplication
 // ---------------------------------------------------------------------------
 

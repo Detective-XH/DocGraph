@@ -8,6 +8,9 @@ Agent metadata enrichment and dependency maintenance release.
 - Enrichment writes now record model provenance while keeping only the current inferred summary active for retrieval
 - Inferred summaries now appear in document, context, and context-pack outputs
 - `docgraph_status` now reports metadata enrichment coverage and stale enrichment state
+- Added the `docgraph_embeddings` facade for compact-profile neural embedding workflows with `action=pending|store|clear`
+- Compact MCP profile now exposes 12 tools by replacing the three fine-grained embedding tools with the embedding facade
+- Full MCP profile keeps `docgraph_embeddings_pending`, `docgraph_embeddings_store`, and `docgraph_embeddings_clear` for compatibility; dual profile exposes both surfaces
 - SQLite upgraded to 3.53.1 via `modernc.org/sqlite` bump
 - `mcp-go` updated to support MCP spec 2025-11-25
 - CI actions (`checkout`, `upload-artifact`) bumped to current major versions

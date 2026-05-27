@@ -53,12 +53,13 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Exact lookup or status | docgraph_search, docgraph_node, docgraph_files, docgraph_status |
 | Reference, link, impact, or trace analysis | docgraph_graph |
 | Discovery and metadata navigation | docgraph_explore, docgraph_similar, docgraph_tags, docgraph_history |
-| Neural embedding workflow | docgraph_embeddings_* |
+| Neural embedding workflow | docgraph_embeddings(action=pending/store/clear) |
 | Agent metadata enrichment workflow | docgraph_enrichment |
 
-docgraph_context is the primary entry point — combines search + structure + cross-references + bounded source content in one call. See its format= parameter for context_pack and drift_audit output modes; use docgraph_embeddings_pending or docgraph_enrichment operation=pending to start pull-then-push agent workflows.
+docgraph_context is the primary entry point — combines search + structure + cross-references + bounded source content in one call. See its format= parameter for context_pack and drift_audit output modes; use docgraph_embeddings action=pending or docgraph_enrichment operation=pending to start pull-then-push agent workflows.
 For docgraph_enrichment operation=store, pass model_id; provider and agent_id are optional provenance fields. Treat agent_inferred output as advisory context, not source of truth.
 docgraph_graph groups graph traversal through operation=incoming, outgoing, impact, or trace. Use document for incoming/outgoing/impact; use from and to for trace.
+docgraph_embeddings action=pending returns document content for an external embedding provider; get user consent before using returned content outside DocGraph.
 docgraph_search adds governance filters (status=, sensitivity=, canonical_source=, allowed_audience=, as_of_date=), research filters (claim_id=, source_type=, confidence=, analyst_status=), and entity graph filters (entity_type=, entity_id=).
 
 ## Reducing noise

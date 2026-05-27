@@ -38,6 +38,7 @@ func registerTools(s *server.MCPServer, h *handler, profile ToolProfile) {
 	case ToolProfileDual:
 		registerFullTools(s, h)
 		registerGraphFacadeTool(s, h)
+		registerEmbeddingsFacadeTool(s, h)
 	default:
 		registerFullTools(s, h)
 	}
@@ -75,9 +76,7 @@ func registerCompactTools(s *server.MCPServer, h *handler) {
 	s.AddTool(similarTool, g(h.handleSimilar))
 	s.AddTool(tagsTool, g(h.handleTags))
 	s.AddTool(historyTool, g(h.handleHistory))
-	s.AddTool(embeddingsPendingTool, g(h.handleEmbeddingsPending))
-	s.AddTool(embeddingsStoreTool, g(h.handleEmbeddingsStore))
-	s.AddTool(embeddingsClearTool, g(h.handleEmbeddingsClear))
+	registerEmbeddingsFacadeTool(s, h)
 	s.AddTool(enrichmentTool, g(h.handleEnrichment))
 	registerGraphFacadeTool(s, h)
 }

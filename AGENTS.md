@@ -103,12 +103,15 @@ Need metadata enrichment for frontmatter-less docs?
   -> treat source=agent_inferred as advisory and lowest authority; human frontmatter wins
 
 Need neural semantic similarity (agentic pull-then-push workflow)?
-  -> docgraph_embeddings_pending(model_id, content_mode=full|excerpt)
+  -> full profile: docgraph_embeddings_pending(model_id, content_mode=full|excerpt)
+  -> compact profile: docgraph_embeddings(action=pending, model_id, content_mode=full|excerpt)
   -> get user consent — content goes to an external provider
   -> compute embeddings with your provider (OpenAI, Ollama, Nomic, etc.)
-  -> docgraph_embeddings_store(doc_id, model_id, vector, content_hash)
+  -> full profile: docgraph_embeddings_store(doc_id, model_id, vector, content_hash)
+  -> compact profile: docgraph_embeddings(action=store, doc_id, model_id, vector, content_hash)
   -> docgraph_similar returns neural results (prefers neural over TF-IDF for same pair)
-  -> docgraph_embeddings_clear to remove a model's vectors
+  -> full profile: docgraph_embeddings_clear(model_id) to remove a model's vectors
+  -> compact profile: docgraph_embeddings(action=clear, model_id) to remove a model's vectors
 ```
 
 ---
@@ -254,8 +257,9 @@ ask the user before running `codegraph init -i`.
   consent first. Stored metadata uses `agent_inferred`, requires `model_id`,
   and is lowest-authority. LLM summaries are advisory context, not source of
   truth.
-- Neural embeddings are agent-driven; `docgraph_embeddings_pending` returns
-  document text that may be sent to an external provider. Get user consent first.
+- Neural embeddings are agent-driven; `docgraph_embeddings_pending` and
+  `docgraph_embeddings(action=pending)` return document text that may be sent
+  to an external provider. Get user consent first.
 - Context packs use indexed section snapshots only for evidence text.
 
 ---
