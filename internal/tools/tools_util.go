@@ -32,7 +32,7 @@ func truncateRunes(s string, n int) string {
 // Helpers
 // ---------------------------------------------------------------------------
 
-func getStringArg(args map[string]interface{}, key string, defaultVal string) string {
+func getStringArg(args map[string]any, key string, defaultVal string) string {
 	v, ok := args[key]
 	if !ok || v == nil {
 		return defaultVal
@@ -44,7 +44,7 @@ func getStringArg(args map[string]interface{}, key string, defaultVal string) st
 	return s
 }
 
-func getIntArg(args map[string]interface{}, key string, defaultVal int) int {
+func getIntArg(args map[string]any, key string, defaultVal int) int {
 	v, ok := args[key]
 	if !ok || v == nil {
 		return defaultVal
@@ -59,7 +59,7 @@ func getIntArg(args map[string]interface{}, key string, defaultVal int) int {
 	}
 }
 
-func getBoolArg(args map[string]interface{}, key string, defaultVal bool) bool {
+func getBoolArg(args map[string]any, key string, defaultVal bool) bool {
 	v, ok := args[key]
 	if !ok || v == nil {
 		return defaultVal

@@ -12,7 +12,7 @@ import (
 
 var nodeTool = mcp.NewTool("docgraph_node",
 	mcp.WithDescription("Get a single document or heading's full details: metadata, structure, and cross-references. Use 'section' to read the full content of a specific heading section from the source file. For multiple documents, use docgraph_explore instead."),
-	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading qualified name")),
+	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading qualified name (e.g. 'docs/guide.md' or 'guide.md#Installation')")),
 	mcp.WithBoolean("includeBody", mcp.Description("Include body excerpt (default true)")),
 	mcp.WithString("section", mcp.Description("Return full content of a specific heading section (by name)")),
 )
@@ -49,12 +49,12 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## %s\n\n", node.Name))
-	sb.WriteString(fmt.Sprintf("**Path:** %s\n", node.FilePath))
-	sb.WriteString(fmt.Sprintf("**Kind:** %s\n", node.Kind))
-	sb.WriteString(fmt.Sprintf("**Lines:** %d-%d\n", node.StartLine, node.EndLine))
+	fmt.Fprintf(&sb, "## %s\n\n", node.Name)
+	fmt.Fprintf(&sb, "**Path:** %s\n", node.FilePath)
+	fmt.Fprintf(&sb, "**Kind:** %s\n", node.Kind)
+	fmt.Fprintf(&sb, "**Lines:** %d-%d\n", node.StartLine, node.EndLine)
 	if node.Metadata != "" {
-		sb.WriteString(fmt.Sprintf("**Metadata:** %s\n", node.Metadata))
+		fmt.Fprintf(&sb, "**Metadata:** %s\n", node.Metadata)
 	}
 
 	if len(headings) > 0 {
@@ -63,32 +63,32 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	}
 
 	if len(inEdges) > 0 {
-		sb.WriteString(fmt.Sprintf("\n### Incoming References (%d)\n", len(inEdges)))
+		fmt.Fprintf(&sb, "\n### Incoming References (%d)\n", len(inEdges))
 		for _, e := range inEdges {
 			if src := h.getNodeByIDForNode(node, e.Source); src != nil {
-				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", src.Name, e.Kind))
+				fmt.Fprintf(&sb, "- %s -> (%s)\n", src.Name, e.Kind)
 			} else {
-				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", e.Source, e.Kind))
+				fmt.Fprintf(&sb, "- %s -> (%s)\n", e.Source, e.Kind)
 			}
 		}
 	}
 	if len(outEdges) > 0 {
-		sb.WriteString(fmt.Sprintf("\n### Outgoing Links (%d)\n", len(outEdges)))
+		fmt.Fprintf(&sb, "\n### Outgoing Links (%d)\n", len(outEdges))
 		for _, e := range outEdges {
 			if e.Kind == "links_external" {
-				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", extractURL(e.Metadata), e.Kind))
+				fmt.Fprintf(&sb, "- %s -> (%s)\n", extractURL(e.Metadata), e.Kind)
 			} else if tgt := h.getNodeByIDForNode(node, e.Target); tgt != nil {
-				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", tgt.Name, e.Kind))
+				fmt.Fprintf(&sb, "- %s -> (%s)\n", tgt.Name, e.Kind)
 			} else {
-				sb.WriteString(fmt.Sprintf("- %s -> (%s)\n", e.Target, e.Kind))
+				fmt.Fprintf(&sb, "- %s -> (%s)\n", e.Target, e.Kind)
 			}
 		}
 	}
 
 	if includeBody && node.BodyExcerpt != "" {
 		sb.WriteString("\n### Body Excerpt\n")
-		for _, line := range strings.Split(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
-			sb.WriteString(fmt.Sprintf("> %s\n", line))
+		for line := range strings.SplitSeq(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
+			fmt.Fprintf(&sb, "> %s\n", line)
 		}
 	}
 
@@ -116,20 +116,20 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 			if hist.CommitCount != 1 {
 				amendWord = "times"
 			}
-			sb.WriteString(fmt.Sprintf("**Amended:** %d %s", hist.CommitCount, amendWord))
+			fmt.Fprintf(&sb, "**Amended:** %d %s", hist.CommitCount, amendWord)
 			if hist.AuthorCount > 0 {
 				authorWord := "author"
 				if hist.AuthorCount != 1 {
 					authorWord = "authors"
 				}
-				sb.WriteString(fmt.Sprintf(" by %d %s", hist.AuthorCount, authorWord))
+				fmt.Fprintf(&sb, " by %d %s", hist.AuthorCount, authorWord)
 			}
 			sb.WriteString("\n")
 			if hist.LastSubject != "" {
-				sb.WriteString(fmt.Sprintf("**Last commit:** %s\n", hist.LastSubject))
+				fmt.Fprintf(&sb, "**Last commit:** %s\n", hist.LastSubject)
 			}
 			if hist.LastCommitAt > 0 {
-				sb.WriteString(fmt.Sprintf("**Last changed:** %s\n", time.Unix(hist.LastCommitAt, 0).UTC().Format("2006-01-02")))
+				fmt.Fprintf(&sb, "**Last changed:** %s\n", time.Unix(hist.LastCommitAt, 0).UTC().Format("2006-01-02"))
 			}
 		}
 	}
@@ -159,7 +159,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 				if len(text) > sectionMaxBytes {
 					text = text[:sectionMaxBytes] + fmt.Sprintf("\n[content truncated at %d bytes]", sectionMaxBytes)
 				}
-				sb.WriteString(fmt.Sprintf("\n### Content (section %q, indexed snapshot%s)\n", section, rangeStr))
+				fmt.Fprintf(&sb, "\n### Content (section %q, indexed snapshot%s)\n", section, rangeStr)
 				sb.WriteString(text)
 				sb.WriteString("\n")
 				return mcp.NewToolResultText(sb.String()), nil
@@ -175,7 +175,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("read section content: %v", err)), nil
 		}
-		sb.WriteString(fmt.Sprintf("\n### Content (section %q, lines %d-%d)\n", section, target.StartLine, target.EndLine))
+		fmt.Fprintf(&sb, "\n### Content (section %q, lines %d-%d)\n", section, target.StartLine, target.EndLine)
 		sb.WriteString(content)
 		sb.WriteString("\n")
 		sb.WriteString("[live read — chunk not yet indexed; run docgraph index --force]\n")
@@ -192,37 +192,37 @@ func appendGovernanceSection(g *store.GovernanceRecord) string {
 	var sb strings.Builder
 	sb.WriteString("\n### Governance\n")
 	if g.Status != "" {
-		sb.WriteString(fmt.Sprintf("**Status:** %s\n", g.Status))
+		fmt.Fprintf(&sb, "**Status:** %s\n", g.Status)
 	}
 	if g.Sensitivity != "" {
-		sb.WriteString(fmt.Sprintf("**Sensitivity:** %s\n", g.Sensitivity))
+		fmt.Fprintf(&sb, "**Sensitivity:** %s\n", g.Sensitivity)
 	}
 	if g.Owner != "" {
-		sb.WriteString(fmt.Sprintf("**Owner:** %s\n", g.Owner))
+		fmt.Fprintf(&sb, "**Owner:** %s\n", g.Owner)
 	}
 	if g.Approver != "" {
-		sb.WriteString(fmt.Sprintf("**Approver:** %s\n", g.Approver))
+		fmt.Fprintf(&sb, "**Approver:** %s\n", g.Approver)
 	}
 	if g.Department != "" {
-		sb.WriteString(fmt.Sprintf("**Department:** %s\n", g.Department))
+		fmt.Fprintf(&sb, "**Department:** %s\n", g.Department)
 	}
 	if g.EffectiveDate != "" {
-		sb.WriteString(fmt.Sprintf("**Effective:** %s\n", g.EffectiveDate))
+		fmt.Fprintf(&sb, "**Effective:** %s\n", g.EffectiveDate)
 	}
 	if g.ReviewDue != "" {
-		sb.WriteString(fmt.Sprintf("**Review due:** %s\n", g.ReviewDue))
+		fmt.Fprintf(&sb, "**Review due:** %s\n", g.ReviewDue)
 	}
 	if g.Supersedes != "" {
-		sb.WriteString(fmt.Sprintf("**Supersedes:** %s\n", g.Supersedes))
+		fmt.Fprintf(&sb, "**Supersedes:** %s\n", g.Supersedes)
 	}
 	if g.SupersededBy != "" {
-		sb.WriteString(fmt.Sprintf("**Superseded by:** %s\n", g.SupersededBy))
+		fmt.Fprintf(&sb, "**Superseded by:** %s\n", g.SupersededBy)
 	}
 	if g.CanonicalSource != "" {
-		sb.WriteString(fmt.Sprintf("**Canonical source:** %s\n", g.CanonicalSource))
+		fmt.Fprintf(&sb, "**Canonical source:** %s\n", g.CanonicalSource)
 	}
 	if g.AllowedAudience != "" {
-		sb.WriteString(fmt.Sprintf("**Audience:** %s\n", g.AllowedAudience))
+		fmt.Fprintf(&sb, "**Audience:** %s\n", g.AllowedAudience)
 	}
 	return sb.String()
 }
@@ -235,37 +235,37 @@ func appendResearchSection(r *store.ResearchRecord) string {
 	var sb strings.Builder
 	sb.WriteString("\n### Research Provenance\n")
 	if r.ClaimID != "" {
-		sb.WriteString(fmt.Sprintf("**Claim ID:** %s\n", r.ClaimID))
+		fmt.Fprintf(&sb, "**Claim ID:** %s\n", r.ClaimID)
 	}
 	if r.Confidence != "" {
-		sb.WriteString(fmt.Sprintf("**Confidence:** %s\n", r.Confidence))
+		fmt.Fprintf(&sb, "**Confidence:** %s\n", r.Confidence)
 	}
 	if r.SourceType != "" {
-		sb.WriteString(fmt.Sprintf("**Source type:** %s\n", r.SourceType))
+		fmt.Fprintf(&sb, "**Source type:** %s\n", r.SourceType)
 	}
 	if r.AnalystStatus != "" {
-		sb.WriteString(fmt.Sprintf("**Analyst status:** %s\n", r.AnalystStatus))
+		fmt.Fprintf(&sb, "**Analyst status:** %s\n", r.AnalystStatus)
 	}
 	if r.EventDate != "" {
-		sb.WriteString(fmt.Sprintf("**Event date:** %s\n", r.EventDate))
+		fmt.Fprintf(&sb, "**Event date:** %s\n", r.EventDate)
 	}
 	if r.AssessmentDate != "" {
-		sb.WriteString(fmt.Sprintf("**Assessment date:** %s\n", r.AssessmentDate))
+		fmt.Fprintf(&sb, "**Assessment date:** %s\n", r.AssessmentDate)
 	}
 	if r.LastVerified != "" {
-		sb.WriteString(fmt.Sprintf("**Last verified:** %s\n", r.LastVerified))
+		fmt.Fprintf(&sb, "**Last verified:** %s\n", r.LastVerified)
 	}
 	if r.ValidUntil != "" {
-		sb.WriteString(fmt.Sprintf("**Valid until:** %s\n", r.ValidUntil))
+		fmt.Fprintf(&sb, "**Valid until:** %s\n", r.ValidUntil)
 	}
 	if r.Client != "" {
-		sb.WriteString(fmt.Sprintf("**Client:** %s\n", r.Client))
+		fmt.Fprintf(&sb, "**Client:** %s\n", r.Client)
 	}
 	if r.DeliverableID != "" {
-		sb.WriteString(fmt.Sprintf("**Deliverable ID:** %s\n", r.DeliverableID))
+		fmt.Fprintf(&sb, "**Deliverable ID:** %s\n", r.DeliverableID)
 	}
 	if r.Evidence != "" {
-		sb.WriteString(fmt.Sprintf("**Evidence:** %s\n", r.Evidence))
+		fmt.Fprintf(&sb, "**Evidence:** %s\n", r.Evidence)
 	}
 	return sb.String()
 }
@@ -277,22 +277,19 @@ func appendMetadataQualitySection(q *store.MetadataQualityRecord) string {
 	}
 	var sb strings.Builder
 	sb.WriteString("\n### Metadata Quality\n")
-	sb.WriteString(fmt.Sprintf("**Score:** %d/100 (%s)\n", q.Score, q.Level))
-	sb.WriteString(fmt.Sprintf("**References:** %d incoming, %d outgoing\n", q.IncomingReferences, q.OutgoingReferences))
+	fmt.Fprintf(&sb, "**Score:** %d/100 (%s)\n", q.Score, q.Level)
+	fmt.Fprintf(&sb, "**References:** %d incoming, %d outgoing\n", q.IncomingReferences, q.OutgoingReferences)
 	if len(q.Issues) == 0 {
 		sb.WriteString("**Issues:** none\n")
 		return sb.String()
 	}
 	sb.WriteString("**Issues:**\n")
-	limit := len(q.Issues)
-	if limit > 6 {
-		limit = 6
-	}
+	limit := min(len(q.Issues), 6)
 	for _, issue := range q.Issues[:limit] {
-		sb.WriteString(fmt.Sprintf("- `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message))
+		fmt.Fprintf(&sb, "- `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message)
 	}
 	if len(q.Issues) > limit {
-		sb.WriteString(fmt.Sprintf("- ... %d more issues omitted\n", len(q.Issues)-limit))
+		fmt.Fprintf(&sb, "- ... %d more issues omitted\n", len(q.Issues)-limit)
 	}
 	return sb.String()
 }

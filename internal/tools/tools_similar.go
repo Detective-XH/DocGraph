@@ -66,7 +66,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 		}
 		// Prefer neural engine.
 		var existingEng, newEng string
-		var m map[string]interface{}
+		var m map[string]any
 		if json.Unmarshal([]byte(existing.Metadata), &m) == nil {
 			existingEng, _ = m["engine"].(string)
 		}
@@ -87,7 +87,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Documents similar to %q\n\nFound %d similar documents.\n", node.Name, len(deduped)))
+	fmt.Fprintf(&sb, "## Documents similar to %q\n\nFound %d similar documents.\n", node.Name, len(deduped))
 
 	for i, e := range deduped {
 		otherID := e.Target
@@ -100,7 +100,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 		}
 		score := ""
 		if e.Metadata != "" {
-			var m map[string]interface{}
+			var m map[string]any
 			if json.Unmarshal([]byte(e.Metadata), &m) == nil {
 				if s, ok := m["score"].(float64); ok {
 					score = fmt.Sprintf(" (score: %.2f", s)
@@ -114,7 +114,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 				}
 			}
 		}
-		sb.WriteString(fmt.Sprintf("\n%d. **%s** %s%s\n", i+1, other.Name, other.FilePath, score))
+		fmt.Fprintf(&sb, "\n%d. **%s** %s%s\n", i+1, other.Name, other.FilePath, score)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

@@ -10,7 +10,7 @@ import (
 )
 
 var exploreTool = mcp.NewTool("docgraph_explore",
-	mcp.WithDescription("Survey several related documents and their cross-references in one call. More efficient than multiple docgraph_node calls. For a single known document, use docgraph_node instead."),
+	mcp.WithDescription("Survey several related documents and their cross-references in one call. More efficient than multiple docgraph_node calls. For a single known document, use docgraph_node instead. For governance filters or structured context, use docgraph_context instead."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms to find related documents")),
 	mcp.WithNumber("maxDocs", mcp.Description("Max documents (default 5)")),
 )
@@ -36,7 +36,7 @@ func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Explore: %q\n\n", query))
+	fmt.Fprintf(&sb, "## Explore: %q\n\n", query)
 
 	for i, sr := range results {
 		node := sr.Node
@@ -48,15 +48,15 @@ func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest
 			headingNames[j] = hd.Name
 		}
 
-		sb.WriteString(fmt.Sprintf("### %d. %s (%s)\n", i+1, node.Name, node.FilePath))
+		fmt.Fprintf(&sb, "### %d. %s (%s)\n", i+1, node.Name, node.FilePath)
 		if len(headingNames) > 0 {
-			sb.WriteString(fmt.Sprintf("Headings: %s\n", strings.Join(headingNames, ", ")))
+			fmt.Fprintf(&sb, "Headings: %s\n", strings.Join(headingNames, ", "))
 		}
-		sb.WriteString(fmt.Sprintf("Links out: %d | Links in: %d\n", outCount, inCount))
+		fmt.Fprintf(&sb, "Links out: %d | Links in: %d\n", outCount, inCount)
 
 		if node.BodyExcerpt != "" {
-			for _, line := range strings.Split(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
-				sb.WriteString(fmt.Sprintf("> %s\n", line))
+			for line := range strings.SplitSeq(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
+				fmt.Fprintf(&sb, "> %s\n", line)
 			}
 		}
 		sb.WriteString("\n")

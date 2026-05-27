@@ -82,7 +82,7 @@ func (h *handler) handleEmbeddingsPending(ctx context.Context, request mcp.CallT
 		total += len(r.docs)
 	}
 
-	sb.WriteString(fmt.Sprintf("## Pending Embeddings for model %q\n\nFound %d documents needing embeddings.\n", modelID, total))
+	fmt.Fprintf(&sb, "## Pending Embeddings for model %q\n\nFound %d documents needing embeddings.\n", modelID, total)
 	if total == 0 {
 		return mcp.NewToolResultText(sb.String()), nil
 	}
@@ -97,10 +97,10 @@ func (h *handler) handleEmbeddingsPending(ctx context.Context, request mcp.CallT
 			if r.projectName != "" {
 				prefix = "[" + r.projectName + "] "
 			}
-			sb.WriteString(fmt.Sprintf("### %d. %s%s\n", i, prefix, doc.Name))
-			sb.WriteString(fmt.Sprintf("- **doc_id:** `%s`\n", doc.DocID))
-			sb.WriteString(fmt.Sprintf("- **path:** %s\n", doc.FilePath))
-			sb.WriteString(fmt.Sprintf("- **content_hash:** `%s`\n", doc.ContentHash))
+			fmt.Fprintf(&sb, "### %d. %s%s\n", i, prefix, doc.Name)
+			fmt.Fprintf(&sb, "- **doc_id:** `%s`\n", doc.DocID)
+			fmt.Fprintf(&sb, "- **path:** %s\n", doc.FilePath)
+			fmt.Fprintf(&sb, "- **content_hash:** `%s`\n", doc.ContentHash)
 
 			var content string
 			if contentMode == "full" && r.projectRoot != "" {
@@ -235,19 +235,19 @@ func (h *handler) handleEmbeddingsClear(ctx context.Context, request mcp.CallToo
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Cleared embeddings for model %q\n\n", modelID))
+	fmt.Fprintf(&sb, "## Cleared embeddings for model %q\n\n", modelID)
 	var totalEmb, totalEdge int64
 	for _, r := range results {
 		totalEmb += r.embDeleted
 		totalEdge += r.edgeDeleted
 		if r.projectName != "" {
-			sb.WriteString(fmt.Sprintf("- **%s**: %d embeddings, %d neural edges deleted\n", r.projectName, r.embDeleted, r.edgeDeleted))
+			fmt.Fprintf(&sb, "- **%s**: %d embeddings, %d neural edges deleted\n", r.projectName, r.embDeleted, r.edgeDeleted)
 		}
 	}
 	if len(results) == 1 && results[0].projectName == "" {
-		sb.WriteString(fmt.Sprintf("Deleted %d embeddings and %d neural similarity edges.\n", totalEmb, totalEdge))
+		fmt.Fprintf(&sb, "Deleted %d embeddings and %d neural similarity edges.\n", totalEmb, totalEdge)
 	} else {
-		sb.WriteString(fmt.Sprintf("\n**Total:** %d embeddings, %d neural edges deleted.\n", totalEmb, totalEdge))
+		fmt.Fprintf(&sb, "\n**Total:** %d embeddings, %d neural edges deleted.\n", totalEmb, totalEdge)
 	}
 	return mcp.NewToolResultText(sb.String()), nil
 }

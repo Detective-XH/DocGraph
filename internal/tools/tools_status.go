@@ -14,7 +14,7 @@ import (
 )
 
 var statusTool = mcp.NewTool("docgraph_status",
-	mcp.WithDescription("Index health: file count, node count, edge count, unresolved references, DB size."),
+	mcp.WithDescription("Index health: file count, node count, edge count, unresolved references, DB size. Use to verify the index is ready before other operations, or to inspect embedding model state, domain packs, and drift findings."),
 )
 
 func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -38,8 +38,8 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			if !ok {
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %d | %s |\n",
-				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes)))
+			fmt.Fprintf(&sb, "| %s | %d | %d | %d | %d | %s |\n",
+				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes))
 		}
 
 		// Neural embeddings — fan-out across all projects.
@@ -69,18 +69,18 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err)), nil
 		}
-		sb.WriteString(fmt.Sprintf("Files: %d | Nodes: %d | Edges: %d | Unresolved: %d | DB: %s\n\n",
-			stats.FileCount, stats.NodeCount, stats.EdgeCount, stats.UnresolvedCount, formatSize(stats.DBSizeBytes)))
+		fmt.Fprintf(&sb, "Files: %d | Nodes: %d | Edges: %d | Unresolved: %d | DB: %s\n\n",
+			stats.FileCount, stats.NodeCount, stats.EdgeCount, stats.UnresolvedCount, formatSize(stats.DBSizeBytes))
 		if len(stats.NodesByKind) > 2 {
 			sb.WriteString("### Nodes by Kind\n| Kind | Count |\n|------|-------|\n")
 			for kind, count := range stats.NodesByKind {
-				sb.WriteString(fmt.Sprintf("| %s | %d |\n", kind, count))
+				fmt.Fprintf(&sb, "| %s | %d |\n", kind, count)
 			}
 		}
 		if len(stats.EdgesByKind) > 2 {
 			sb.WriteString("\n### Edges by Kind\n| Kind | Count |\n|------|-------|\n")
 			for kind, count := range stats.EdgesByKind {
-				sb.WriteString(fmt.Sprintf("| %s | %d |\n", kind, count))
+				fmt.Fprintf(&sb, "| %s | %d |\n", kind, count)
 			}
 		}
 
@@ -92,8 +92,8 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		// Metadata index stats.
 		if metaStats, err := h.store.GetMetadataStats(); err == nil {
 			sb.WriteString("\n### Metadata Index\n")
-			sb.WriteString(fmt.Sprintf("Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs))
-			sb.WriteString(fmt.Sprintf("Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs))
+			fmt.Fprintf(&sb, "Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs)
+			fmt.Fprintf(&sb, "Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs)
 		}
 
 		if qualityStats, err := h.store.GetMetadataQualityStats(time.Time{}); err == nil {
@@ -108,7 +108,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 
 		if entities, mentions, err := h.store.GetEntityStats(); err == nil && (entities > 0 || mentions > 0) {
 			sb.WriteString("\n### Entity Graph\n")
-			sb.WriteString(fmt.Sprintf("Entities: %d | Mentions: %d\n", entities, mentions))
+			fmt.Fprintf(&sb, "Entities: %d | Mentions: %d\n", entities, mentions)
 		}
 
 		appendDriftAuditStats(&sb, h.store)
@@ -119,20 +119,17 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 
 func appendMetadataQualityStats(sb *strings.Builder, stats store.MetadataQualityStats) {
 	sb.WriteString("\n### Metadata Quality\n")
-	sb.WriteString(fmt.Sprintf("Average score: %.1f / 100 across %d documents\n", stats.AverageScore, stats.TotalDocs))
-	sb.WriteString(fmt.Sprintf("Good: %d | Warning: %d | Poor: %d\n", stats.GoodDocs, stats.WarningDocs, stats.PoorDocs))
+	fmt.Fprintf(sb, "Average score: %.1f / 100 across %d documents\n", stats.AverageScore, stats.TotalDocs)
+	fmt.Fprintf(sb, "Good: %d | Warning: %d | Poor: %d\n", stats.GoodDocs, stats.WarningDocs, stats.PoorDocs)
 	if len(stats.IssueCounts) == 0 {
 		sb.WriteString("Issues: none\n")
 		return
 	}
 	codes := sortedIssueCounts(stats.IssueCounts)
 	sb.WriteString("| Issue | Documents |\n|-------|-----------|\n")
-	limit := len(codes)
-	if limit > 8 {
-		limit = 8
-	}
+	limit := min(len(codes), 8)
 	for _, code := range codes[:limit] {
-		sb.WriteString(fmt.Sprintf("| `%s` | %d |\n", code, stats.IssueCounts[code]))
+		fmt.Fprintf(sb, "| `%s` | %d |\n", code, stats.IssueCounts[code])
 	}
 }
 
@@ -159,8 +156,8 @@ func appendWorkspaceMetadataQualityStats(sb *strings.Builder, h *handler) {
 		if issues == "" {
 			issues = "none"
 		}
-		sb.WriteString(fmt.Sprintf("| %s | %.1f | %d | %d | %d | %s |\n",
-			project.Name, stats.AverageScore, stats.GoodDocs, stats.WarningDocs, stats.PoorDocs, issues))
+		fmt.Fprintf(sb, "| %s | %.1f | %d | %d | %d | %s |\n",
+			project.Name, stats.AverageScore, stats.GoodDocs, stats.WarningDocs, stats.PoorDocs, issues)
 	}
 }
 
@@ -195,16 +192,16 @@ func appendDriftAuditStats(sb *strings.Builder, st *store.Store) {
 	}
 	summary := store.SummarizeDriftFindings(findings)
 	sb.WriteString("\n### Drift Audit\n")
-	sb.WriteString(fmt.Sprintf("Total findings: %d", summary.TotalFindings))
+	fmt.Fprintf(sb, "Total findings: %d", summary.TotalFindings)
 	if e := summary.BySeverity["error"]; e > 0 {
-		sb.WriteString(fmt.Sprintf(" | Errors: %d", e))
+		fmt.Fprintf(sb, " | Errors: %d", e)
 	}
 	if w := summary.BySeverity["warning"]; w > 0 {
-		sb.WriteString(fmt.Sprintf(" | Warnings: %d", w))
+		fmt.Fprintf(sb, " | Warnings: %d", w)
 	}
 	sb.WriteString("\n")
 	for code, count := range summary.ByCode {
-		sb.WriteString(fmt.Sprintf("  %s: %d\n", code, count))
+		fmt.Fprintf(sb, "  %s: %d\n", code, count)
 	}
 	sb.WriteString("Use `docgraph_context format=drift_audit` for full report.\n")
 }
@@ -229,7 +226,7 @@ func appendEmbeddingStats(sb *strings.Builder, stats []store.EmbeddingModelStat)
 	}
 	sb.WriteString("\n### Neural Embeddings\n| Model | Total | Stale |\n|-------|-------|-------|\n")
 	for _, s := range stats {
-		sb.WriteString(fmt.Sprintf("| %s | %d | %d |\n", s.ModelID, s.Total, s.Stale))
+		fmt.Fprintf(sb, "| %s | %d | %d |\n", s.ModelID, s.Total, s.Stale)
 	}
 }
 
@@ -238,7 +235,7 @@ func appendDomainPackStats(sb *strings.Builder, packs []domainpacks.Pack, stats 
 		return
 	}
 	sb.WriteString("\n### Domain Packs\n")
-	sb.WriteString(fmt.Sprintf("Loaded packs: %d (%d enabled, %d fields)\n", stats.TotalPacks, stats.EnabledPacks, stats.TotalFields))
+	fmt.Fprintf(sb, "Loaded packs: %d (%d enabled, %d fields)\n", stats.TotalPacks, stats.EnabledPacks, stats.TotalFields)
 	sb.WriteString("| Pack | Domain | Version | Enabled | Fields | Description |\n")
 	sb.WriteString("|------|--------|---------|---------|--------|-------------|\n")
 	for _, pack := range packs {
@@ -247,8 +244,8 @@ func appendDomainPackStats(sb *strings.Builder, packs []domainpacks.Pack, stats 
 			enabled = "yes"
 		}
 		desc := truncateRunes(pack.Description, 60)
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %d | %s |\n",
-			pack.ID, pack.Domain, pack.Version, enabled, len(pack.Fields), desc))
+		fmt.Fprintf(sb, "| %s | %s | %s | %s | %d | %s |\n",
+			pack.ID, pack.Domain, pack.Version, enabled, len(pack.Fields), desc)
 	}
 	// Capability notes for disabled built-in packs.
 	for _, pack := range packs {
@@ -327,9 +324,9 @@ func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
 	for _, id := range ids {
 		agg := byID[id]
 		desc := truncateRunes(agg.pack.Description, 60)
-		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %d | %d | %d | %s |\n",
+		fmt.Fprintf(sb, "| %s | %s | %s | %d | %d | %d | %s |\n",
 			agg.pack.ID, agg.pack.Domain, agg.pack.Version,
-			agg.projectCount, agg.enabledProjects, len(agg.pack.Fields), desc))
+			agg.projectCount, agg.enabledProjects, len(agg.pack.Fields), desc)
 	}
 	// Capability notes for disabled built-in packs (zero enabled projects).
 	for _, id := range ids {

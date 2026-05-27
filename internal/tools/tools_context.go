@@ -34,7 +34,7 @@ func formatHeadingOutline(headings []store.Node) string {
 	var sb strings.Builder
 	for _, h := range headings {
 		indent := strings.Repeat("  ", h.Level-1)
-		sb.WriteString(fmt.Sprintf("%s- H%d: %s\n", indent, h.Level, h.Name))
+		fmt.Fprintf(&sb, "%s- H%d: %s\n", indent, h.Level, h.Name)
 	}
 	return sb.String()
 }
@@ -108,16 +108,16 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Context for %q\n\nFound %d relevant documents.\n", task, len(results)))
+	fmt.Fprintf(&sb, "## Context for %q\n\nFound %d relevant documents.\n", task, len(results))
 
 	for i, sr := range results {
 		node := sr.Node
 		headings := h.getHeadings(&node)
 		inCount, outCount := h.getEdgeCounts(&node)
 
-		sb.WriteString(fmt.Sprintf("\n### %d. %s\n", i+1, node.Name))
-		sb.WriteString(fmt.Sprintf("**Path:** %s | **Headings:** %d | **Refs in:** %d | **Refs out:** %d\n",
-			node.FilePath, len(headings), inCount, outCount))
+		fmt.Fprintf(&sb, "\n### %d. %s\n", i+1, node.Name)
+		fmt.Fprintf(&sb, "**Path:** %s | **Headings:** %d | **Refs in:** %d | **Refs out:** %d\n",
+			node.FilePath, len(headings), inCount, outCount)
 
 		if len(headings) > 0 {
 			sb.WriteString("\n#### Structure\n")
@@ -126,8 +126,8 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 
 		if node.BodyExcerpt != "" {
 			sb.WriteString("\n")
-			for _, line := range strings.Split(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
-				sb.WriteString(fmt.Sprintf("> %s\n", line))
+			for line := range strings.SplitSeq(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
+				fmt.Fprintf(&sb, "> %s\n", line)
 			}
 		}
 
@@ -172,7 +172,7 @@ func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, max
 			if chunk.StartLine != -1 {
 				rangeStr = fmt.Sprintf(", indexed lines %d-%d", chunk.StartLine, chunk.EndLine)
 			}
-			sb.WriteString(fmt.Sprintf("\n#### Content (indexed snapshot%s, max %d bytes)\n", rangeStr, maxBytes))
+			fmt.Fprintf(sb, "\n#### Content (indexed snapshot%s, max %d bytes)\n", rangeStr, maxBytes)
 			sb.WriteString("```markdown\n")
 			sb.WriteString(text)
 			sb.WriteString("\n```\n")
@@ -188,14 +188,14 @@ func appendBoundedContent(sb *strings.Builder, h *handler, node *store.Node, max
 	}
 	content, err := store.ReadSectionContent(node.FilePath, node.StartLine, node.EndLine, root, maxBytes)
 	if err != nil {
-		sb.WriteString(fmt.Sprintf("\n#### Content\n[content unavailable: %v]\n", err))
+		fmt.Fprintf(sb, "\n#### Content\n[content unavailable: %v]\n", err)
 		return
 	}
 	content = strings.TrimRight(content, "\n")
 	if content == "" {
 		return
 	}
-	sb.WriteString(fmt.Sprintf("\n#### Content (indexed lines %d-%d, max %d bytes)\n", node.StartLine, node.EndLine, maxBytes))
+	fmt.Fprintf(sb, "\n#### Content (indexed lines %d-%d, max %d bytes)\n", node.StartLine, node.EndLine, maxBytes)
 	sb.WriteString("```markdown\n")
 	sb.WriteString(content)
 	sb.WriteString("\n```\n")

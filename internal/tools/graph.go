@@ -12,10 +12,10 @@ import (
 var impactTool = mcp.NewTool("docgraph_impact",
 	mcp.WithDescription("Analyze what documents would be affected if this document changes. Traverses incoming references transitively. Start with depth=1 for focused results."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
-	mcp.WithNumber("depth", mcp.Description("Levels of transitive references (default 2, max 5)")),
+	mcp.WithNumber("depth", mcp.Description("Levels of transitive references (default 2, max 5; use 1 for focused results)")),
 )
 var traceTool = mcp.NewTool("docgraph_trace",
-	mcp.WithDescription("Find the shortest reference path between two documents via BFS. Max 10 hops."),
+	mcp.WithDescription("Find the shortest reference path between two documents via BFS. Max 10 hops. Use to understand HOW two docs are connected; use docgraph_impact to find WHAT would be affected by a change."),
 	mcp.WithString("from", mcp.Required(), mcp.Description("Starting document name or path")),
 	mcp.WithString("to", mcp.Required(), mcp.Description("Target document name or path")),
 )
@@ -107,7 +107,7 @@ func (h *handler) handleImpact(ctx context.Context, req mcp.CallToolRequest) (*m
 	const maxPerLevel = 20
 	startName, _ := h.nodeName(startID)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Impact Analysis for %q\n", startName))
+	fmt.Fprintf(&sb, "## Impact Analysis for %q\n", startName)
 	for lv := 1; lv <= depth; lv++ {
 		if len(levels[lv]) == 0 {
 			continue
@@ -116,7 +116,7 @@ func (h *handler) handleImpact(ctx context.Context, req mcp.CallToolRequest) (*m
 		if lv > 1 {
 			label = "transitive"
 		}
-		sb.WriteString(fmt.Sprintf("\nDepth %d (%s): %d documents\n", lv, label, len(levels[lv])))
+		fmt.Fprintf(&sb, "\nDepth %d (%s): %d documents\n", lv, label, len(levels[lv]))
 		shown := levels[lv]
 		if len(shown) > maxPerLevel {
 			shown = shown[:maxPerLevel]
@@ -125,16 +125,16 @@ func (h *handler) handleImpact(ctx context.Context, req mcp.CallToolRequest) (*m
 			nm, fp := h.nodeName(ent.docID)
 			if ent.via != "" {
 				vn, _ := h.nodeName(ent.via)
-				sb.WriteString(fmt.Sprintf("- %s (%s) → %s %s\n", nm, fp, ent.kind, vn))
+				fmt.Fprintf(&sb, "- %s (%s) → %s %s\n", nm, fp, ent.kind, vn)
 			} else {
-				sb.WriteString(fmt.Sprintf("- %s (%s) via %s\n", nm, fp, ent.kind))
+				fmt.Fprintf(&sb, "- %s (%s) via %s\n", nm, fp, ent.kind)
 			}
 		}
 		if len(levels[lv]) > maxPerLevel {
-			sb.WriteString(fmt.Sprintf("- (and %d more)\n", len(levels[lv])-maxPerLevel))
+			fmt.Fprintf(&sb, "- (and %d more)\n", len(levels[lv])-maxPerLevel)
 		}
 	}
-	sb.WriteString(fmt.Sprintf("\nTotal: %d documents affected\n", total))
+	fmt.Fprintf(&sb, "\nTotal: %d documents affected\n", total)
 	return mcp.NewToolResultText(sb.String()), nil
 }
 func (h *handler) handleTrace(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -198,12 +198,12 @@ func (h *handler) handleTrace(ctx context.Context, req mcp.CallToolRequest) (*mc
 	slices.Reverse(path)
 	slices.Reverse(kinds)
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Trace: %q → %q\n\nPath found (%d hops):\n", fNode.Name, tNode.Name, len(path)-1))
+	fmt.Fprintf(&sb, "## Trace: %q → %q\n\nPath found (%d hops):\n", fNode.Name, tNode.Name, len(path)-1)
 	for i, id := range path {
 		nm, fp := h.nodeName(id)
-		sb.WriteString(fmt.Sprintf("\n%d. **%s** (%s)\n", i+1, nm, fp))
+		fmt.Fprintf(&sb, "\n%d. **%s** (%s)\n", i+1, nm, fp)
 		if i < len(kinds) {
-			sb.WriteString(fmt.Sprintf("   ↓ %s\n", kinds[i]))
+			fmt.Fprintf(&sb, "   ↓ %s\n", kinds[i])
 		}
 	}
 	return mcp.NewToolResultText(sb.String()), nil

@@ -47,9 +47,9 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Indexed Files (%d total", total))
+	fmt.Fprintf(&sb, "## Indexed Files (%d total", total)
 	if total > len(files) {
-		sb.WriteString(fmt.Sprintf(", showing %d", len(files)))
+		fmt.Fprintf(&sb, ", showing %d", len(files))
 	}
 	sb.WriteString(")\n\n")
 	sb.WriteString("| Path | Size | Nodes | Frontmatter |\n")
@@ -60,7 +60,7 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 		if f.HasFrontmatter {
 			fm = "Yes"
 		}
-		sb.WriteString(fmt.Sprintf("| %s | %s | %d | %s |\n", f.Path, formatSize(f.Size), f.NodeCount, fm))
+		fmt.Fprintf(&sb, "| %s | %s | %d | %s |\n", f.Path, formatSize(f.Size), f.NodeCount, fm)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

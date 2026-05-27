@@ -91,10 +91,10 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	if useMetadataFilters {
-		sb.WriteString(fmt.Sprintf("## Search Results for %q [metadata filter: %s]\n\nFound %d results.\n",
-			query, describeSearchFilters(opts), len(results)))
+		fmt.Fprintf(&sb, "## Search Results for %q [metadata filter: %s]\n\nFound %d results.\n",
+			query, describeSearchFilters(opts), len(results))
 	} else {
-		sb.WriteString(fmt.Sprintf("## Search Results for %q\n\nFound %d results.\n", query, len(results)))
+		fmt.Fprintf(&sb, "## Search Results for %q\n\nFound %d results.\n", query, len(results))
 	}
 
 	for i, sr := range results {
@@ -103,20 +103,20 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 		if n.Kind == "heading" && n.QualifiedName != "" {
 			path = n.QualifiedName
 		}
-		sb.WriteString(fmt.Sprintf("\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine))
+		fmt.Fprintf(&sb, "\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine)
 
 		if n.BodyExcerpt != "" {
 			excerpt := strings.TrimRight(n.BodyExcerpt, "\n")
-			firstLine := strings.SplitN(excerpt, "\n", 2)[0]
+			firstLine, _, _ := strings.Cut(excerpt, "\n")
 			if len(firstLine) > 100 {
 				firstLine = firstLine[:100] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("   > %s\n", firstLine))
+			fmt.Fprintf(&sb, "   > %s\n", firstLine)
 		}
 		if st := h.getStoreForResolvedNode(&n); st != nil {
 			if quality, err := st.GetMetadataQuality(n.ID, time.Time{}); err == nil && quality != nil {
-				sb.WriteString(fmt.Sprintf("   Quality: %d/100 %s%s\n",
-					quality.Score, quality.Level, formatQualityIssueCodes(quality.Issues, 3)))
+				fmt.Fprintf(&sb, "   Quality: %d/100 %s%s\n",
+					quality.Score, quality.Level, formatQualityIssueCodes(quality.Issues, 3))
 			}
 		}
 	}
