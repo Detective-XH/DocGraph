@@ -36,11 +36,17 @@ func cmdServe(args []string) {
 	fset := flag.NewFlagSet("serve", flag.ExitOnError)
 	p := fset.String("path", "", "Project directory to index and serve")
 	ws := fset.String("workspace", "", "Workspace root (index all child dirs as projects)")
+	profileRaw := fset.String("tool-profile", "full", "MCP tool profile: full, compact, or dual")
 	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	fset.Parse(args)
 
-	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
+	profile, err := tools.ParseToolProfile(*profileRaw)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructionsForProfile(profile)))
 
 	if *ws != "" {
 		warm := anyProjectDBExists(*ws)
@@ -51,7 +57,7 @@ func cmdServe(args []string) {
 		defer w.Close()
 		w.NoGitignore = noGitignore
 		w.SimilarityThreshold = similarityThreshold
-		setIndexing := tools.RegisterWorkspace(srv, w)
+		setIndexing := tools.RegisterWorkspaceWithProfile(srv, w, profile)
 		doSync := func() {
 			defer setIndexing(false)
 			w.IndexAll()
@@ -85,7 +91,7 @@ func cmdServe(args []string) {
 		warm := dbExists(path)
 		st := openStore(path)
 		defer st.Close()
-		setIndexing := tools.Register(srv, st, absRoot)
+		setIndexing := tools.RegisterWithProfile(srv, st, absRoot, profile)
 		doSync := func() {
 			defer setIndexing(false)
 			if err := indexStore(absRoot, st); err != nil {

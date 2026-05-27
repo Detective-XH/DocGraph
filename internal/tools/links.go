@@ -66,6 +66,10 @@ func (h *handler) handleReferences(ctx context.Context, request mcp.CallToolRequ
 	document = sanitizeArg(document, maxArgLength)
 	limit := getIntArg(args, "limit", 10)
 
+	return h.renderIncomingLinks(document, limit)
+}
+
+func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallToolResult, error) {
 	node, err := h.resolveDoc(document)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("resolve document failed: %v", err)), nil
@@ -118,6 +122,10 @@ func (h *handler) handleLinks(ctx context.Context, request mcp.CallToolRequest) 
 	document = sanitizeArg(document, maxArgLength)
 	limit := getIntArg(args, "limit", 10)
 
+	return h.renderOutgoingLinks(document, limit)
+}
+
+func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallToolResult, error) {
 	node, err := h.resolveDoc(document)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("resolve document failed: %v", err)), nil

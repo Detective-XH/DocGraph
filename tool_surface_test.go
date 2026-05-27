@@ -15,9 +15,22 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-func TestToolSurfaceGovernanceRegistry(t *testing.T) {
+func TestToolSurfaceFullProfileRegistry(t *testing.T) {
 	// Tool-surface guardrail: adding a top-level MCP tool changes the agent-facing
 	// protocol. This allowlist forces that change to be intentional and reviewed.
+	expected := fullProfileToolNames()
+
+	actual := registeredToolNames(t, tools.ToolProfileFull)
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf(
+			"registered MCP full profile surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
+			strings.Join(expected, ", "),
+			strings.Join(actual, ", "),
+		)
+	}
+}
+
+func TestToolSurfaceCompactProfileRegistry(t *testing.T) {
 	expected := []string{
 		"docgraph_context",
 		"docgraph_embeddings_clear",
@@ -25,32 +38,43 @@ func TestToolSurfaceGovernanceRegistry(t *testing.T) {
 		"docgraph_embeddings_store",
 		"docgraph_explore",
 		"docgraph_files",
+		"docgraph_graph",
 		"docgraph_history",
-		"docgraph_impact",
-		"docgraph_links",
 		"docgraph_node",
-		"docgraph_references",
 		"docgraph_search",
 		"docgraph_similar",
 		"docgraph_status",
 		"docgraph_tags",
-		"docgraph_trace",
 	}
 
-	actual := registeredToolNames(t)
+	actual := registeredToolNames(t, tools.ToolProfileCompact)
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf(
-			"registered MCP tool surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
+			"registered MCP compact profile surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
 			strings.Join(expected, ", "),
 			strings.Join(actual, ", "),
 		)
 	}
 }
 
-func TestToolSurfaceGovernanceInstructionsStayCompact(t *testing.T) {
+func TestToolSurfaceDualProfileRegistry(t *testing.T) {
+	expected := append(fullProfileToolNames(), "docgraph_graph")
+	sort.Strings(expected)
+
+	actual := registeredToolNames(t, tools.ToolProfileDual)
+	if !reflect.DeepEqual(actual, expected) {
+		t.Fatalf(
+			"registered MCP dual profile surface changed.\nexpected: %s\nactual:   %s\nIf this is intentional, add a tool-surface decision record and update the allowlist, server instructions, and docs together.",
+			strings.Join(expected, ", "),
+			strings.Join(actual, ", "),
+		)
+	}
+}
+
+func TestToolSurfaceFullInstructionsStayCompact(t *testing.T) {
 	// Tool-surface guardrail: generated MCP instructions route users through compact
 	// decision paths instead of repeating a long one-row-per-tool catalog.
-	section := markdownSection(serverInstructions, "## Tool selection", "## Reducing noise")
+	section := markdownSection(serverInstructionsForProfile(tools.ToolProfileFull), "## Tool selection", "## Reducing noise")
 	if section == "" {
 		t.Fatal("serverInstructions must include a Tool selection section before Reducing noise")
 	}
@@ -63,6 +87,22 @@ func TestToolSurfaceGovernanceInstructionsStayCompact(t *testing.T) {
 	table := firstMarkdownTable(section)
 	if strings.Count(table, "docgraph_") > 16 {
 		t.Fatalf("Tool selection section repeats too many tool names; route through grouped primary surfaces instead")
+	}
+}
+
+func TestToolSurfaceCompactInstructionsStayCompact(t *testing.T) {
+	instructions := serverInstructionsForProfile(tools.ToolProfileCompact)
+	section := markdownSection(instructions, "## Tool selection", "## Reducing noise")
+	if section == "" {
+		t.Fatal("compact server instructions must include a Tool selection section before Reducing noise")
+	}
+	for _, hidden := range []string{"docgraph_references", "docgraph_links", "docgraph_impact", "docgraph_trace"} {
+		if strings.Contains(section, hidden) {
+			t.Fatalf("compact instructions must not name hidden graph tool %s", hidden)
+		}
+	}
+	if !strings.Contains(section, "docgraph_graph") {
+		t.Fatal("compact instructions must route graph work through docgraph_graph")
 	}
 }
 
@@ -90,11 +130,32 @@ func TestCodeGraphInteropInstructionsStayAdvisory(t *testing.T) {
 	}
 }
 
-func registeredToolNames(t *testing.T) []string {
+func fullProfileToolNames() []string {
+	return []string{
+		"docgraph_context",
+		"docgraph_embeddings_clear",
+		"docgraph_embeddings_pending",
+		"docgraph_embeddings_store",
+		"docgraph_explore",
+		"docgraph_files",
+		"docgraph_history",
+		"docgraph_impact",
+		"docgraph_links",
+		"docgraph_node",
+		"docgraph_references",
+		"docgraph_search",
+		"docgraph_similar",
+		"docgraph_status",
+		"docgraph_tags",
+		"docgraph_trace",
+	}
+}
+
+func registeredToolNames(t *testing.T, profile tools.ToolProfile) []string {
 	t.Helper()
 
 	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
-	tools.Register(srv, nil, "")
+	tools.RegisterWithProfile(srv, nil, "", profile)
 
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()

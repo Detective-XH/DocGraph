@@ -26,10 +26,11 @@ const (
 // Scope applies only to the Claude client: "user" invokes "claude mcp add --scope user"
 // to register in ~/.claude.json; any other value writes a project-local .mcp.json.
 type Options struct {
-	Clients   string
-	Workspace bool
-	Scope     string
-	DryRun    bool
+	Clients     string
+	Workspace   bool
+	Scope       string
+	DryRun      bool
+	ToolProfile string
 }
 
 // Result records one client configuration file updated by the installer.
@@ -68,28 +69,28 @@ func Apply(root string, opts Options) ([]Result, error) {
 		switch client {
 		case clientClaude:
 			if opts.Scope == "user" {
-				err = invokeClaudeMCPAdd(absRoot, opts.Workspace)
+				err = invokeClaudeMCPAdd(absRoot, opts.Workspace, opts.ToolProfile)
 				if err == nil {
 					path = "~/.claude.json"
 				}
 			} else {
 				path = filepath.Join(absRoot, ".mcp.json")
-				err = writeJSONMCP(path, localServer(absRoot, opts.Workspace))
+				err = writeJSONMCP(path, localServer(absRoot, opts.Workspace, opts.ToolProfile))
 			}
 		case clientCodex:
 			path, err = codexConfigPath()
 			if err == nil {
-				err = writeCodexTOML(path, globalServer(absRoot, opts.Workspace))
+				err = writeCodexTOML(path, globalServer(absRoot, opts.Workspace, opts.ToolProfile))
 			}
 		case clientHermes:
 			path, err = hermesConfigPath()
 			if err == nil {
-				err = writeHermesYAML(path, globalServer(absRoot, opts.Workspace))
+				err = writeHermesYAML(path, globalServer(absRoot, opts.Workspace, opts.ToolProfile))
 			}
 		case clientOpenCode:
 			path, err = openCodeConfigPath(absRoot)
 			if err == nil {
-				err = writeJSONMCP(path, globalServer(absRoot, opts.Workspace))
+				err = writeJSONMCP(path, globalServer(absRoot, opts.Workspace, opts.ToolProfile))
 			}
 		default:
 			err = fmt.Errorf("unsupported client %q", client)
@@ -129,36 +130,48 @@ func planClient(root, client string, opts Options) (Result, error) {
 	switch client {
 	case clientClaude:
 		if opts.Scope == "user" {
+			detail := "would run: claude mcp add --scope user docgraph"
+			if profileArg := toolProfileArg(opts.ToolProfile); profileArg != "" {
+				detail += " with " + profileArg
+			}
 			return Result{
 				Client: client,
 				Path:   "~/.claude.json",
 				Action: "command",
-				Detail: "would run: claude mcp add --scope user docgraph",
+				Detail: detail,
 			}, nil
 		}
 		path := filepath.Join(root, ".mcp.json")
-		action, detail, err := planJSONMCP(path, localServer(root, opts.Workspace))
+		server := localServer(root, opts.Workspace, opts.ToolProfile)
+		action, detail, err := planJSONMCP(path, server)
+		detail = appendProfilePlanDetail(detail, server)
 		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
 	case clientCodex:
 		path, err := codexConfigPath()
 		if err != nil {
 			return Result{}, err
 		}
-		action, detail, err := planCodexTOML(path, globalServer(root, opts.Workspace))
+		server := globalServer(root, opts.Workspace, opts.ToolProfile)
+		action, detail, err := planCodexTOML(path, server)
+		detail = appendProfilePlanDetail(detail, server)
 		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
 	case clientHermes:
 		path, err := hermesConfigPath()
 		if err != nil {
 			return Result{}, err
 		}
-		action, detail, err := planHermesYAML(path, globalServer(root, opts.Workspace))
+		server := globalServer(root, opts.Workspace, opts.ToolProfile)
+		action, detail, err := planHermesYAML(path, server)
+		detail = appendProfilePlanDetail(detail, server)
 		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
 	case clientOpenCode:
 		path, err := openCodeConfigPath(root)
 		if err != nil {
 			return Result{}, err
 		}
-		action, detail, err := planJSONMCP(path, globalServer(root, opts.Workspace))
+		server := globalServer(root, opts.Workspace, opts.ToolProfile)
+		action, detail, err := planJSONMCP(path, server)
+		detail = appendProfilePlanDetail(detail, server)
 		return Result{Client: client, Path: path, Action: action, Detail: detail}, err
 	default:
 		return Result{}, fmt.Errorf("unsupported client %q", client)
@@ -226,19 +239,51 @@ func isSupportedClient(client string) bool {
 	}
 }
 
-func localServer(root string, workspace bool) mcpServer {
+func localServer(root string, workspace bool, profile string) mcpServer {
 	if workspace {
-		return globalServer(root, true)
+		return globalServer(root, true, profile)
 	}
-	return mcpServer{Command: "docgraph", Args: []string{"serve", "--path", "."}}
+	return mcpServer{Command: "docgraph", Args: appendToolProfile([]string{"serve", "--path", "."}, profile)}
 }
 
-func globalServer(root string, workspace bool) mcpServer {
+func globalServer(root string, workspace bool, profile string) mcpServer {
 	mode := "--path"
 	if workspace {
 		mode = "--workspace"
 	}
-	return mcpServer{Command: "docgraph", Args: []string{"serve", mode, root}}
+	return mcpServer{Command: "docgraph", Args: appendToolProfile([]string{"serve", mode, root}, profile)}
+}
+
+func appendToolProfile(args []string, profile string) []string {
+	profile = strings.TrimSpace(profile)
+	if profile == "" || profile == "full" {
+		return args
+	}
+	return append(args, "--tool-profile", profile)
+}
+
+func appendProfilePlanDetail(detail string, server mcpServer) string {
+	if profileArg := serverToolProfileArg(server); profileArg != "" {
+		return detail + "; args include " + profileArg
+	}
+	return detail
+}
+
+func serverToolProfileArg(server mcpServer) string {
+	for i := 0; i < len(server.Args)-1; i++ {
+		if server.Args[i] == "--tool-profile" {
+			return "--tool-profile " + server.Args[i+1]
+		}
+	}
+	return ""
+}
+
+func toolProfileArg(profile string) string {
+	profile = strings.TrimSpace(profile)
+	if profile == "" || profile == "full" {
+		return ""
+	}
+	return "--tool-profile " + profile
 }
 
 func planJSONMCP(path string, server mcpServer) (action, detail string, err error) {
@@ -496,12 +541,12 @@ func pathExistsOrParentExists(path string) bool {
 // invokeClaudeMCPAdd registers DocGraph with Claude Code at user scope by
 // running "claude mcp add --scope user". This avoids direct writes to
 // ~/.claude.json, which contains auth tokens and has a complex structure.
-func invokeClaudeMCPAdd(root string, workspace bool) error {
+func invokeClaudeMCPAdd(root string, workspace bool, profile string) error {
 	absBin, err := os.Executable()
 	if err != nil {
 		return fmt.Errorf("cannot locate docgraph binary: %w", err)
 	}
-	server := globalServer(root, workspace)
+	server := globalServer(root, workspace, profile)
 	cmdArgs := []string{"mcp", "add", "--scope", "user", "docgraph", "--", absBin}
 	cmdArgs = append(cmdArgs, server.Args...)
 	cmd := exec.Command("claude", cmdArgs...)

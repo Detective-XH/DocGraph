@@ -25,7 +25,8 @@
 Documentation knowledge graph MCP server. Indexes `.md`, `.docx`, `.html`,
 `.pdf`, and optional code-documentation surfaces into SQLite, extracts
 cross-references and topic similarity, and exposes the graph through 16 MCP
-tools over stdio.
+compatibility tools over stdio. Optional MCP tool profiles can expose a smaller
+LLM-facing surface with a graph facade.
 
 Three domain packs are enabled by default — **governance** (`status`, `owner`,
 `review_due`, `sensitivity`…), **research_provenance** (`claim_id`, `evidence`,
@@ -50,7 +51,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~50,950 lines of Go (+ ~45,090 lines of tests) |
+| Codebase | ~51,230 lines of Go (+ ~45,410 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -75,16 +76,16 @@ Requires Go 1.25 or later.
 ## CLI
 
 ```
-docgraph init [--dry-run] [--interactive] [--install-clients auto|all|LIST] [--workspace] [--scope user] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
-docgraph install [--dry-run] [--interactive] [--clients auto|all|LIST] [--workspace] [--scope user] [--update-skills] [path]      # Configure MCP clients without re-initializing
+docgraph init [--dry-run] [--interactive] [--install-clients auto|all|LIST] [--workspace] [--scope user] [--tool-profile full|compact|dual] [--with-skills] [--update-skills] [path] # Create local config; optionally install MCP clients and bundled skills
+docgraph install [--dry-run] [--interactive] [--clients auto|all|LIST] [--workspace] [--scope user] [--tool-profile full|compact|dual] [--update-skills] [path]      # Configure MCP clients without re-initializing
 docgraph pack list [--workspace] <path>                         # List domain packs and enabled state
 docgraph pack enable [--workspace] [--no-sync] <pack-id> <path>  # Enable a domain pack; code_doc syncs by default
 docgraph pack disable [--workspace] <pack-id> <path>             # Disable a domain pack; code_doc rows are removed
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--threshold N] [--no-gitignore] --path <path>     # MCP stdio server (single project)
-docgraph serve [--threshold N] [--no-gitignore] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] [--tool-profile full|compact|dual] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] [--tool-profile full|compact|dual] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 docgraph version                             # Print build version
 ```
 
@@ -94,6 +95,8 @@ Hermes, and OpenCode config when their config directories already exist.
 `all` creates config files for every supported client.
 Use `--dry-run` to print create/update/unchanged actions without writing files.
 Use `--interactive` to print the same review and confirm before writes.
+`--tool-profile` defaults to `full`; installer-generated configs omit the flag
+unless `compact` or `dual` is explicitly selected.
 
 ## Bundled Skills
 
@@ -134,6 +137,19 @@ Available skills bundled in the binary:
 | `code-doc-drift-audit` | Display and triage docs-code drift findings (`code.*`) when the `code_doc` pack is enabled |
 
 ## MCP Tools
+
+### Tool Profiles
+
+| Profile | Tool surface | Purpose |
+|---------|--------------|---------|
+| `full` | Current 16 compatibility tools | Default behavior and backwards compatibility |
+| `compact` | 13 tools including `docgraph_graph`; hides `docgraph_references`, `docgraph_links`, `docgraph_impact`, and `docgraph_trace` | Lower decision load for LLM agents |
+| `dual` | Full profile plus `docgraph_graph` | Migration and parity testing |
+
+`docgraph_graph` supports `operation=incoming|outgoing|impact|trace`. Use
+`document` for incoming, outgoing, and impact; use `from` and `to` for trace.
+
+### Full Profile Tools
 
 | # | Tool | Description |
 |---|------|-------------|

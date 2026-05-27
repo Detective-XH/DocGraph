@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/install"
+	"github.com/Detective-XH/docgraph/internal/tools"
 )
 
 func cmdInit(args []string) {
@@ -17,6 +18,7 @@ func cmdInit(args []string) {
 	installClients := fset.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure installed clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
+	toolProfileRaw := fset.String("tool-profile", "full", "MCP tool profile for installed clients: full, compact, or dual")
 	withSkills := fset.Bool("with-skills", false, "Copy bundled skills to .claude/skills/ (skips existing directories)")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
@@ -30,11 +32,16 @@ func cmdInit(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	toolProfile, err := tools.ParseToolProfile(*toolProfileRaw)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if *dryRun || *interactive {
 		printInitPlan(root, *installClients, install.Options{
-			Clients:   *installClients,
-			Workspace: *workspaceMode,
-			Scope:     *scope,
+			Clients:     *installClients,
+			Workspace:   *workspaceMode,
+			Scope:       *scope,
+			ToolProfile: string(toolProfile),
 		}, *withSkills, *updateSkills)
 		if *dryRun {
 			return
@@ -44,7 +51,7 @@ func cmdInit(args []string) {
 			return
 		}
 	}
-	if err := initProject(root); err != nil {
+	if err := initProject(root, toolProfile); err != nil {
 		log.Fatal(err)
 	}
 	if *withSkills {
@@ -53,7 +60,7 @@ func cmdInit(args []string) {
 		}
 	}
 	if *installClients != "" {
-		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope})
+		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope, ToolProfile: string(toolProfile)})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -136,7 +143,7 @@ func planGitignore(path, line string) initPlanItem {
 	return initPlanItem{action: "update", path: path, detail: "append " + line}
 }
 
-func initProject(root string) error {
+func initProject(root string, toolProfile tools.ToolProfile) error {
 	if err := os.MkdirAll(filepath.Join(root, ".docgraph"), 0o755); err != nil {
 		return err
 	}
@@ -157,15 +164,19 @@ func initProject(root string) error {
 
 	mcpConfig := filepath.Join(root, ".mcp.json")
 	if _, err := os.Stat(mcpConfig); errors.Is(err, os.ErrNotExist) {
-		content := `{
+		args := `["serve", "--path", "."]`
+		if toolProfile != tools.ToolProfileFull {
+			args = fmt.Sprintf(`["serve", "--path", ".", "--tool-profile", %q]`, string(toolProfile))
+		}
+		content := fmt.Sprintf(`{
   "mcpServers": {
     "docgraph": {
       "command": "docgraph",
-      "args": ["serve", "--path", "."]
+      "args": %s
     }
   }
 }
-`
+`, args)
 		if err := os.WriteFile(mcpConfig, []byte(content), 0o644); err != nil {
 			return err
 		}

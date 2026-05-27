@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/install"
+	"github.com/Detective-XH/docgraph/internal/tools"
 )
 
 func cmdInstall(args []string) {
@@ -19,6 +20,7 @@ func cmdInstall(args []string) {
 	clients := fset.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
+	toolProfileRaw := fset.String("tool-profile", "full", "MCP tool profile for installed clients: full, compact, or dual")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
 	interactive := fset.Bool("interactive", false, "Review planned changes and ask before writing")
@@ -31,7 +33,11 @@ func cmdInstall(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	opts := install.Options{Clients: *clients, Workspace: *workspaceMode, Scope: *scope, DryRun: *dryRun}
+	toolProfile, err := tools.ParseToolProfile(*toolProfileRaw)
+	if err != nil {
+		log.Fatal(err)
+	}
+	opts := install.Options{Clients: *clients, Workspace: *workspaceMode, Scope: *scope, DryRun: *dryRun, ToolProfile: string(toolProfile)}
 	if *dryRun || *interactive {
 		planned, err := install.Plan(root, opts)
 		if err != nil {

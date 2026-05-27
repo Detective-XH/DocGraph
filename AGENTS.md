@@ -79,6 +79,9 @@ Need graph relationships?
   -> docgraph_links for outgoing links
   -> docgraph_impact for transitive incoming impact
   -> docgraph_trace for a path between documents
+  -> if the compact MCP profile is active, use docgraph_graph instead:
+     operation=incoming|outgoing|impact|trace
+     document=... for incoming/outgoing/impact; from=... and to=... for trace
 
 Need discovery?
   -> docgraph_similar for related documents

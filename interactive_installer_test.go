@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +24,18 @@ func TestCmdInitDryRunDoesNotWriteSetupArtifacts(t *testing.T) {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("dry-run created %s", path)
 		}
+	}
+}
+
+func TestInitCompactProfileDryRunShowsServerArg(t *testing.T) {
+	projectDir := t.TempDir()
+
+	output := captureStderr(t, func() {
+		cmdInit([]string{"--dry-run", "--install-clients", "claude", "--tool-profile", "compact", projectDir})
+	})
+
+	if !strings.Contains(output, "--tool-profile compact") {
+		t.Fatalf("compact init dry-run output does not show server arg:\n%s", output)
 	}
 }
 
@@ -52,4 +66,32 @@ func TestConfirmParsesYesAndDefaultsNo(t *testing.T) {
 	if confirm(bytes.NewBufferString("\n"), &out, "Apply?") {
 		t.Fatal("empty answer should decline")
 	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	original := os.Stderr
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = writer
+	defer func() {
+		os.Stderr = original
+	}()
+
+	fn()
+
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
 var impactTool = mcp.NewTool("docgraph_impact",
 	mcp.WithDescription("Analyze what documents would be affected if this document changes. Traverses incoming references transitively. Start with depth=1 for focused results."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
@@ -19,6 +20,7 @@ var traceTool = mcp.NewTool("docgraph_trace",
 	mcp.WithString("from", mcp.Required(), mcp.Description("Starting document name or path")),
 	mcp.WithString("to", mcp.Required(), mcp.Description("Target document name or path")),
 )
+
 func (h *handler) getDocID(nodeID string) string {
 	if n := h.getNodeByID(nodeID); n != nil {
 		if n.Kind == "document" {
@@ -63,8 +65,10 @@ func (h *handler) resolveOrErr(s string) (*store.Node, *mcp.CallToolResult) {
 	}
 	return node, nil
 }
+
 type impactEntry struct{ docID, kind, via string }
 type traceHop struct{ from, kind string }
+
 func (h *handler) handleImpact(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	doc := getStringArg(req.GetArguments(), "document", "")
 	if doc == "" {
@@ -72,6 +76,11 @@ func (h *handler) handleImpact(ctx context.Context, req mcp.CallToolRequest) (*m
 	}
 	doc = sanitizeArg(doc, maxArgLength)
 	depth := getIntArg(req.GetArguments(), "depth", 2)
+
+	return h.renderImpact(doc, depth)
+}
+
+func (h *handler) renderImpact(doc string, depth int) (*mcp.CallToolResult, error) {
 	if depth < 1 {
 		depth = 1
 	} else if depth > 5 {
@@ -145,6 +154,11 @@ func (h *handler) handleTrace(ctx context.Context, req mcp.CallToolRequest) (*mc
 	}
 	from = sanitizeArg(from, maxArgLength)
 	to = sanitizeArg(to, maxArgLength)
+
+	return h.renderTrace(from, to)
+}
+
+func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, error) {
 	fNode, e := h.resolveOrErr(from)
 	if e != nil {
 		return e, nil
