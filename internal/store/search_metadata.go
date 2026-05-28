@@ -196,11 +196,6 @@ func audienceAllowed(gov *GovernanceRecord, requested string) bool {
 	return false
 }
 
-func splitMetadataList(value string) []string {
-	replacer := strings.NewReplacer("[", " ", "]", " ", "\"", " ", "'", " ", ",", " ", ";", " ", "\n", " ")
-	return strings.Fields(replacer.Replace(value))
-}
-
 func parseSearchDate(value string) (time.Time, bool) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -221,26 +216,12 @@ func dateAfter(value string, ref time.Time) bool {
 	return ok && t.After(dateOnly(ref))
 }
 
-func dateBefore(value string, ref time.Time) bool {
-	t, ok := parseSearchDate(value)
-	return ok && t.Before(dateOnly(ref))
-}
-
 func lastVerifiedFresh(value string, ref time.Time) bool {
 	t, ok := parseSearchDate(value)
 	if !ok {
 		return false
 	}
 	return !t.Before(dateOnly(ref).AddDate(-1, 0, 0)) && !t.After(dateOnly(ref))
-}
-
-func dateOnly(t time.Time) time.Time {
-	y, m, d := t.UTC().Date()
-	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
-}
-
-func normalizedSignal(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func equalFold(a, b string) bool {

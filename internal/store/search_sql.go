@@ -26,20 +26,6 @@ func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
-type nodeScanner interface {
-	Scan(dest ...any) error
-}
-
-func scanNode(rows nodeScanner) (Node, error) {
-	var n Node
-	err := rows.Scan(
-		&n.ID, &n.Kind, &n.Name, &n.QualifiedName,
-		&n.FilePath, &n.StartLine, &n.EndLine, &n.Level,
-		&n.Metadata, &n.BodyExcerpt, &n.UpdatedAt,
-	)
-	return n, err
-}
-
 func scanRankedNode(rows *sql.Rows) (Node, float64, error) {
 	var n Node
 	var rank float64
