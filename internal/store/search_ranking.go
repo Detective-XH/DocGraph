@@ -99,22 +99,6 @@ func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tag
 	return
 }
 
-func addCandidate(candidates map[string]*searchCandidate, n Node, source string, rank float64) *searchCandidate {
-	c, ok := candidates[n.ID]
-	if !ok {
-		c = &searchCandidate{
-			Node:     n,
-			BestRank: rank,
-			Sources:  make(map[string]bool),
-		}
-		candidates[n.ID] = c
-	} else if rank < c.BestRank {
-		c.BestRank = rank
-	}
-	c.Sources[source] = true
-	return c
-}
-
 func weightedTextScore(query string, terms []string, text string, weight float64) float64 {
 	text = strings.ToLower(text)
 	if text == "" {
