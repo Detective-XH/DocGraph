@@ -8,7 +8,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://go.dev)
-[![Single binary](https://img.shields.io/badge/binary-%7E16_MB_%C2%B7_zero_runtime_deps-brightgreen.svg)](#install)
+[![Single binary](https://img.shields.io/badge/binary-%7E13_MB_%C2%B7_zero_runtime_deps-brightgreen.svg)](#install)
 [![Formats](https://img.shields.io/badge/formats-.md_%C2%B7_.docx_%C2%B7_.html_%C2%B7_.pdf-orange.svg)](#what-gets-indexed)
 
 [![macOS](https://img.shields.io/badge/macOS-supported-blue.svg)](#install)
@@ -76,8 +76,8 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 | Metric | Value |
 |--------|-------|
 | Language | Go 1.25+ |
-| Binary size | ~16 MB |
-| Codebase | ~52,860 lines of Go (+ ~46,700 lines of tests) |
+| Binary size | ~13 MB |
+| Codebase | ~52,870 lines of Go (+ ~46,700 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 

@@ -8,10 +8,12 @@ import "database/sql"
 //
 // Node kinds: document, heading, definition, tag (plus code_file when the
 // code_doc pack is enabled).
-// Edge kinds: contains, references, wikilinks_to, similar_to, tagged, embeds,
-// links_external. The frontmatter related_to: field does NOT create a distinct
-// edge kind — it resolves into wikilinks_to. ("related_to" still appears in a
-// few drift-audit kind filters as a tolerated alias, but no resolver emits it.)
+// Edge kinds: contains, references, wikilinks_to, related_to, similar_to,
+// tagged, embeds, links_external. related_to is a recognized reference edge —
+// graph traversal, search ranking, and the drift audits all query it alongside
+// references/wikilinks_to/embeds — but the current parser/resolver never EMITS
+// one: a frontmatter related_to: field resolves into wikilinks_to. So normal
+// indexing produces zero related_to edges; they exist only if inserted directly.
 const SchemaSQL = `
 CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,

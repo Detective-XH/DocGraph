@@ -441,12 +441,12 @@ func extractText(n ast.Node, source []byte) string {
 	return buf.String()
 }
 
-// slugify converts a heading text to a URL-friendly slug.
-// Lowercase, replace whitespace runs with single "-", keep Unicode letters + digits + "-".
 // Slugify converts a heading or term into the lowercase, dash-separated anchor
-// slug used in heading node IDs (relPath#slug). Exported so the tools layer can
-// resolve a section= argument that was copied from a search-result anchor back
-// to its heading — the match must use this exact algorithm or it would drift.
+// slug used in heading node IDs (relPath#slug): lowercase, whitespace runs
+// collapsed to a single "-", keeping Unicode letters + digits + "-". Exported so
+// the tools layer can resolve a section= argument that was copied from a
+// search-result anchor back to its heading — the match must use this exact
+// algorithm or it would drift.
 func Slugify(s string) string {
 	s = strings.ToLower(s)
 	var buf strings.Builder
