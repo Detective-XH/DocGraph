@@ -1,21 +1,28 @@
 # Changelog
 
-## v0.2.2 — Streamlined MCP tool surface
+## v0.2.2 — 2026-05-28
 
-Consolidates the MCP tool surface to 12 tools.
+LLM callout opt-in, scope confirmation, and cost transparency.
+
+### Added
+
+- `--enable-embeddings` and `--enable-enrichment` CLI flags; both tools are off by default and must be explicitly opted in via `mcp.json` args.
+- `docgraph_enrichment action=pending` returns a pre-written ASCII scope tree with per-folder file counts, token estimates, per-model cost table, and sensitive path flags before any writes occur.
+- `docgraph_embeddings action=pending` now generates a one-time confirmation token; `action=store` requires the token before processing.
+- `engine=` parameter for `docgraph_similar`: `auto` (default), `tfidf`, or `neural`. Neural mode returns a clear error when embeddings are not enabled.
+- `docgraph_status` now includes a **LLM Callout Tools** section showing enabled/disabled state and pending counts for both tools.
+
+### Security
+
+- Vector payload cap (2 MB) enforced before deserialisation in `docgraph_embeddings action=store`.
+- Enrichment metadata payload cap (1 MB) enforced before deserialisation in `docgraph_enrichment action=process`.
+- Confirmation tokens use `crypto/rand` (16 bytes, 32-char hex); embeddings and enrichment tokens are kept in separate stores to prevent cross-tool reuse; 30-minute TTL with lazy sweep.
+- When 100% of pending documents are in sensitive-flagged paths, no token is generated and `action=store`/`action=process` are rejected.
 
 ### Breaking Changes
 
-Seven fine-grained tools are removed — use the facade equivalents:
-- `docgraph_references` → `docgraph_graph(operation=incoming)`
-- `docgraph_links` → `docgraph_graph(operation=outgoing)`
-- `docgraph_impact` → `docgraph_graph(operation=impact)`
-- `docgraph_trace` → `docgraph_graph(operation=trace)`
-- `docgraph_embeddings_pending` → `docgraph_embeddings(action=pending)`
-- `docgraph_embeddings_store` → `docgraph_embeddings(action=store)`
-- `docgraph_embeddings_clear` → `docgraph_embeddings(action=clear)`
-
-`--tool-profile full` and `--tool-profile dual` are deprecated and emit a warning. Installer-generated configs no longer write a `--tool-profile` flag.
+- `docgraph_embeddings` and `docgraph_enrichment` are no longer registered by default. Add `--enable-embeddings` / `--enable-enrichment` to `mcp.json` args to restore access.
+- `docgraph_enrichment` API changed: `operation=pending/store` → `action=pending/process`; `action=process` requires a `confirmation_token` from the preceding `action=pending` call.
 
 ---
 
