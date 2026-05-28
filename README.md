@@ -301,7 +301,7 @@ nodes when the `code_doc` domain pack is enabled.
 
 **Common rules:**
 - Respects `.gitignore` and `.docgraphignore`
-- Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, `.claude/worktrees` (agent git worktrees — full repo copies that would index as duplicates), and similar
+- Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, `.next`, `.cache`, `__pycache__`, `.codegraph`, `.docgraph`, `.obsidian`, and `.claude/worktrees` (agent git worktrees — full repo copies that would index as duplicates). These are pruned **unconditionally** — `--no-gitignore` lifts `.gitignore` rules but does **not** re-include them. (For Obsidian vaults this means the `.obsidian/` app-config dir is skipped while your notes are still fully indexed.)
 
 ## Domain Packs
 
