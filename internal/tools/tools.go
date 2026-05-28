@@ -70,8 +70,27 @@ func RegisterWorkspaceWithProfileOpts(s *server.MCPServer, w *workspace.Workspac
 }
 
 // pendingToken holds an expiring confirmation token for the two-step LLM callout workflow.
+//
+// docIDs is the set of doc_ids the originating action=pending call authorized.
+// process must reject any submitted doc_id not in this set, and remove the
+// doc_id from the set on a successful store. The token is deleted only when
+// the set is empty (batch fully processed) or the token has expired.
+//
+// docIDs may be nil for tools that have not yet been migrated to batch-bound
+// authorization (currently embeddings); a nil set means the token is treated
+// as single-use and consumed via LoadAndDelete on first use, preserving the
+// pre-existing behavior for that path.
+//
+// mu guards docIDs. We chose a per-token mutex stored alongside the value via
+// a pointer in the sync.Map rather than a handler-wide mutex because (a) it
+// keeps lock scope aligned with the data it protects, (b) it does not
+// serialize unrelated tokens' processing, and (c) it matches the per-entry
+// concurrency style already implied by sync.Map. MCP stdio currently
+// serializes handler calls, but we do not rely on that invariant silently.
 type pendingToken struct {
 	expiresAt time.Time
+	mu        sync.Mutex
+	docIDs    map[string]struct{}
 }
 
 type handler struct {
@@ -84,8 +103,8 @@ type handler struct {
 	enableEnrichment bool
 
 	// Separate maps prevent cross-tool token reuse — a shared map would allow a token from one tool's pending to authorize the other's processing step.
-	embeddingsPendingTokens sync.Map // map[string]pendingToken
-	enrichmentPendingTokens sync.Map // map[string]pendingToken
+	embeddingsPendingTokens sync.Map // map[string]*pendingToken
+	enrichmentPendingTokens sync.Map // map[string]*pendingToken
 }
 
 // newConfirmationToken generates a single-use 32-char hex token via crypto/rand.

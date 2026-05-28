@@ -98,14 +98,26 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 	}
 	var token string
 	if len(pendingDocs) > 0 && !callout.IsAllSensitive(paths) {
+		// Collect doc_ids across all projects — the token authorizes exactly
+		// the documents shown to the user in this pending call. process must
+		// reject any doc_id not in this set.
+		docIDs := make(map[string]struct{}, len(pendingDocs))
+		for _, r := range results {
+			for _, doc := range r.docs {
+				docIDs[doc.DocID] = struct{}{}
+			}
+		}
 		token = h.newConfirmationToken()
 		h.enrichmentPendingTokens.Range(func(k, v any) bool {
-			if v.(pendingToken).expiresAt.Before(time.Now()) {
+			if v.(*pendingToken).expiresAt.Before(time.Now()) {
 				h.enrichmentPendingTokens.Delete(k)
 			}
 			return true
 		})
-		h.enrichmentPendingTokens.Store(token, pendingToken{expiresAt: time.Now().Add(30 * time.Minute)})
+		h.enrichmentPendingTokens.Store(token, &pendingToken{
+			expiresAt: time.Now().Add(30 * time.Minute),
+			docIDs:    docIDs,
+		})
 	}
 
 	workspaceDir := h.projectRoot
@@ -162,16 +174,21 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 
-	// Validate confirmation token (single-use via LoadAndDelete).
+	// Validate confirmation token. The token authorizes a batch of doc_ids
+	// (bound at action=pending time) and is reusable for every doc in that
+	// batch until the set is exhausted or the token expires. We use Load (not
+	// LoadAndDelete) so a single user consent can drive a multi-doc batch.
 	token := sanitizeArg(getStringArg(args, "confirmation_token", ""), 64)
 	if token == "" {
 		return mcp.NewToolResultError("confirmation_token required. Call action=pending first to review scope — the output includes the token and a pre-written user message."), nil
 	}
-	raw, loaded := h.enrichmentPendingTokens.LoadAndDelete(token)
+	raw, loaded := h.enrichmentPendingTokens.Load(token)
 	if !loaded {
 		return mcp.NewToolResultError("Invalid confirmation_token. Call action=pending again to generate a new token."), nil
 	}
-	if raw.(pendingToken).expiresAt.Before(time.Now()) {
+	pt := raw.(*pendingToken)
+	if pt.expiresAt.Before(time.Now()) {
+		h.enrichmentPendingTokens.Delete(token)
 		return mcp.NewToolResultError("Confirmation token expired (30-minute limit). Call action=pending again to review scope and get a new token."), nil
 	}
 
@@ -222,6 +239,19 @@ func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallT
 		}
 	}
 
+	// Authorize doc_id against the batch the token was issued for, then store,
+	// then consume the doc_id from the set. We hold pt.mu across the store
+	// call so that membership check, store, and set mutation form one
+	// critical section per token — the cost is that two processes against the
+	// same token serialize on disk I/O, which is acceptable given MCP stdio
+	// already serializes handler calls today.
+	pt.mu.Lock()
+	if _, ok := pt.docIDs[docID]; !ok {
+		pt.mu.Unlock()
+		return mcp.NewToolResultError(fmt.Sprintf(
+			"doc_id %q was not in the authorized batch for this confirmation_token. Call action=pending again to authorize this document.",
+			docID)), nil
+	}
 	err = targetStore.UpsertAgentEnrichment(store.AgentEnrichment{
 		DocID:       docID,
 		Summary:     summary,
@@ -232,7 +262,14 @@ func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallT
 		Metadata:    tuples,
 	})
 	if err != nil {
+		pt.mu.Unlock()
 		return mcp.NewToolResultError(fmt.Sprintf("store enrichment: %v", err)), nil
+	}
+	delete(pt.docIDs, docID)
+	batchExhausted := len(pt.docIDs) == 0
+	pt.mu.Unlock()
+	if batchExhausted {
+		h.enrichmentPendingTokens.Delete(token)
 	}
 
 	return mcp.NewToolResultText(fmt.Sprintf(

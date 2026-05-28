@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/store"
-	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func TestParseToolProfile(t *testing.T) {
@@ -34,60 +33,68 @@ func TestParseToolProfile(t *testing.T) {
 	}
 }
 
-func TestGraphFacadeIncomingMatchesReferences(t *testing.T) {
+func TestGraphFacadeIncomingReturnsReferences(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	legacy, err := callTool(h, h.handleReferences, map[string]interface{}{"document": "b.md", "limit": float64(10)})
+	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "incoming", "document": "b.md", "limit": float64(10)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	facade, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "incoming", "document": "b.md", "limit": float64(10)})
-	if err != nil {
-		t.Fatal(err)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", extractText(res))
 	}
-	assertSameToolResult(t, facade, legacy)
+	text := extractText(res)
+	if !strings.Contains(text, "a.md") {
+		t.Fatalf("expected incoming output to list referrer a.md, got:\n%s", text)
+	}
 }
 
-func TestGraphFacadeOutgoingMatchesLinks(t *testing.T) {
+func TestGraphFacadeOutgoingReturnsLinks(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	legacy, err := callTool(h, h.handleLinks, map[string]interface{}{"document": "b.md", "limit": float64(10)})
+	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "outgoing", "document": "b.md", "limit": float64(10)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	facade, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "outgoing", "document": "b.md", "limit": float64(10)})
-	if err != nil {
-		t.Fatal(err)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", extractText(res))
 	}
-	assertSameToolResult(t, facade, legacy)
+	text := extractText(res)
+	if !strings.Contains(text, "d.md") {
+		t.Fatalf("expected outgoing output to list target d.md, got:\n%s", text)
+	}
 }
 
-func TestGraphFacadeImpactMatchesImpact(t *testing.T) {
+func TestGraphFacadeImpactReturnsAffectedDocs(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	legacy, err := callTool(h, h.handleImpact, map[string]interface{}{"document": "b.md", "depth": float64(2)})
+	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "impact", "document": "b.md", "depth": float64(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	facade, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "impact", "document": "b.md", "depth": float64(2)})
-	if err != nil {
-		t.Fatal(err)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", extractText(res))
 	}
-	assertSameToolResult(t, facade, legacy)
+	text := extractText(res)
+	if !strings.Contains(text, "a.md") || !strings.Contains(text, "c.md") {
+		t.Fatalf("expected impact output to list transitively-impacted a.md and c.md, got:\n%s", text)
+	}
 }
 
-func TestGraphFacadeTraceMatchesTrace(t *testing.T) {
+func TestGraphFacadeTraceFindsPath(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	legacy, err := callTool(h, h.handleTrace, map[string]interface{}{"from": "c.md", "to": "b.md"})
+	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "trace", "from": "c.md", "to": "b.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	facade, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "trace", "from": "c.md", "to": "b.md"})
-	if err != nil {
-		t.Fatal(err)
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", extractText(res))
 	}
-	assertSameToolResult(t, facade, legacy)
+	text := extractText(res)
+	if !strings.Contains(text, "Path found") {
+		t.Fatalf("expected trace output to report a path, got:\n%s", text)
+	}
 }
 
 func TestTraceNoPathMessage(t *testing.T) {
@@ -178,12 +185,3 @@ func newGraphFacadeTestHandler(t *testing.T) (*handler, *store.Store) {
 	return h, st
 }
 
-func assertSameToolResult(t *testing.T, got *mcp.CallToolResult, want *mcp.CallToolResult) {
-	t.Helper()
-	if got.IsError != want.IsError {
-		t.Fatalf("IsError mismatch: got %v want %v", got.IsError, want.IsError)
-	}
-	if gotText, wantText := extractText(got), extractText(want); gotText != wantText {
-		t.Fatalf("result mismatch\ngot:\n%s\nwant:\n%s", gotText, wantText)
-	}
-}

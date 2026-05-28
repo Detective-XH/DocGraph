@@ -244,8 +244,8 @@ func TestMCPTypeConfusion(t *testing.T) {
 		},
 		{
 			name:     "document as array",
-			toolName: "docgraph_references",
-			args:     map[string]interface{}{"document": []interface{}{1, 2, 3}},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "incoming", "document": []interface{}{1, 2, 3}},
 		},
 		{
 			name:     "query as boolean",
@@ -290,8 +290,8 @@ func TestMCPNullArguments(t *testing.T) {
 		},
 		{
 			name:     "null document",
-			toolName: "docgraph_references",
-			args:     map[string]interface{}{"document": nil},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "incoming", "document": nil},
 		},
 		{
 			name:     "null task",
@@ -331,8 +331,9 @@ func TestMCPPathTraversalViaDocument(t *testing.T) {
 
 	for _, payload := range traversalPayloads {
 		t.Run(payload, func(t *testing.T) {
-			raw := mcpCall(t, st, "docgraph_references", map[string]interface{}{
-				"document": payload,
+			raw := mcpCall(t, st, "docgraph_graph", map[string]interface{}{
+				"operation": "incoming",
+				"document":  payload,
 			})
 			resp := requireValidJSONRPC(t, raw)
 			text := getContentText(t, resp)
@@ -390,23 +391,23 @@ func TestMCPEmptyAndMissingArgs(t *testing.T) {
 		},
 		{
 			name:     "empty document string",
-			toolName: "docgraph_references",
-			args:     map[string]interface{}{"document": ""},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "incoming", "document": ""},
 		},
 		{
 			name:     "missing document entirely",
-			toolName: "docgraph_references",
-			args:     map[string]interface{}{},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "incoming"},
 		},
 		{
 			name:     "missing from/to for trace",
-			toolName: "docgraph_trace",
-			args:     map[string]interface{}{},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "trace"},
 		},
 		{
 			name:     "empty from/to for trace",
-			toolName: "docgraph_trace",
-			args:     map[string]interface{}{"from": "", "to": ""},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "trace", "from": "", "to": ""},
 		},
 		{
 			name:     "empty task for context",
@@ -415,8 +416,8 @@ func TestMCPEmptyAndMissingArgs(t *testing.T) {
 		},
 		{
 			name:     "missing all args for impact",
-			toolName: "docgraph_impact",
-			args:     map[string]interface{}{},
+			toolName: "docgraph_graph",
+			args:     map[string]interface{}{"operation": "impact"},
 		},
 	}
 

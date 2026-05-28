@@ -2,10 +2,12 @@ package tools
 
 import (
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 func insertToolEnrichmentDoc(t *testing.T, st *store.Store, id, hash string, hasFrontmatter bool) {
@@ -29,8 +31,18 @@ func insertToolEnrichmentDoc(t *testing.T, st *store.Store, id, hash string, has
 }
 
 // injectEnrichmentToken injects a valid token directly into the handler for test use.
-func injectEnrichmentToken(h *handler, token string) {
-	h.enrichmentPendingTokens.Store(token, pendingToken{expiresAt: time.Now().Add(30 * time.Minute)})
+// docIDs are the doc_ids this token authorizes; pass the same doc_id values the
+// test will later submit via action=process. An empty list yields a token whose
+// batch is already empty (rejects every doc_id).
+func injectEnrichmentToken(h *handler, token string, docIDs ...string) {
+	set := make(map[string]struct{}, len(docIDs))
+	for _, id := range docIDs {
+		set[id] = struct{}{}
+	}
+	h.enrichmentPendingTokens.Store(token, &pendingToken{
+		expiresAt: time.Now().Add(30 * time.Minute),
+		docIDs:    set,
+	})
 }
 
 func TestHandleEnrichmentPending_ReturnsFrontmatterlessDocs(t *testing.T) {
@@ -65,7 +77,7 @@ func TestHandleEnrichmentPending_ReturnsFrontmatterlessDocs(t *testing.T) {
 func TestHandleEnrichmentProcess_StoresSummaryAndAgentMetadata(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
-	injectEnrichmentToken(h, "test-tok-001")
+	injectEnrichmentToken(h, "test-tok-001", "a.pdf")
 
 	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
 		"confirmation_token": "test-tok-001",
@@ -115,7 +127,7 @@ func TestHandleEnrichmentProcess_StoresSummaryAndAgentMetadata(t *testing.T) {
 func TestHandleEnrichmentProcess_RejectsUnsupportedMetadata(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
-	injectEnrichmentToken(h, "test-tok-002")
+	injectEnrichmentToken(h, "test-tok-002", "a.pdf")
 
 	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
 		"confirmation_token": "test-tok-002",
@@ -135,7 +147,7 @@ func TestHandleEnrichmentProcess_RejectsUnsupportedMetadata(t *testing.T) {
 func TestHandleEnrichmentProcess_RequiresModelID(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
-	injectEnrichmentToken(h, "test-tok-003")
+	injectEnrichmentToken(h, "test-tok-003", "a.pdf")
 
 	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
 		"confirmation_token": "test-tok-003",
@@ -194,7 +206,10 @@ func TestHandleEnrichmentProcess_RejectsInvalidToken(t *testing.T) {
 
 func TestHandleEnrichmentProcess_RejectsExpiredToken(t *testing.T) {
 	h, _ := newTestHandler(t)
-	h.enrichmentPendingTokens.Store("expired-tok", pendingToken{expiresAt: time.Now().Add(-1 * time.Minute)})
+	h.enrichmentPendingTokens.Store("expired-tok", &pendingToken{
+		expiresAt: time.Now().Add(-1 * time.Minute),
+		docIDs:    map[string]struct{}{"a.pdf": {}},
+	})
 
 	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
 		"confirmation_token": "expired-tok",
@@ -217,7 +232,7 @@ func TestHandleEnrichmentProcess_RejectsExpiredToken(t *testing.T) {
 func TestHandleEnrichmentProcess_TokenIsConsumedOnce(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
-	injectEnrichmentToken(h, "single-use-tok")
+	injectEnrichmentToken(h, "single-use-tok", "a.pdf")
 
 	args := map[string]interface{}{
 		"confirmation_token": "single-use-tok",
@@ -237,6 +252,174 @@ func TestHandleEnrichmentProcess_TokenIsConsumedOnce(t *testing.T) {
 	}
 	if !res2.IsError {
 		t.Fatal("second use of same token must be rejected")
+	}
+}
+
+func TestHandleEnrichmentProcess_TokenAuthorizesEntireBatch(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	insertToolEnrichmentDoc(t, st, "b.pdf", "hash-b", false)
+	insertToolEnrichmentDoc(t, st, "c.pdf", "hash-c", false)
+	injectEnrichmentToken(h, "batch-tok", "a.pdf", "b.pdf", "c.pdf")
+
+	// All three docs must succeed on the same token.
+	for _, doc := range []struct{ id, hash string }{
+		{"a.pdf", "hash-a"},
+		{"b.pdf", "hash-b"},
+		{"c.pdf", "hash-c"},
+	} {
+		res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+			"confirmation_token": "batch-tok",
+			"doc_id":             doc.id,
+			"content_hash":       doc.hash,
+			"summary":            "ok",
+			"model_id":           "model",
+		})
+		if err != nil || res.IsError {
+			t.Fatalf("doc %s should succeed under batch token, got: err=%v res=%+v", doc.id, err, res)
+		}
+	}
+}
+
+func TestHandleEnrichmentProcess_TokenDeletedOnlyAfterLastDoc(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	insertToolEnrichmentDoc(t, st, "b.pdf", "hash-b", false)
+	injectEnrichmentToken(h, "two-doc-tok", "a.pdf", "b.pdf")
+
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "two-doc-tok",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "ok",
+		"model_id":           "model",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("first doc must succeed: err=%v res=%+v", err, res)
+	}
+	if _, ok := h.enrichmentPendingTokens.Load("two-doc-tok"); !ok {
+		t.Fatal("token must survive between docs in the same batch")
+	}
+
+	res, err = callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "two-doc-tok",
+		"doc_id":             "b.pdf",
+		"content_hash":       "hash-b",
+		"summary":            "ok",
+		"model_id":           "model",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("second doc must succeed: err=%v res=%+v", err, res)
+	}
+	if _, ok := h.enrichmentPendingTokens.Load("two-doc-tok"); ok {
+		t.Fatal("token must be deleted after the last authorized doc is processed")
+	}
+}
+
+func TestHandleEnrichmentProcess_RejectsUnauthorizedDocAndKeepsToken(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	insertToolEnrichmentDoc(t, st, "rogue.pdf", "hash-rogue", false)
+	injectEnrichmentToken(h, "scoped-tok", "a.pdf")
+
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "scoped-tok",
+		"doc_id":             "rogue.pdf",
+		"content_hash":       "hash-rogue",
+		"summary":            "should not store",
+		"model_id":           "model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error for doc_id not in authorized batch")
+	}
+	if !strings.Contains(extractText(res), "not in the authorized batch") {
+		t.Fatalf("expected unauthorized-batch message, got: %s", extractText(res))
+	}
+	if _, ok := h.enrichmentPendingTokens.Load("scoped-tok"); !ok {
+		t.Fatal("token must survive a rejected unauthorized doc_id")
+	}
+
+	// The originally authorized doc must still be processable on the same token.
+	res, err = callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "scoped-tok",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "ok",
+		"model_id":           "model",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("authorized doc must succeed after rejected sibling: err=%v res=%+v", err, res)
+	}
+}
+
+func TestHandleEnrichmentPending_AllSensitiveYieldsNoToken(t *testing.T) {
+	h, st := newTestHandler(t)
+	// Both paths sit under a sensitive-keyword folder ("secret" is in the
+	// callout package's sensitiveKeywords list), so IsAllSensitive is true
+	// and pending must not generate a confirmation token.
+	insertToolEnrichmentDoc(t, st, "secret/a.pdf", "hash-a", false)
+	insertToolEnrichmentDoc(t, st, "secret/b.pdf", "hash-b", false)
+
+	res, err := callTool(h, h.handleEnrichmentPending, map[string]interface{}{
+		"content_mode": "excerpt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	tokenCount := 0
+	h.enrichmentPendingTokens.Range(func(_, _ any) bool { tokenCount++; return true })
+	if tokenCount != 0 {
+		t.Fatalf("expected no token to be stored when all docs are sensitive, got %d", tokenCount)
+	}
+}
+
+func TestHandleEnrichmentProcess_ConcurrentBatchIsRaceFree(t *testing.T) {
+	// Exercises pt.mu by running two concurrent process calls against the same
+	// token with two distinct authorized doc_ids. Run under `go test -race`
+	// to catch any unguarded access to the docIDs set.
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	insertToolEnrichmentDoc(t, st, "b.pdf", "hash-b", false)
+	injectEnrichmentToken(h, "race-tok", "a.pdf", "b.pdf")
+
+	var wg sync.WaitGroup
+	results := make([]*mcp.CallToolResult, 2)
+	docs := []struct{ id, hash string }{
+		{"a.pdf", "hash-a"},
+		{"b.pdf", "hash-b"},
+	}
+	for i, d := range docs {
+		wg.Add(1)
+		go func(idx int, id, hash string) {
+			defer wg.Done()
+			res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+				"confirmation_token": "race-tok",
+				"doc_id":             id,
+				"content_hash":       hash,
+				"summary":            "ok",
+				"model_id":           "model",
+			})
+			if err != nil {
+				t.Errorf("concurrent process for %s returned err: %v", id, err)
+				return
+			}
+			results[idx] = res
+		}(i, d.id, d.hash)
+	}
+	wg.Wait()
+	for i, res := range results {
+		if res == nil || res.IsError {
+			t.Fatalf("concurrent process %d failed: %+v", i, res)
+		}
+	}
+	if _, ok := h.enrichmentPendingTokens.Load("race-tok"); ok {
+		t.Fatal("token must be deleted after both authorized docs are processed")
 	}
 }
 

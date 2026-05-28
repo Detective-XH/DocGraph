@@ -1,7 +1,6 @@
 package tools
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,23 +10,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Tool definitions
-// ---------------------------------------------------------------------------
-
-var referencesTool = mcp.NewTool("docgraph_references",
-	mcp.WithDescription("Find all documents that reference a given document (incoming links). Like codegraph_callers but for docs. For broad impact analysis, use docgraph_impact instead."),
-	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading to find references to")),
-	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
-)
-
-var linksTool = mcp.NewTool("docgraph_links",
-	mcp.WithDescription("Find all documents and headings that a given document links to (outgoing links). Like codegraph_callees but for docs."),
-	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
-	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
-)
-
-// ---------------------------------------------------------------------------
-// Shared helper
+// Shared helpers used by docgraph_graph facade operations (incoming, outgoing,
+// impact, trace).
 // ---------------------------------------------------------------------------
 
 func (h *handler) resolveDoc(document string) (*store.Node, error) {
@@ -53,21 +37,8 @@ func (h *handler) resolveDoc(document string) (*store.Node, error) {
 }
 
 // ---------------------------------------------------------------------------
-// Handlers
+// Renderers used by docgraph_graph facade operations
 // ---------------------------------------------------------------------------
-
-func (h *handler) handleReferences(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.GetArguments()
-
-	document := getStringArg(args, "document", "")
-	if document == "" {
-		return mcp.NewToolResultError("document parameter is required"), nil
-	}
-	document = sanitizeArg(document, maxArgLength)
-	limit := getIntArg(args, "limit", 10)
-
-	return h.renderIncomingLinks(document, limit)
-}
 
 func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallToolResult, error) {
 	node, err := h.resolveDoc(document)
@@ -110,19 +81,6 @@ func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallTool
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
-}
-
-func (h *handler) handleLinks(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.GetArguments()
-
-	document := getStringArg(args, "document", "")
-	if document == "" {
-		return mcp.NewToolResultError("document parameter is required"), nil
-	}
-	document = sanitizeArg(document, maxArgLength)
-	limit := getIntArg(args, "limit", 10)
-
-	return h.renderOutgoingLinks(document, limit)
 }
 
 func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallToolResult, error) {

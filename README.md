@@ -4,7 +4,7 @@
 
 ### Documentation knowledge graph MCP server for LLM agents
 
-**Governance metadata · Research provenance · Drift audit · Cross-reference tracking · Topic similarity · Multi-format**
+**MCP-native for LLM agents · CJK + Latin FTS5 · Multi-format graph**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://go.dev)
@@ -22,26 +22,54 @@
 
 </div>
 
-Documentation knowledge graph MCP server. Indexes `.md`, `.docx`, `.html`,
-`.pdf`, and optional code-documentation surfaces into SQLite, extracts
-cross-references and topic similarity, and exposes the graph through 12 MCP tools over stdio.
+**Govern your documents like code.** DocGraph indexes `.md`, `.docx`, `.html`, and `.pdf` into a graph and runs **drift audits** on them — stale policies, conflicting research claims, superseded ADRs, undocumented code exports — so you can review your doc corpus the way you review a codebase. Most doc tools index and search. DocGraph also tells you what's broken.
 
-Three domain packs are enabled by default — **governance** (`status`, `owner`,
-`review_due`, `sensitivity`…), **research_provenance** (`claim_id`, `evidence`,
-`confidence`…), and **entity** (`entity_type`, `canonical_name`…) — plus three
-opt-in packs for policy/SOP drift, assessment contradiction audit, and code
-documentation surfaces. No code knowledge required for the governance and
-research packs: they work on any document collection (.md, .docx, .html, .pdf).
+### Hero 1 — Drift audit on documents
 
-DocGraph's value scales with **how connected your documents are**:
+```
+docgraph_context format=drift_audit
+```
 
-- **High value**: docs that cross-reference each other (`[links](other.md)`, `[[wikilinks]]`, frontmatter `related_to`), or carry governance/research frontmatter (`status`, `owner`, `claim_id`, `confidence`). Examples: ADR networks, Obsidian vaults, policy/SOP libraries, research assessment corpora.
-- **Medium value**: docs with shared tags/frontmatter but few explicit links. Similarity engine still finds topic clusters.
-- **Low value**: flat, isolated documents with no links or metadata. `grep` is simpler and faster.
+Surfaces 13 finding codes across the corpus. A few:
 
-The LLM-facing installation and tool-selection guide lives in [`AGENTS.md`](AGENTS.md).
+- `policy.stale_review` — SOPs past their `review_due` date
+- `policy.superseded_referenced` — docs citing a replaced policy
+- `policy.conflicting` — same scope, contradicting rules
+- `research.competing_interpretations` — claims that contradict
+- `research.unverified_evidence` — assertions with no source
+- `research.superseded_claim` — research overruled by a newer claim
+- `code.undocumented_export` — code surfaces with no doc anchor
+- `code.unanchored_feature` — approved features with no code anchor
 
-Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
+Three packs ship enabled (`governance`, `research_provenance`, `entity`); three are opt-in (`policy_process`, `assessment_drift`, `code_doc`). No code knowledge required for governance and research — they work on any document collection.
+
+### Hero 2 — Opt-in agent enrichment, with provenance
+
+Your `.docx` / `.pdf` / `.html` archive has no frontmatter, so it can't be governed. DocGraph fixes that without compromising authority:
+
+```
+agent → docgraph_enrichment(action=pending)
+        ↳ scope (N docs), per-model USD estimate, sensitive paths flagged, token
+user  → "go"
+agent → runs LLM with its own key, then action=process for each doc
+        ↳ stored as source=agent_inferred (advisory, lowest authority)
+        ↳ logged with model_id, agent_id, run_id, content_hash
+```
+
+The confirmation token is **batch-bound** — one user consent authorizes the docs the user saw, no more. Sensitive paths silently refuse to issue tokens. `agent_inferred` metadata never overrides human frontmatter or extracted document metadata. **Your governance survives the agent.** DocGraph itself never calls an LLM. Enable with `--enable-enrichment`.
+
+### Other differentiators
+
+- **CJK + Latin search that actually works** — FTS5 trigram, not English-only
+- **CodeGraph-style graph traversal for docs** — `docgraph_graph operation=incoming|outgoing|impact|trace`
+- **Workspace fan-out** — one MCP server, N projects, one query
+- **Reviewable evidence packs** — `format=context_pack` returns indexed text, hashes, citations, impact (not a RAG black box)
+
+### What it isn't
+
+A RAG black box, an embedding shop, or a Notion replacement. It's the layer that makes your existing docs auditable, navigable, and safe to feed to LLMs.
+
+The LLM-facing tool-selection guide is in [`AGENTS.md`](AGENTS.md). Single binary, zero runtime dependencies, indexes hundreds of docs in seconds.
 
 ## At a Glance
 
@@ -49,7 +77,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~52,900 lines of Go (+ ~46,450 lines of tests) |
+| Codebase | ~52,810 lines of Go (+ ~46,590 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -149,11 +177,11 @@ Available skills bundled in the binary:
 | 5 | `docgraph_explore` | Survey multiple related documents in one call |
 | 6 | `docgraph_files` | Indexed file tree |
 | 7 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags; `engine=auto/tfidf/neural`) |
-| 8 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, LLM callout tool state (embeddings/enrichment enabled/disabled + required flags), pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
+| 8 | `docgraph_status` | Index health (files/nodes/edges/unresolved/DB size), per-project stats, neural embedding model totals, domain packs, metadata quality, enrichment coverage, LLM callout tool state (embeddings/enrichment enabled/disabled + required flags), and compact drift audit summary when policy/research findings exist |
 | 9 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 10 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
-| 11 | `docgraph_enrichment` | Pull or store inferred summaries and metadata for documents without frontmatter |
-| 12 | `docgraph_embeddings` | Neural embedding workflow facade. `action=pending` lists docs needing embeddings; `action=store` saves a vector and recomputes neural similarity; `action=clear` deletes all embeddings for a model |
+| 11 | `docgraph_enrichment` | **Opt-in** (`--enable-enrichment`). Pull or store inferred summaries and metadata for documents without frontmatter. Facade: `action=pending\|process` |
+| 12 | `docgraph_embeddings` | **Opt-in** (`--enable-embeddings`). Neural embedding workflow facade. `action=pending` lists docs needing embeddings; `action=store` saves a vector and recomputes neural similarity; `action=clear` deletes all embeddings for a model |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
@@ -163,17 +191,18 @@ For agent-facing fit checks and tool-selection rules, see [`AGENTS.md`](AGENTS.m
 
 ## Agent Metadata Enrichment
 
-DocGraph can enrich `.docx`, `.pdf`, `.html`, and other documents that do not
-have frontmatter. The workflow is agent-driven: DocGraph returns candidate
-content, and the caller decides which model or provider to use.
+The full mechanics of the opt-in workflow summarized at the top of this README. DocGraph never calls an LLM itself — your agent does, with its own key, then writes results back with provenance.
 
-1. `docgraph_enrichment(operation=pending, limit, content_mode)` returns
+1. `docgraph_enrichment(action=pending, limit, content_mode)` returns
    frontmatter-less documents without a current inferred summary, including
-   `doc_id`, `content_hash`, and bounded content.
+   `doc_id`, `content_hash`, and bounded content. The response includes a
+   `CONFIRMATION_TOKEN` bound to the batch of doc_ids it lists.
 2. The agent infers a concise summary and optional metadata JSON object.
-3. `docgraph_enrichment(operation=store, doc_id, content_hash, summary,
-   metadata, confidence, model_id, provider, agent_id)` stores the result.
-   `model_id` is required, and `content_hash` must match the pending response.
+3. `docgraph_enrichment(action=process, doc_id, content_hash, summary,
+   metadata, confidence, model_id, provider, agent_id, confirmation_token)`
+   stores the result. `model_id` is required, `content_hash` must match the
+   pending response, and `confirmation_token` must be the one returned by
+   `action=pending` for a doc_id in that batch.
 
 Inferred metadata never overrides authored frontmatter or extracted document
 metadata. Stored summaries appear in `docgraph_node`, `docgraph_context`, and
@@ -182,7 +211,7 @@ Normal retrieval uses one current enrichment per document, while DocGraph keeps
 an internal run ledger with model, provider, agent, and content-hash provenance.
 Agent-inferred summaries and metadata are advisory context, not source of truth.
 
-**Privacy**: `docgraph_enrichment operation=pending` returns document content that your
+**Privacy**: `docgraph_enrichment action=pending` returns document content that your
 agent may send to an external provider. Get user consent before proceeding.
 
 ## Semantic Similarity
@@ -218,7 +247,7 @@ In workspace mode, both embedding workflows automatically locate the correct per
 
 **Privacy**: pending embedding actions return document content that your agent will send to an external provider. Get user consent before proceeding.
 
-Use `docgraph_embeddings_clear(model_id)` or `docgraph_embeddings(action=clear, model_id)` to delete all vectors for a model and reclaim space. `docgraph_status` shows a Neural Embeddings table listing stored models, total vectors, and stale count.
+Use `docgraph_embeddings(action=clear, model_id)` to delete all vectors for a model and reclaim space. `docgraph_status` shows a Neural Embeddings table listing stored models, total vectors, and stale count.
 
 ## Node and Edge Kinds
 
@@ -608,13 +637,13 @@ DocGraph is inspired by [CodeGraph](https://github.com/colbymchenry/codegraph),
 which builds a knowledge graph from source code symbols using tree-sitter
 and SQLite. DocGraph adopts the same core design:
 
-- **Schema**: `nodes` + `edges` + `files` + `unresolved_refs` + FTS5 + `section_chunks` + `section_chunks_fts` + `document_metadata` + `governance_metadata` + `research_metadata` + `domain_packs` + `domain_pack_fields` + `entities` + `entity_mentions` — the graph model extended with section snapshots, section-level search, normalized governance metadata, research provenance, domain schema pack registration, and entity/source graph primitives. Forward-only versioned migrations replace `CREATE TABLE IF NOT EXISTS`.
+- **Schema**: `nodes` + `edges` + `files` + `unresolved_refs` + FTS5 + `section_chunks` + `section_chunks_fts` + `document_metadata` + `governance_metadata` + `research_metadata` + `domain_packs` + `domain_pack_fields` + `entities` + `entity_mentions` — the graph model extended with section snapshots, section-level search, normalized governance metadata, research provenance, domain schema pack registration, and entity/source graph primitives. Schema is bootstrapped via idempotent `CREATE TABLE/INDEX/TRIGGER IF NOT EXISTS` on every open; if the shape needs to change, delete `.docgraph/` and reindex.
 - **Pipeline**: scan → parse → store → resolve — the same four-phase indexing
   pipeline, with goldmark replacing tree-sitter for AST extraction.
 - **Two-phase resolution**: raw links are extracted during parsing, then
   resolved in a separate pass after all files are indexed — identical to
   CodeGraph's `UnresolvedReference` → `ReferenceResolver` pattern.
-- **MCP tool surface**: 12 tools with CodeGraph-compatible naming for context, search, node, explore, similar, files, status, tags, and history. Graph traversal (`docgraph_graph`) and neural embeddings (`docgraph_embeddings`) are facade tools that group fine-grained operations behind a single dispatch parameter, keeping agent-facing instructions compact.
+- **MCP tool surface**: 10 default tools with CodeGraph-compatible naming for context, search, node, explore, similar, files, status, tags, history, plus graph traversal (`docgraph_graph`); 2 additional LLM-callout tools (`docgraph_embeddings`, `docgraph_enrichment`) register only when their `--enable-*` flags are set. Graph traversal, embeddings, and enrichment are facade tools that group fine-grained operations behind a single dispatch parameter, keeping agent-facing instructions compact.
 
 Where they diverge: DocGraph is written in Go (single binary, no Node.js
 runtime), uses the trigram tokenizer for CJK support, and adds workspace

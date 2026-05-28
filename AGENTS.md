@@ -22,7 +22,7 @@ Score one point for each "yes".
 | Are there more than 20 relevant `.md`, `.docx`, `.html`, `.pdf`, or opt-in code documentation files? | Indexing has enough surface area to help. | Direct file reads are probably cheaper. |
 | Do docs cross-reference each other with Markdown links or `[[wikilinks]]`? | DocGraph turns links into graph edges. | Link graph value is low. |
 | Is there frontmatter with tags, status, owner, confidence, entities, or `related_to` fields? | Metadata filters and governance/research context can help. | Metadata features add little. |
-| Do users ask impact questions such as "what references this?" or "what breaks if this changes?" | Use references, impact, trace, and context packs. | Basic search may be enough. |
+| Do users ask impact questions such as "what references this?" or "what breaks if this changes?" | Use `docgraph_graph` (operation=incoming/impact/trace) and `docgraph_context` packs. | Basic search may be enough. |
 | Is this a multi-project workspace? | Workspace mode searches across child projects. | Single-project tools may be enough. |
 | Are there CJK documents or mixed Latin/CJK search needs? | FTS5 trigram search helps. | Standard search tools may be enough. |
 | Are there policy/process or research assessment docs that need drift checks? | `format=drift_audit` can surface advisory findings. | Drift audit packs add little. |

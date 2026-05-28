@@ -28,7 +28,10 @@ func ParseToolProfile(raw string) (ToolProfile, error) {
 	}
 }
 
-func registerTools(s *server.MCPServer, h *handler, profile ToolProfile, opts RegisterOpts) {
+// registerTools accepts a ToolProfile to preserve the public Register*
+// signatures, but only the compact profile is implemented today
+// (ParseToolProfile collapses every input to ToolProfileCompact).
+func registerTools(s *server.MCPServer, h *handler, _ ToolProfile, opts RegisterOpts) {
 	registerCompactTools(s, h, opts)
 }
 

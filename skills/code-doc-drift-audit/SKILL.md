@@ -96,7 +96,7 @@ docgraph_node path="<file-path>"
 To see what currently references a code file:
 
 ```
-docgraph_references path="<code-file-path>"
+docgraph_graph operation=incoming document="<code-file-path>"
 ```
 
 ---

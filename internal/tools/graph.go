@@ -1,24 +1,12 @@
 package tools
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
-)
-
-var impactTool = mcp.NewTool("docgraph_impact",
-	mcp.WithDescription("Analyze what documents would be affected if this document changes. Traverses incoming references transitively. Start with depth=1 for focused results."),
-	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path")),
-	mcp.WithNumber("depth", mcp.Description("Levels of transitive references (default 2, max 5; use 1 for focused results)")),
-)
-var traceTool = mcp.NewTool("docgraph_trace",
-	mcp.WithDescription("Find the shortest reference path between two documents via BFS. Max 10 hops. Use to understand HOW two docs are connected; use docgraph_impact to find WHAT would be affected by a change."),
-	mcp.WithString("from", mcp.Required(), mcp.Description("Starting document name or path")),
-	mcp.WithString("to", mcp.Required(), mcp.Description("Target document name or path")),
 )
 
 func (h *handler) getDocID(nodeID string) string {
@@ -68,17 +56,6 @@ func (h *handler) resolveOrErr(s string) (*store.Node, *mcp.CallToolResult) {
 
 type impactEntry struct{ docID, kind, via string }
 type traceHop struct{ from, kind string }
-
-func (h *handler) handleImpact(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	doc := getStringArg(req.GetArguments(), "document", "")
-	if doc == "" {
-		return mcp.NewToolResultError("document parameter is required"), nil
-	}
-	doc = sanitizeArg(doc, maxArgLength)
-	depth := getIntArg(req.GetArguments(), "depth", 2)
-
-	return h.renderImpact(doc, depth)
-}
 
 func (h *handler) renderImpact(doc string, depth int) (*mcp.CallToolResult, error) {
 	if depth < 1 {
@@ -146,18 +123,6 @@ func (h *handler) renderImpact(doc string, depth int) (*mcp.CallToolResult, erro
 	fmt.Fprintf(&sb, "\nTotal: %d documents affected\n", total)
 	return mcp.NewToolResultText(sb.String()), nil
 }
-func (h *handler) handleTrace(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := req.GetArguments()
-	from, to := getStringArg(args, "from", ""), getStringArg(args, "to", "")
-	if from == "" || to == "" {
-		return mcp.NewToolResultError("both 'from' and 'to' parameters are required"), nil
-	}
-	from = sanitizeArg(from, maxArgLength)
-	to = sanitizeArg(to, maxArgLength)
-
-	return h.renderTrace(from, to)
-}
-
 func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, error) {
 	fNode, e := h.resolveOrErr(from)
 	if e != nil {

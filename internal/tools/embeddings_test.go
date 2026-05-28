@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,8 +26,18 @@ func newTestHandler(t *testing.T) (*handler, *store.Store) {
 }
 
 // injectEmbeddingsToken injects a valid embeddings token for test use.
-func injectEmbeddingsToken(h *handler, token string) {
-	h.embeddingsPendingTokens.Store(token, pendingToken{expiresAt: timeNowForTest().Add(30 * time.Minute)})
+// docIDs are the doc_ids this token authorizes for action=store; pass the same
+// doc_id values the test will later submit. Empty list yields a token whose
+// batch is already empty (rejects every doc_id).
+func injectEmbeddingsToken(h *handler, token string, docIDs ...string) {
+	set := make(map[string]struct{}, len(docIDs))
+	for _, id := range docIDs {
+		set[id] = struct{}{}
+	}
+	h.embeddingsPendingTokens.Store(token, &pendingToken{
+		expiresAt: timeNowForTest().Add(30 * time.Minute),
+		docIDs:    set,
+	})
 }
 
 func timeNowForTest() time.Time { return time.Now() }
@@ -35,213 +46,6 @@ func callTool(_ *handler, toolFn func(context.Context, mcp.CallToolRequest) (*mc
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = args
 	return toolFn(context.Background(), req)
-}
-
-// ---------------------------------------------------------------------------
-// handleEmbeddingsPending
-// ---------------------------------------------------------------------------
-
-func TestHandleEmbeddingsPending_MissingModelID(t *testing.T) {
-	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEmbeddingsPending, map[string]any{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Error("expected error result when model_id is missing")
-	}
-}
-
-func TestHandleEmbeddingsPending_NoDocs(t *testing.T) {
-	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEmbeddingsPending, map[string]any{
-		"model_id": "test-model",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("unexpected error: %v", res.Content)
-	}
-	text := extractText(res)
-	if !strings.Contains(text, "0 documents") {
-		t.Errorf("expected '0 documents' in output, got: %s", text)
-	}
-}
-
-func TestHandleEmbeddingsPending_DocAppears(t *testing.T) {
-	h, st := newTestHandler(t)
-	nodes := []store.Node{
-		{ID: "a.md", Kind: "document", Name: "A", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 5, BodyExcerpt: "some text", UpdatedAt: 1},
-	}
-	if err := st.InsertNodes(nodes); err != nil {
-		t.Fatal(err)
-	}
-	res, err := callTool(h, h.handleEmbeddingsPending, map[string]any{
-		"model_id":     "test-model",
-		"content_mode": "excerpt",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("unexpected error: %v", res.Content)
-	}
-	text := extractText(res)
-	if !strings.Contains(text, "a.md") {
-		t.Errorf("expected doc a.md in pending output, got: %s", text)
-	}
-	if !strings.Contains(text, "PRIVACY") {
-		t.Error("expected PRIVACY warning in output")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// handleEmbeddingsStore
-// ---------------------------------------------------------------------------
-
-func TestHandleEmbeddingsStore_MissingDocID(t *testing.T) {
-	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEmbeddingsStore, map[string]any{
-		"model_id":     "m",
-		"vector":       "[0.1,0.2]",
-		"content_hash": "h",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Error("expected error when doc_id missing")
-	}
-}
-
-func TestHandleEmbeddingsStore_BadVectorJSON(t *testing.T) {
-	h, st := newTestHandler(t)
-	st.InsertNodes([]store.Node{
-		{ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md", FilePath: "doc.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
-	})
-	res, err := callTool(h, h.handleEmbeddingsStore, map[string]any{
-		"doc_id":       "doc.md",
-		"model_id":     "m",
-		"vector":       "not-json",
-		"content_hash": "h",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Error("expected error for invalid vector JSON")
-	}
-}
-
-func TestHandleEmbeddingsStore_EmptyVector(t *testing.T) {
-	h, st := newTestHandler(t)
-	st.InsertNodes([]store.Node{
-		{ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md", FilePath: "doc.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
-	})
-	res, err := callTool(h, h.handleEmbeddingsStore, map[string]any{
-		"doc_id":       "doc.md",
-		"model_id":     "m",
-		"vector":       "[]",
-		"content_hash": "h",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Error("expected error for empty vector")
-	}
-}
-
-func TestHandleEmbeddingsStore_Success(t *testing.T) {
-	h, st := newTestHandler(t)
-	st.InsertNodes([]store.Node{
-		{ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md", FilePath: "doc.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
-	})
-	res, err := callTool(h, h.handleEmbeddingsStore, map[string]any{
-		"doc_id":       "doc.md",
-		"model_id":     "m",
-		"vector":       "[0.1, 0.2, 0.3]",
-		"content_hash": "hash1",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("unexpected error: %v", res.Content)
-	}
-	text := extractText(res)
-	if !strings.Contains(text, "doc.md") {
-		t.Errorf("expected doc_id in success message, got: %s", text)
-	}
-
-	// Verify the embedding was actually stored.
-	emb, err := st.GetEmbedding("doc.md", "m")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if emb == nil {
-		t.Error("embedding not found in store after successful store")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// handleEmbeddingsClear
-// ---------------------------------------------------------------------------
-
-func TestHandleEmbeddingsClear_MissingModelID(t *testing.T) {
-	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEmbeddingsClear, map[string]any{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.IsError {
-		t.Error("expected error when model_id missing")
-	}
-}
-
-func TestHandleEmbeddingsClear_DeletesEmbeddings(t *testing.T) {
-	h, st := newTestHandler(t)
-	nodes := []store.Node{
-		{ID: "a.md", Kind: "document", Name: "A", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
-		{ID: "b.md", Kind: "document", Name: "B", QualifiedName: "b.md", FilePath: "b.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
-	}
-	st.InsertNodes(nodes)
-	st.UpsertEmbedding(store.Embedding{DocID: "a.md", ModelID: "m", Dim: 2, Vector: []float64{1, 0}, ContentHash: "h"})
-	st.UpsertEmbedding(store.Embedding{DocID: "b.md", ModelID: "m", Dim: 2, Vector: []float64{0, 1}, ContentHash: "h"})
-
-	res, err := callTool(h, h.handleEmbeddingsClear, map[string]any{
-		"model_id": "m",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("unexpected error: %v", res.Content)
-	}
-	text := extractText(res)
-	if !strings.Contains(text, "2") {
-		t.Errorf("expected deletion count 2 in output, got: %s", text)
-	}
-
-	// Confirm embeddings are gone.
-	emb, _ := st.GetEmbedding("a.md", "m")
-	if emb != nil {
-		t.Error("embedding for a.md should be deleted")
-	}
-}
-
-func TestHandleEmbeddingsClear_EmptyStore(t *testing.T) {
-	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEmbeddingsClear, map[string]any{
-		"model_id": "nonexistent-model",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("unexpected error on empty store clear: %v", res.Content)
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +107,7 @@ func TestEmbeddingsFacadeStoreSucceedsWithToken(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	injectEmbeddingsToken(h, "tok-store-001")
+	injectEmbeddingsToken(h, "tok-store-001", "doc.md")
 	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
 		"action":             "store",
 		"confirmation_token": "tok-store-001",
@@ -327,7 +131,7 @@ func TestEmbeddingsFacadeStoreTokenIsConsumedOnce(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	injectEmbeddingsToken(h, "single-use-emb")
+	injectEmbeddingsToken(h, "single-use-emb", "doc.md")
 	args := map[string]any{
 		"action":             "store",
 		"confirmation_token": "single-use-emb",
@@ -345,7 +149,166 @@ func TestEmbeddingsFacadeStoreTokenIsConsumedOnce(t *testing.T) {
 	}
 }
 
-func TestEmbeddingsFacadeClearMatchesLegacy(t *testing.T) {
+func TestEmbeddingsFacadeStoreTokenAuthorizesEntireBatch(t *testing.T) {
+	h, st := newTestHandler(t)
+	for _, id := range []string{"a.md", "b.md", "c.md"} {
+		if err := st.InsertNodes([]store.Node{
+			{ID: id, Kind: "document", Name: id, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	injectEmbeddingsToken(h, "batch-emb", "a.md", "b.md", "c.md")
+
+	for _, id := range []string{"a.md", "b.md", "c.md"} {
+		res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
+			"action":             "store",
+			"confirmation_token": "batch-emb",
+			"doc_id":             id,
+			"model_id":           "m",
+			"vector":             "[0.1, 0.2]",
+			"content_hash":       "h",
+		})
+		if err != nil || res.IsError {
+			t.Fatalf("doc %s should succeed under batch token: err=%v res=%+v", id, err, res)
+		}
+	}
+}
+
+func TestEmbeddingsFacadeStoreTokenDeletedOnlyAfterLastDoc(t *testing.T) {
+	h, st := newTestHandler(t)
+	for _, id := range []string{"a.md", "b.md"} {
+		if err := st.InsertNodes([]store.Node{
+			{ID: id, Kind: "document", Name: id, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	injectEmbeddingsToken(h, "two-doc-emb", "a.md", "b.md")
+
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
+		"action":             "store",
+		"confirmation_token": "two-doc-emb",
+		"doc_id":             "a.md",
+		"model_id":           "m",
+		"vector":             "[0.1]",
+		"content_hash":       "h",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("first doc must succeed: err=%v res=%+v", err, res)
+	}
+	if _, ok := h.embeddingsPendingTokens.Load("two-doc-emb"); !ok {
+		t.Fatal("token must survive between docs in the same batch")
+	}
+
+	res, err = callTool(h, h.handleEmbeddingsFacade, map[string]any{
+		"action":             "store",
+		"confirmation_token": "two-doc-emb",
+		"doc_id":             "b.md",
+		"model_id":           "m",
+		"vector":             "[0.2]",
+		"content_hash":       "h",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("second doc must succeed: err=%v res=%+v", err, res)
+	}
+	if _, ok := h.embeddingsPendingTokens.Load("two-doc-emb"); ok {
+		t.Fatal("token must be deleted after the last authorized doc is processed")
+	}
+}
+
+func TestEmbeddingsFacadeStoreRejectsUnauthorizedDocAndKeepsToken(t *testing.T) {
+	h, st := newTestHandler(t)
+	for _, id := range []string{"a.md", "rogue.md"} {
+		if err := st.InsertNodes([]store.Node{
+			{ID: id, Kind: "document", Name: id, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	injectEmbeddingsToken(h, "scoped-emb", "a.md")
+
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
+		"action":             "store",
+		"confirmation_token": "scoped-emb",
+		"doc_id":             "rogue.md",
+		"model_id":           "m",
+		"vector":             "[0.1]",
+		"content_hash":       "h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error for doc_id not in authorized batch")
+	}
+	if !strings.Contains(extractText(res), "not in the authorized batch") {
+		t.Fatalf("expected unauthorized-batch message, got: %s", extractText(res))
+	}
+	if _, ok := h.embeddingsPendingTokens.Load("scoped-emb"); !ok {
+		t.Fatal("token must survive a rejected unauthorized doc_id")
+	}
+
+	res, err = callTool(h, h.handleEmbeddingsFacade, map[string]any{
+		"action":             "store",
+		"confirmation_token": "scoped-emb",
+		"doc_id":             "a.md",
+		"model_id":           "m",
+		"vector":             "[0.1]",
+		"content_hash":       "h",
+	})
+	if err != nil || res.IsError {
+		t.Fatalf("authorized doc must succeed after rejected sibling: err=%v res=%+v", err, res)
+	}
+}
+
+func TestEmbeddingsFacadeStoreConcurrentBatchIsRaceFree(t *testing.T) {
+	// Exercises pt.mu by running two concurrent store calls against the same
+	// token with two distinct authorized doc_ids.
+	h, st := newTestHandler(t)
+	for _, id := range []string{"a.md", "b.md"} {
+		if err := st.InsertNodes([]store.Node{
+			{ID: id, Kind: "document", Name: id, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	injectEmbeddingsToken(h, "race-emb", "a.md", "b.md")
+
+	var wg sync.WaitGroup
+	results := make([]*mcp.CallToolResult, 2)
+	docs := []string{"a.md", "b.md"}
+	for i, id := range docs {
+		wg.Add(1)
+		go func(idx int, docID string) {
+			defer wg.Done()
+			res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
+				"action":             "store",
+				"confirmation_token": "race-emb",
+				"doc_id":             docID,
+				"model_id":           "m",
+				"vector":             "[0.1]",
+				"content_hash":       "h",
+			})
+			if err != nil {
+				t.Errorf("concurrent store for %s returned err: %v", docID, err)
+				return
+			}
+			results[idx] = res
+		}(i, id)
+	}
+	wg.Wait()
+	for i, res := range results {
+		if res == nil || res.IsError {
+			t.Fatalf("concurrent store %d failed: %+v", i, res)
+		}
+	}
+	if _, ok := h.embeddingsPendingTokens.Load("race-emb"); ok {
+		t.Fatal("token must be deleted after both authorized docs are processed")
+	}
+}
+
+func TestEmbeddingsFacadeClearActuallyDeletes(t *testing.T) {
 	h, st := newTestHandler(t)
 	nodes := []store.Node{
 		{ID: "a.md", Kind: "document", Name: "A", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1},
@@ -359,24 +322,19 @@ func TestEmbeddingsFacadeClearMatchesLegacy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	legacy, err := callTool(h, h.handleEmbeddingsClear, map[string]any{"model_id": "m"})
+
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{"action": "clear", "model_id": "m"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %s", extractText(res))
 	}
 	for _, docID := range []string{"a.md", "b.md"} {
-		if err := st.UpsertEmbedding(store.Embedding{DocID: docID, ModelID: "m", Dim: 2, Vector: []float64{1, 0}, ContentHash: "h"}); err != nil {
-			t.Fatal(err)
+		emb, _ := st.GetEmbedding(docID, "m")
+		if emb != nil {
+			t.Errorf("embedding for %s should be deleted after action=clear", docID)
 		}
-	}
-	facade, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{"action": "clear", "model_id": "m"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if legacy.IsError || facade.IsError {
-		t.Fatalf("unexpected error: legacy=%v facade=%v", legacy.IsError, facade.IsError)
-	}
-	if extractText(facade) != extractText(legacy) {
-		t.Fatalf("facade clear output did not match legacy.\nlegacy:\n%s\nfacade:\n%s", extractText(legacy), extractText(facade))
 	}
 }
 
@@ -456,7 +414,7 @@ func TestEmbeddingsFacadeStoreRejectsInvalidVectorJSON(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	injectEmbeddingsToken(h, "tok-invalid-vec-json")
+	injectEmbeddingsToken(h, "tok-invalid-vec-json", "doc.md")
 	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
 		"action":             "store",
 		"doc_id":             "doc.md",
@@ -480,7 +438,7 @@ func TestEmbeddingsFacadeStoreRejectsEmptyVector(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	injectEmbeddingsToken(h, "tok-empty-vec")
+	injectEmbeddingsToken(h, "tok-empty-vec", "doc.md")
 	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
 		"action":             "store",
 		"doc_id":             "doc.md",

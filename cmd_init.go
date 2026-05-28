@@ -143,7 +143,7 @@ func planGitignore(path, line string) initPlanItem {
 	return initPlanItem{action: "update", path: path, detail: "append " + line}
 }
 
-func initProject(root string, toolProfile tools.ToolProfile) error {
+func initProject(root string, _ tools.ToolProfile) error {
 	if err := os.MkdirAll(filepath.Join(root, ".docgraph"), 0o755); err != nil {
 		return err
 	}
