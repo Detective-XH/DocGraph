@@ -84,6 +84,48 @@ func TestScanDirSkipDirs(t *testing.T) {
 			t.Fatalf("expected visible.md, got %s", entries[0].RelPath)
 		}
 	})
+
+	t.Run(".claude/worktrees is skipped but .claude/skills is indexed", func(t *testing.T) {
+		tmp := t.TempDir()
+
+		wtFile := filepath.Join(tmp, ".claude", "worktrees", "agent-x", "dup.md")
+		if err := os.MkdirAll(filepath.Dir(wtFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(wtFile, []byte("# duplicate repo copy"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		skillFile := filepath.Join(tmp, ".claude", "skills", "foo", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(skillFile), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(skillFile, []byte("# skill"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		entries, err := ScanDir(tmp)
+		if err != nil {
+			t.Fatalf("ScanDir: %v", err)
+		}
+		for _, e := range entries {
+			if strings.Contains(e.RelPath, "worktrees") {
+				t.Fatalf("worktree copy should be skipped, got %s", e.RelPath)
+			}
+		}
+		var sawSkill bool
+		for _, e := range entries {
+			if e.RelPath == filepath.Join(".claude", "skills", "foo", "SKILL.md") {
+				sawSkill = true
+			}
+		}
+		if !sawSkill {
+			names := make([]string, len(entries))
+			for i, e := range entries {
+				names[i] = e.RelPath
+			}
+			t.Fatalf("expected .claude/skills/foo/SKILL.md to be indexed, got %v", names)
+		}
+	})
 }
 
 func TestScanDirMaxSize(t *testing.T) {

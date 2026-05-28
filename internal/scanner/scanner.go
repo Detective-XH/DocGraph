@@ -70,6 +70,11 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 				return filepath.SkipDir
 			}
 			dirRel, _ := filepath.Rel(root, path)
+			// Skip agent git worktrees — they are full repo copies that would
+			// index duplicate documents and pollute search/similarity results.
+			if dirRel == filepath.Join(".claude", "worktrees") {
+				return filepath.SkipDir
+			}
 			if !opts.NoGitignore {
 				if nested := loadGitignore(filepath.Join(path, ".gitignore")); nested != nil {
 					nested.baseDir = dirRel
@@ -145,7 +150,7 @@ func loadGitignore(path string) *gitignore {
 		return nil
 	}
 	gi := &gitignore{}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || line[0] == '#' {
 			continue

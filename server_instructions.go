@@ -10,7 +10,7 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 |--------|--------------|
 | Topic or task context | docgraph_context (start here; includes bounded source content) |
 | Exact lookup or status | docgraph_search, docgraph_node, docgraph_files, docgraph_status |
-| Reference and impact analysis | docgraph_graph |
+| Reference, impact, trace | docgraph_graph operation=incoming/outgoing/impact/trace |
 | Topically similar docs | docgraph_similar (TF-IDF + tags; engine=auto/tfidf/neural; docs only, not heading anchors) |
 | Multi-doc survey | docgraph_explore |
 | List or filter by tag | docgraph_tags |
