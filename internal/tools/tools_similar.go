@@ -115,6 +115,11 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Documents similar to %q\n\nFound %d similar documents.\n", node.Name, len(deduped))
 
+	if len(deduped) == 0 {
+		sb.WriteString("\nNo similarity edges for this document. This is expected for topically unique documents (e.g. a README or changelog) — it does NOT mean the document is unconnected. To find explicit relationships, use docgraph_graph operation=incoming/outgoing for citation links, or docgraph_context for topic neighbours.\n")
+		return mcp.NewToolResultText(sb.String()), nil
+	}
+
 	for i, e := range deduped {
 		otherID := e.Target
 		if otherID == node.ID {

@@ -69,7 +69,7 @@ The confirmation token is **batch-bound** — one user consent authorizes the do
 
 A RAG black box, an embedding shop, or a Notion replacement. It's the layer that makes your existing docs auditable, navigable, and safe to feed to LLMs.
 
-The LLM-facing tool-selection guide is in [`AGENTS.md`](AGENTS.md). Single binary, zero runtime dependencies, indexes hundreds of docs in seconds.
+The LLM-facing fit guide — when DocGraph helps a project and when to use your own tools instead — is in [`AGENTS.md`](AGENTS.md). Single binary, zero runtime dependencies, indexes hundreds of docs in seconds.
 
 ## At a Glance
 
@@ -77,7 +77,7 @@ The LLM-facing tool-selection guide is in [`AGENTS.md`](AGENTS.md). Single binar
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~52,810 lines of Go (+ ~46,630 lines of tests) |
+| Codebase | ~52,840 lines of Go (+ ~46,700 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -187,7 +187,7 @@ Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
 to drill into specifics.
 
-For agent-facing fit checks and tool-selection rules, see [`AGENTS.md`](AGENTS.md).
+For the agent-facing decision of whether to install/use DocGraph at all, see [`AGENTS.md`](AGENTS.md). Once installed, tool-selection rules are in the MCP `serverInstructions` (injected each session) and the per-tool descriptions.
 
 ## Agent Metadata Enrichment
 

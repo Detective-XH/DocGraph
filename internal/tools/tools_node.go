@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -14,7 +15,7 @@ var nodeTool = mcp.NewTool("docgraph_node",
 	mcp.WithDescription("Get a single document or heading's full details: metadata, structure, and cross-references. Use 'section' to read the full content of a specific heading section from the source file. For multiple documents, use docgraph_explore instead."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading qualified name (e.g. 'docs/guide.md' or 'guide.md#Installation')")),
 	mcp.WithBoolean("includeBody", mcp.Description("Include body excerpt (default true)")),
-	mcp.WithString("section", mcp.Description("Return full content of a specific heading section (by name)")),
+	mcp.WithString("section", mcp.Description("Return full content of a specific heading section. Accepts the exact heading text OR the anchor slug shown in search results (e.g. 'Neural Embeddings (agent-driven)' or 'neural-embeddings-agent-driven').")),
 )
 
 func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -144,6 +145,19 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 			if headings[i].Name == section {
 				target = &headings[i]
 				break
+			}
+		}
+		if target == nil {
+			// Fall back to the anchor slug shown in search results. Heading node
+			// IDs are relPath#slug (parser.Slugify of the heading text), so an
+			// agent that pastes the "#slug" suffix from a search hit — or the raw
+			// heading text in any casing — resolves via the same slug algorithm.
+			want := parser.Slugify(strings.TrimPrefix(section, "#"))
+			for i := range headings {
+				if _, slug, ok := strings.Cut(headings[i].ID, "#"); ok && slug == want {
+					target = &headings[i]
+					break
+				}
 			}
 		}
 		if target == nil {
