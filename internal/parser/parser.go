@@ -104,7 +104,7 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 		switch v := n.(type) {
 		case *ast.Heading:
 			txt := extractText(v, source)
-			slug := slugify(txt)
+			slug := Slugify(txt)
 			slugCount[slug]++
 			if slugCount[slug] > 1 {
 				slug = fmt.Sprintf("%s-%d", slug, slugCount[slug])
@@ -287,7 +287,7 @@ func extractDefinitions(body []byte, bodyStartLine int, relPath, docID string, h
 			continue
 		}
 
-		slug := "def-" + slugify(term)
+		slug := "def-" + Slugify(term)
 		slugCount[slug]++
 		if slugCount[slug] > 1 {
 			slug = fmt.Sprintf("%s-%d", slug, slugCount[slug])
@@ -443,7 +443,11 @@ func extractText(n ast.Node, source []byte) string {
 
 // slugify converts a heading text to a URL-friendly slug.
 // Lowercase, replace whitespace runs with single "-", keep Unicode letters + digits + "-".
-func slugify(s string) string {
+// Slugify converts a heading or term into the lowercase, dash-separated anchor
+// slug used in heading node IDs (relPath#slug). Exported so the tools layer can
+// resolve a section= argument that was copied from a search-result anchor back
+// to its heading — the match must use this exact algorithm or it would drift.
+func Slugify(s string) string {
 	s = strings.ToLower(s)
 	var buf strings.Builder
 	prevDash := false

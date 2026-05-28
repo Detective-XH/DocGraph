@@ -336,3 +336,78 @@ func TestHandleNode_SectionFallbackLiveRead(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// handleNode --section — slug anchor resolves to heading (N-1 friction fix)
+// ---------------------------------------------------------------------------
+
+func TestHandleNode_SectionBySlugAnchor(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	docNode := store.Node{
+		ID: "doc.md", Kind: "document", Name: "Doc", QualifiedName: "doc.md",
+		FilePath: "doc.md", StartLine: 1, EndLine: 20, BodyExcerpt: "body", UpdatedAt: 1,
+	}
+	// Heading whose slug differs from its display name (spaces, casing, punctuation).
+	headingNode := store.Node{
+		ID: "doc.md#neural-embeddings-agent-driven", Kind: "heading",
+		Name: "Neural Embeddings (agent-driven)", QualifiedName: "doc.md#Neural Embeddings (agent-driven)",
+		FilePath: "doc.md", StartLine: 3, EndLine: 10, Level: 1, UpdatedAt: 1,
+	}
+	if err := st.InsertNodes([]store.Node{docNode, headingNode}); err != nil {
+		t.Fatal(err)
+	}
+	chunk := store.SectionChunk{
+		NodeID: "doc.md#neural-embeddings-agent-driven", FilePath: "doc.md",
+		StartLine: 3, EndLine: 10, Text: "## Neural Embeddings\nVectors pushed back via the tool.",
+	}
+	if err := st.UpsertSectionChunks([]store.SectionChunk{chunk}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Pass the slug anchor exactly as it appears in search results — not the raw heading text.
+	res, err := callTool(h, h.handleNode, map[string]interface{}{
+		"document": "doc.md",
+		"section":  "neural-embeddings-agent-driven",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error resolving section by slug: %v", res.Content)
+	}
+	if text := extractText(res); !strings.Contains(text, "Vectors pushed back") {
+		t.Errorf("expected section content resolved via slug anchor, got: %s", text)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// handleSimilar — empty result returns actionable guidance (F-4 expectation gap)
+// ---------------------------------------------------------------------------
+
+func TestHandleSimilar_EmptyGivesGuidance(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	docNode := store.Node{
+		ID: "unique.md", Kind: "document", Name: "Unique", QualifiedName: "unique.md",
+		FilePath: "unique.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body", UpdatedAt: 1,
+	}
+	if err := st.InsertNodes([]store.Node{docNode}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleSimilar, map[string]interface{}{"document": "unique.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+	if !strings.Contains(text, "Found 0 similar documents") {
+		t.Errorf("expected zero-count line, got: %s", text)
+	}
+	if !strings.Contains(text, "operation=incoming/outgoing") {
+		t.Errorf("expected actionable guidance pointing to docgraph_graph, got: %s", text)
+	}
+}
+
