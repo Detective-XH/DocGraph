@@ -2,7 +2,11 @@ package tools
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/Detective-XH/docgraph/internal/workspace"
@@ -17,11 +21,28 @@ func Register(s *server.MCPServer, st *store.Store, projectRoot string) func(boo
 	return RegisterWithProfile(s, st, projectRoot, ToolProfileCompact)
 }
 
+// RegisterOpts configures which opt-in LLM callout tools are registered.
+// Both default to false — tools are not registered unless explicitly enabled.
+type RegisterOpts struct {
+	EnableEmbeddings bool
+	EnableEnrichment bool
+}
+
 // RegisterWithProfile registers the MCP tools selected by profile and returns
 // a func(bool) to set the indexing flag.
 func RegisterWithProfile(s *server.MCPServer, st *store.Store, projectRoot string, profile ToolProfile) func(bool) {
-	h := &handler{store: st, projectRoot: projectRoot}
-	registerTools(s, h, profile)
+	return RegisterWithProfileOpts(s, st, projectRoot, profile, RegisterOpts{})
+}
+
+// RegisterWithProfileOpts is like RegisterWithProfile but accepts opt-in tool flags.
+func RegisterWithProfileOpts(s *server.MCPServer, st *store.Store, projectRoot string, profile ToolProfile, opts RegisterOpts) func(bool) {
+	h := &handler{
+		store:            st,
+		projectRoot:      projectRoot,
+		enableEmbeddings: opts.EnableEmbeddings,
+		enableEnrichment: opts.EnableEnrichment,
+	}
+	registerTools(s, h, profile, opts)
 	return h.indexing.Store
 }
 
@@ -34,9 +55,23 @@ func RegisterWorkspace(s *server.MCPServer, w *workspace.Workspace) func(bool) {
 // RegisterWorkspaceWithProfile registers the MCP tools selected by profile for
 // a workspace and returns the same indexing-flag setter.
 func RegisterWorkspaceWithProfile(s *server.MCPServer, w *workspace.Workspace, profile ToolProfile) func(bool) {
-	h := &handler{workspace: w}
-	registerTools(s, h, profile)
+	return RegisterWorkspaceWithProfileOpts(s, w, profile, RegisterOpts{})
+}
+
+// RegisterWorkspaceWithProfileOpts is like RegisterWorkspaceWithProfile but accepts opt-in tool flags.
+func RegisterWorkspaceWithProfileOpts(s *server.MCPServer, w *workspace.Workspace, profile ToolProfile, opts RegisterOpts) func(bool) {
+	h := &handler{
+		workspace:        w,
+		enableEmbeddings: opts.EnableEmbeddings,
+		enableEnrichment: opts.EnableEnrichment,
+	}
+	registerTools(s, h, profile, opts)
 	return h.indexing.Store
+}
+
+// pendingToken holds an expiring confirmation token for the two-step LLM callout workflow.
+type pendingToken struct {
+	expiresAt time.Time
 }
 
 type handler struct {
@@ -44,6 +79,20 @@ type handler struct {
 	workspace   *workspace.Workspace
 	projectRoot string
 	indexing    atomic.Bool
+
+	enableEmbeddings bool
+	enableEnrichment bool
+
+	// Separate maps prevent cross-tool token reuse — a shared map would allow a token from one tool's pending to authorize the other's processing step.
+	embeddingsPendingTokens sync.Map // map[string]pendingToken
+	enrichmentPendingTokens sync.Map // map[string]pendingToken
+}
+
+// newConfirmationToken generates a single-use 32-char hex token via crypto/rand.
+func (h *handler) newConfirmationToken() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func (h *handler) guardIndexing(fn server.ToolHandlerFunc) server.ToolHandlerFunc {

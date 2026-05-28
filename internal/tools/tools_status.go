@@ -14,7 +14,7 @@ import (
 )
 
 var statusTool = mcp.NewTool("docgraph_status",
-	mcp.WithDescription("Index health: file count, node count, edge count, unresolved references, DB size. Use to verify the index is ready before other operations, or to inspect embedding model state, domain packs, and drift findings. Metadata quality scores (0–100) reflect frontmatter completeness; deductions for missing status, owner, or review_due are the most common and do not affect content reliability."),
+	mcp.WithDescription("Index health: file count, node count, edge count, unresolved references, DB size. Use to verify the index is ready before other operations, or to inspect embedding model state, LLM callout tool state (docgraph_embeddings/docgraph_enrichment enabled/disabled + required flags), domain packs, and drift findings. Metadata quality scores (0–100) reflect frontmatter completeness; deductions for missing status, owner, or review_due are the most common and do not affect content reliability."),
 )
 
 func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -64,6 +64,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		appendEmbeddingStats(&sb, allEmbStats)
 		appendWorkspaceDomainPacks(&sb, h)
 		appendWorkspaceMetadataQualityStats(&sb, h)
+		appendLLMCalloutState(&sb, h)
 	} else {
 		stats, err := h.store.GetStats()
 		if err != nil {
@@ -115,6 +116,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 		}
 
 		appendDriftAuditStats(&sb, h.store)
+		appendLLMCalloutState(&sb, h)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
@@ -128,7 +130,7 @@ func appendEnrichmentStats(sb *strings.Builder, stats store.EnrichmentStats) {
 		fmt.Fprintf(sb, " | Stale: %d", stats.StaleDocs)
 	}
 	sb.WriteString("\n")
-	sb.WriteString("Use `docgraph_enrichment operation=pending` for the pull-then-push enrichment workflow.\n")
+	sb.WriteString("Use `docgraph_enrichment action=pending` for the pull-then-push enrichment workflow.\n")
 }
 
 func appendMetadataQualityStats(sb *strings.Builder, stats store.MetadataQualityStats) {
@@ -351,5 +353,72 @@ func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
 		note := packCapabilityNote(agg.pack)
 		sb.WriteString(note)
 		sb.WriteByte('\n')
+	}
+}
+
+// appendLLMCalloutState appends the LLM Callout Tools section to the status
+// output. When both tools are disabled (default), it shows a short opt-in
+// notice. When either is enabled, it shows real stats.
+func appendLLMCalloutState(sb *strings.Builder, h *handler) {
+	embEnabled := h.enableEmbeddings
+	enrichEnabled := h.enableEnrichment
+
+	// Decide section header: include "(opt-in)" only when both are disabled.
+	if !embEnabled && !enrichEnabled {
+		sb.WriteString("\n### LLM Callout Tools (opt-in)\n")
+		sb.WriteString("  docgraph_embeddings : disabled  (--enable-embeddings to activate)\n")
+		sb.WriteString("  docgraph_enrichment : disabled  (--enable-enrichment to activate)\n")
+		sb.WriteString("  Note: these tools send document content to an external LLM provider.\n")
+		return
+	}
+
+	sb.WriteString("\n### LLM Callout Tools\n")
+
+	// Embeddings line.
+	if embEnabled {
+		var totalVectors int
+		if h.workspace != nil {
+			for _, p := range h.workspace.Projects {
+				if stats, err := p.Store.GetEmbeddingModelStats(); err == nil {
+					for _, s := range stats {
+						totalVectors += s.Total
+					}
+				}
+			}
+		} else if h.store != nil {
+			if stats, err := h.store.GetEmbeddingModelStats(); err == nil {
+				for _, s := range stats {
+					totalVectors += s.Total
+				}
+			}
+		}
+		fmt.Fprintf(sb, "  docgraph_embeddings : enabled   — %d vectors stored\n", totalVectors)
+	} else {
+		sb.WriteString("  docgraph_embeddings : disabled  (--enable-embeddings to activate)\n")
+	}
+
+	// Enrichment line.
+	if enrichEnabled {
+		var enriched, pending int
+		if h.workspace != nil {
+			for _, p := range h.workspace.Projects {
+				if stats, err := p.Store.GetEnrichmentStats(); err == nil {
+					enriched += stats.EnrichedDocs
+					pending += stats.EligibleDocs - stats.EnrichedDocs
+					if pending < 0 {
+						pending = 0
+					}
+				}
+			}
+		} else if h.store != nil {
+			if stats, err := h.store.GetEnrichmentStats(); err == nil {
+				enriched = stats.EnrichedDocs
+				pending = stats.EligibleDocs - stats.EnrichedDocs
+				pending = max(pending, 0)
+			}
+		}
+		fmt.Fprintf(sb, "  docgraph_enrichment : enabled   — %d enriched, %d pending\n", enriched, pending)
+	} else {
+		sb.WriteString("  docgraph_enrichment : disabled  (--enable-enrichment to activate)\n")
 	}
 }

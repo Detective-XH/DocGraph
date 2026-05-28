@@ -39,11 +39,18 @@ func cmdServe(args []string) {
 	profileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
+	enableEmbeddings := fset.Bool("enable-embeddings", false, "Register docgraph_embeddings (sends content to external LLM provider)")
+	enableEnrichment := fset.Bool("enable-enrichment", false, "Register docgraph_enrichment (sends content to external LLM provider)")
 	fset.Parse(args)
 
 	profile, err := tools.ParseToolProfile(*profileRaw)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	regOpts := tools.RegisterOpts{
+		EnableEmbeddings: *enableEmbeddings,
+		EnableEnrichment: *enableEnrichment,
 	}
 
 	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
@@ -57,7 +64,7 @@ func cmdServe(args []string) {
 		defer w.Close()
 		w.NoGitignore = noGitignore
 		w.SimilarityThreshold = similarityThreshold
-		setIndexing := tools.RegisterWorkspaceWithProfile(srv, w, profile)
+		setIndexing := tools.RegisterWorkspaceWithProfileOpts(srv, w, profile, regOpts)
 		doSync := func() {
 			defer setIndexing(false)
 			w.IndexAll()
@@ -91,7 +98,7 @@ func cmdServe(args []string) {
 		warm := dbExists(path)
 		st := openStore(path)
 		defer st.Close()
-		setIndexing := tools.RegisterWithProfile(srv, st, absRoot, profile)
+		setIndexing := tools.RegisterWithProfileOpts(srv, st, absRoot, profile, regOpts)
 		doSync := func() {
 			defer setIndexing(false)
 			if err := indexStore(absRoot, st); err != nil {

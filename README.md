@@ -49,7 +49,7 @@ Single binary. Zero runtime dependencies. Indexes hundreds of docs in seconds.
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~16 MB |
-| Codebase | ~52,220 lines of Go (+ ~45,980 lines of tests) |
+| Codebase | ~52,900 lines of Go (+ ~46,450 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -82,8 +82,8 @@ docgraph pack disable [--workspace] <pack-id> <path>             # Disable a dom
 docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--threshold N] [--no-gitignore] --path <path>     # MCP stdio server (single project)
-docgraph serve [--threshold N] [--no-gitignore] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] [--enable-embeddings] [--enable-enrichment] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] [--enable-embeddings] [--enable-enrichment] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 docgraph version                             # Print build version
 ```
 
@@ -148,8 +148,8 @@ Available skills bundled in the binary:
 | 4 | `docgraph_node` | Single document details with metadata, structure, and edges |
 | 5 | `docgraph_explore` | Survey multiple related documents in one call |
 | 6 | `docgraph_files` | Indexed file tree |
-| 7 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags) |
-| 8 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
+| 7 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags; `engine=auto/tfidf/neural`) |
+| 8 | `docgraph_status` | Index health, per-project stats, schema version, domain packs, LLM callout tool state (embeddings/enrichment enabled/disabled + required flags), pending reindex/migration state, and compact drift audit summary when policy/research findings exist |
 | 9 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
 | 10 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
 | 11 | `docgraph_enrichment` | Pull or store inferred summaries and metadata for documents without frontmatter |

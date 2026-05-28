@@ -28,6 +28,11 @@ func insertToolEnrichmentDoc(t *testing.T, st *store.Store, id, hash string, has
 	}
 }
 
+// injectEnrichmentToken injects a valid token directly into the handler for test use.
+func injectEnrichmentToken(h *handler, token string) {
+	h.enrichmentPendingTokens.Store(token, pendingToken{expiresAt: time.Now().Add(30 * time.Minute)})
+}
+
 func TestHandleEnrichmentPending_ReturnsFrontmatterlessDocs(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
@@ -49,23 +54,28 @@ func TestHandleEnrichmentPending_ReturnsFrontmatterlessDocs(t *testing.T) {
 	if strings.Contains(text, "b.md") {
 		t.Fatalf("frontmatter document should not be pending, got: %s", text)
 	}
-	if !strings.Contains(text, "PRIVACY") {
-		t.Fatalf("expected privacy warning, got: %s", text)
+	if !strings.Contains(text, "RELAY") {
+		t.Fatalf("expected RELAY section in pending output, got: %s", text)
+	}
+	if !strings.Contains(text, "CONFIRMATION_TOKEN") {
+		t.Fatalf("expected CONFIRMATION_TOKEN in pending output, got: %s", text)
 	}
 }
 
-func TestHandleEnrichmentStore_StoresSummaryAndAgentMetadata(t *testing.T) {
+func TestHandleEnrichmentProcess_StoresSummaryAndAgentMetadata(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	injectEnrichmentToken(h, "test-tok-001")
 
-	res, err := callTool(h, h.handleEnrichmentStore, map[string]interface{}{
-		"doc_id":       "a.pdf",
-		"content_hash": "hash-a",
-		"summary":      "Agent summary.",
-		"metadata":     `{"status":"draft","confidence":"medium","review_due":"2026-12-31","tags":["policy","pdf"]}`,
-		"confidence":   0.8,
-		"model_id":     "test-model",
-		"agent_id":     "test-agent",
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "test-tok-001",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "Agent summary.",
+		"metadata":           `{"status":"draft","confidence":"medium","review_due":"2026-12-31","tags":["policy","pdf"]}`,
+		"confidence":         0.8,
+		"model_id":           "test-model",
+		"agent_id":           "test-agent",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -102,15 +112,17 @@ func TestHandleEnrichmentStore_StoresSummaryAndAgentMetadata(t *testing.T) {
 	}
 }
 
-func TestHandleEnrichmentStore_RejectsUnsupportedMetadata(t *testing.T) {
+func TestHandleEnrichmentProcess_RejectsUnsupportedMetadata(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	injectEnrichmentToken(h, "test-tok-002")
 
-	res, err := callTool(h, h.handleEnrichmentStore, map[string]interface{}{
-		"doc_id":       "a.pdf",
-		"content_hash": "hash-a",
-		"metadata":     `{"nested":{"unsupported":true}}`,
-		"model_id":     "test-model",
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "test-tok-002",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"metadata":           `{"nested":{"unsupported":true}}`,
+		"model_id":           "test-model",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -120,14 +132,16 @@ func TestHandleEnrichmentStore_RejectsUnsupportedMetadata(t *testing.T) {
 	}
 }
 
-func TestHandleEnrichmentStore_RequiresModelID(t *testing.T) {
+func TestHandleEnrichmentProcess_RequiresModelID(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	injectEnrichmentToken(h, "test-tok-003")
 
-	res, err := callTool(h, h.handleEnrichmentStore, map[string]interface{}{
-		"doc_id":       "a.pdf",
-		"content_hash": "hash-a",
-		"summary":      "Agent summary.",
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "test-tok-003",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "Agent summary.",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,12 +151,101 @@ func TestHandleEnrichmentStore_RequiresModelID(t *testing.T) {
 	}
 }
 
-func TestHandleEnrichmentFacade_RoutesOperations(t *testing.T) {
+func TestHandleEnrichmentProcess_RequiresToken(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"doc_id":       "a.pdf",
+		"content_hash": "hash-a",
+		"summary":      "Agent summary.",
+		"model_id":     "test-model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error when confirmation_token is missing")
+	}
+	if !strings.Contains(extractText(res), "confirmation_token required") {
+		t.Fatalf("expected token-required message, got: %s", extractText(res))
+	}
+}
+
+func TestHandleEnrichmentProcess_RejectsInvalidToken(t *testing.T) {
+	h, _ := newTestHandler(t)
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "bad-token",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "summary",
+		"model_id":           "model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error for invalid token")
+	}
+	if !strings.Contains(extractText(res), "Invalid confirmation_token") {
+		t.Fatalf("expected invalid-token message, got: %s", extractText(res))
+	}
+}
+
+func TestHandleEnrichmentProcess_RejectsExpiredToken(t *testing.T) {
+	h, _ := newTestHandler(t)
+	h.enrichmentPendingTokens.Store("expired-tok", pendingToken{expiresAt: time.Now().Add(-1 * time.Minute)})
+
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		"confirmation_token": "expired-tok",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "summary",
+		"model_id":           "model",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.IsError {
+		t.Fatal("expected error for expired token")
+	}
+	if !strings.Contains(extractText(res), "expired") {
+		t.Fatalf("expected expiry message, got: %s", extractText(res))
+	}
+}
+
+func TestHandleEnrichmentProcess_TokenIsConsumedOnce(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
+	injectEnrichmentToken(h, "single-use-tok")
+
+	args := map[string]interface{}{
+		"confirmation_token": "single-use-tok",
+		"doc_id":             "a.pdf",
+		"content_hash":       "hash-a",
+		"summary":            "ok",
+		"model_id":           "model",
+	}
+	res, err := callTool(h, h.handleEnrichmentProcess, args)
+	if err != nil || res.IsError {
+		t.Fatalf("first call failed: %v / %v", err, res)
+	}
+	// Second use of the same token must fail.
+	res2, err := callTool(h, h.handleEnrichmentProcess, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res2.IsError {
+		t.Fatal("second use of same token must be rejected")
+	}
+}
+
+func TestHandleEnrichmentFacade_RoutesActions(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 
 	res, err := callTool(h, h.handleEnrichment, map[string]interface{}{
-		"operation":    "pending",
+		"action":       "pending",
 		"content_mode": "excerpt",
 	})
 	if err != nil {
@@ -154,31 +257,20 @@ func TestHandleEnrichmentFacade_RoutesOperations(t *testing.T) {
 	if text := extractText(res); !strings.Contains(text, "a.pdf") {
 		t.Fatalf("expected pending output to include a.pdf, got: %s", text)
 	}
-
-	res, err = callTool(h, h.handleEnrichment, map[string]interface{}{
-		"operation":    "store",
-		"doc_id":       "a.pdf",
-		"content_hash": "hash-a",
-		"summary":      "Facade summary.",
-		"model_id":     "test-model",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.IsError {
-		t.Fatalf("unexpected store error: %v", res.Content)
-	}
 }
 
-func TestHandleEnrichmentFacade_RejectsUnknownOperation(t *testing.T) {
+func TestHandleEnrichmentFacade_RejectsUnknownAction(t *testing.T) {
 	h, _ := newTestHandler(t)
 	res, err := callTool(h, h.handleEnrichment, map[string]interface{}{
-		"operation": "unknown",
+		"action": "unknown",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.IsError {
-		t.Fatal("expected error for unknown operation")
+		t.Fatal("expected error for unknown action")
+	}
+	if !strings.Contains(extractText(res), "pending, process") {
+		t.Fatalf("expected valid action list, got: %s", extractText(res))
 	}
 }

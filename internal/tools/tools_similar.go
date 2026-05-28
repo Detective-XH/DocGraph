@@ -14,6 +14,7 @@ var similarTool = mcp.NewTool("docgraph_similar",
 	mcp.WithDescription("Find documents that are topically similar to a given document, even without explicit links. Uses TF-IDF text similarity + shared references + tag overlap. If neural embeddings have been stored via docgraph_embeddings action=store, results also include neural similarity scores (engine: neural). For explicit link tracking, use docgraph_graph instead. Returns empty if no similarity edges have been computed for the document (check docgraph_status → edge count). Accepts document paths only — heading anchors (doc.md#heading) return empty."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path (document paths only; heading anchors return empty)")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
+	mcp.WithString("engine", mcp.Description("Similarity engine: auto (default), tfidf, or neural. neural requires --enable-embeddings; returns an error if the server was not started with that flag.")),
 )
 
 func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -24,6 +25,10 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 	document = sanitizeArg(document, maxArgLength)
 	limit := getIntArg(args, "limit", 10)
+	engine := strings.ToLower(strings.TrimSpace(getStringArg(args, "engine", "auto")))
+	if engine == "neural" && !h.enableEmbeddings {
+		return mcp.NewToolResultError("Neural similarity requires --enable-embeddings. Restart the server with that flag, or use the default TF-IDF similarity instead."), nil
+	}
 
 	node, err := h.resolveDoc(document)
 	if err != nil {
@@ -47,6 +52,27 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("get similar edges: %v", err)), nil
 		}
+	}
+
+	// Filter by engine before dedup to avoid losing tfidf edges that share a
+	// pair with a neural edge (dedup would otherwise discard the tfidf edge).
+	if engine == "tfidf" || engine == "neural" {
+		filtered := edges[:0]
+		for _, e := range edges {
+			var m map[string]any
+			var eng string
+			if e.Metadata != "" {
+				if json.Unmarshal([]byte(e.Metadata), &m) == nil {
+					eng, _ = m["engine"].(string)
+				}
+			}
+			if engine == "neural" && eng == "neural" {
+				filtered = append(filtered, e)
+			} else if engine == "tfidf" && eng != "neural" {
+				filtered = append(filtered, e)
+			}
+		}
+		edges = filtered
 	}
 
 	// Deduplicate: same pair can have both TF-IDF and neural edges.

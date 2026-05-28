@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Detective-XH/docgraph/internal/callout"
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -21,29 +22,30 @@ const (
 var agentMetadataKeyRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,100}$`)
 
 var enrichmentTool = mcp.NewTool("docgraph_enrichment",
-	mcp.WithDescription("Agent-driven metadata enrichment facade. Use operation=pending to return frontmatter-less documents needing inferred summaries or metadata; use operation=store to store an inferred summary and metadata. PRIVACY: pending content may be sent to an external LLM provider - only proceed with user consent. DocGraph never calls an LLM itself."),
-	mcp.WithString("operation", mcp.Required(), mcp.Description("Operation to run: pending or store")),
+	mcp.WithDescription("Agent-driven metadata enrichment facade. Requires --enable-enrichment server flag. Workflow: (1) action=pending — shows scope + cost + sensitivity, generates a CONFIRMATION_TOKEN; relay the output to the user and wait for consent. (2) action=process — requires confirmation_token from step 1; stores the inferred summary and metadata. DocGraph never calls an LLM itself."),
+	mcp.WithString("action", mcp.Required(), mcp.Description("Action to run: pending or process")),
+	mcp.WithString("confirmation_token", mcp.Description("Token from action=pending ACTION section; required for action=process")),
 	mcp.WithNumber("limit", mcp.Description("pending: max documents to return (default 20)")),
 	mcp.WithString("content_mode", mcp.Description("pending: 'full' (default) reads full document content from disk; 'excerpt' uses the stored body excerpt")),
-	mcp.WithString("doc_id", mcp.Description("store: document ID from operation=pending")),
-	mcp.WithString("content_hash", mcp.Description("store: content_hash from operation=pending")),
+	mcp.WithString("doc_id", mcp.Description("process: document ID from action=pending")),
+	mcp.WithString("content_hash", mcp.Description("process: content_hash from action=pending")),
 	mcp.WithString("summary", mcp.Description("Concise agent-inferred summary, max 4000 bytes")),
 	mcp.WithString("metadata", mcp.Description("JSON object of inferred metadata fields. Values may be strings, numbers, booleans, or arrays of scalar values.")),
 	mcp.WithNumber("confidence", mcp.Description("Optional confidence from 0.0 to 1.0 applied to all metadata fields")),
-	mcp.WithString("model_id", mcp.Description("store: required model identifier that produced this enrichment, for example gpt-5.4 or claude-sonnet-4.6")),
-	mcp.WithString("provider", mcp.Description("store: optional provider identifier, for example openai, anthropic, ollama")),
-	mcp.WithString("agent_id", mcp.Description("store: optional calling agent or workflow identifier")),
+	mcp.WithString("model_id", mcp.Description("process: required model identifier that produced this enrichment, for example gpt-5.4 or claude-sonnet-4.6")),
+	mcp.WithString("provider", mcp.Description("process: optional provider identifier, for example openai, anthropic, ollama")),
+	mcp.WithString("agent_id", mcp.Description("process: optional calling agent or workflow identifier")),
 )
 
 func (h *handler) handleEnrichment(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	operation := strings.ToLower(strings.TrimSpace(getStringArg(request.GetArguments(), "operation", "")))
-	switch operation {
+	action := strings.ToLower(strings.TrimSpace(getStringArg(request.GetArguments(), "action", "")))
+	switch action {
 	case "pending":
 		return h.handleEnrichmentPending(ctx, request)
-	case "store":
-		return h.handleEnrichmentStore(ctx, request)
+	case "process":
+		return h.handleEnrichmentProcess(ctx, request)
 	default:
-		return mcp.NewToolResultError("operation parameter must be one of: pending, store"), nil
+		return mcp.NewToolResultError("action parameter must be one of: pending, process"), nil
 	}
 }
 
@@ -78,19 +80,54 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 		results = append(results, pendingResult{docs: docs, projectRoot: h.projectRoot})
 	}
 
-	total := 0
+	// Build pending docs for impact graph.
+	var pendingDocs []callout.PendingDoc
 	for _, r := range results {
-		total += len(r.docs)
+		for _, doc := range r.docs {
+			pendingDocs = append(pendingDocs, callout.PendingDoc{
+				FilePath:    doc.FilePath,
+				BodyExcerpt: doc.BodyExcerpt,
+			})
+		}
+	}
+
+	// Generate token only when N>0 and not all-sensitive.
+	paths := make([]string, len(pendingDocs))
+	for i, d := range pendingDocs {
+		paths[i] = d.FilePath
+	}
+	var token string
+	if len(pendingDocs) > 0 && !callout.IsAllSensitive(paths) {
+		token = h.newConfirmationToken()
+		h.enrichmentPendingTokens.Range(func(k, v any) bool {
+			if v.(pendingToken).expiresAt.Before(time.Now()) {
+				h.enrichmentPendingTokens.Delete(k)
+			}
+			return true
+		})
+		h.enrichmentPendingTokens.Store(token, pendingToken{expiresAt: time.Now().Add(30 * time.Minute)})
+	}
+
+	workspaceDir := h.projectRoot
+	if h.workspace != nil {
+		workspaceDir = h.workspace.Root
+	}
+
+	graph := callout.BuildImpactGraph(pendingDocs, callout.ImpactOpts{
+		ToolName:          "docgraph_enrichment",
+		WorkspaceDir:      workspaceDir,
+		Rates:             callout.DefaultRates(),
+		ConfirmationToken: token,
+	})
+
+	// Append document list after impact graph for agent reference.
+	if len(pendingDocs) == 0 {
+		return mcp.NewToolResultText(graph), nil
 	}
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "## Pending Metadata Enrichment\n\nFound %d frontmatter-less documents needing enrichment.\n", total)
-	if total == 0 {
-		return mcp.NewToolResultText(sb.String()), nil
-	}
-	sb.WriteString("\nPRIVACY: the content below may be sent to an external LLM provider by the calling agent.\n")
-	sb.WriteString("Store results with `docgraph_enrichment operation=store` and the exact `content_hash` shown for each document.\n\n")
-
+	sb.WriteString(graph)
+	sb.WriteString("\n## Document List\n\n")
 	i := 0
 	for _, r := range results {
 		for _, doc := range r.docs {
@@ -119,12 +156,25 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 			sb.WriteString("\n")
 		}
 	}
-
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func (h *handler) handleEnrichmentStore(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
+
+	// Validate confirmation token (single-use via LoadAndDelete).
+	token := sanitizeArg(getStringArg(args, "confirmation_token", ""), 64)
+	if token == "" {
+		return mcp.NewToolResultError("confirmation_token required. Call action=pending first to review scope — the output includes the token and a pre-written user message."), nil
+	}
+	raw, loaded := h.enrichmentPendingTokens.LoadAndDelete(token)
+	if !loaded {
+		return mcp.NewToolResultError("Invalid confirmation_token. Call action=pending again to generate a new token."), nil
+	}
+	if raw.(pendingToken).expiresAt.Before(time.Now()) {
+		return mcp.NewToolResultError("Confirmation token expired (30-minute limit). Call action=pending again to review scope and get a new token."), nil
+	}
+
 	docID := sanitizeArg(getStringArg(args, "doc_id", ""), maxArgLength)
 	if docID == "" {
 		return mcp.NewToolResultError("doc_id parameter is required"), nil
@@ -135,6 +185,9 @@ func (h *handler) handleEnrichmentStore(ctx context.Context, request mcp.CallToo
 	}
 	summary := sanitizeArg(getStringArg(args, "summary", ""), maxArgLength)
 	metadataRaw := getStringArg(args, "metadata", "")
+	if len(metadataRaw) > 1024*1024 {
+		return mcp.NewToolResultError("metadata parameter exceeds 1 MB limit"), nil
+	}
 	modelID := sanitizeArg(getStringArg(args, "model_id", ""), 200)
 	if modelID == "" {
 		return mcp.NewToolResultError("model_id parameter is required"), nil
