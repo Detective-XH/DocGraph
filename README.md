@@ -24,7 +24,7 @@
 
 **Govern your documents like code.** DocGraph indexes `.md`, `.docx`, `.html`, and `.pdf` into a graph and runs **drift audits** on them — stale policies, conflicting research claims, superseded ADRs, undocumented code exports — so you can review your doc corpus the way you review a codebase. Most doc tools index and search. DocGraph also tells you what's broken.
 
-### Hero 1 — Drift audit on documents
+### Drift audit on documents
 
 ```
 docgraph_context format=drift_audit
@@ -43,7 +43,7 @@ Surfaces 13 finding codes across the corpus. A few:
 
 Three packs ship enabled (`governance`, `research_provenance`, `entity`); three are opt-in (`policy_process`, `assessment_drift`, `code_doc`). No code knowledge required for governance and research — they work on any document collection.
 
-### Hero 2 — Opt-in agent enrichment, with provenance
+### Opt-in agent enrichment, with provenance
 
 Your `.docx` / `.pdf` / `.html` archive has no frontmatter, so it can't be governed. DocGraph fixes that without compromising authority:
 
