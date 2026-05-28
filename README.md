@@ -301,7 +301,7 @@ nodes when the `code_doc` domain pack is enabled.
 
 **Common rules:**
 - Respects `.gitignore` and `.docgraphignore`
-- Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, and similar
+- Skipped directories: `node_modules`, `.git`, `target`, `dist`, `build`, `vendor`, `.claude/worktrees` (agent git worktrees — full repo copies that would index as duplicates), and similar
 
 ## Domain Packs
 
