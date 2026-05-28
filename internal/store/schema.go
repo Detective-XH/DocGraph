@@ -5,6 +5,13 @@ import "database/sql"
 // SchemaSQL is the complete current schema. Every statement uses
 // CREATE ... IF NOT EXISTS so bootstrapSchema is idempotent — safe to call
 // on every Open() whether the DB is brand new or already initialised.
+//
+// Node kinds: document, heading, definition, tag (plus code_file when the
+// code_doc pack is enabled).
+// Edge kinds: contains, references, wikilinks_to, similar_to, tagged, embeds,
+// links_external. The frontmatter related_to: field does NOT create a distinct
+// edge kind — it resolves into wikilinks_to. ("related_to" still appears in a
+// few drift-audit kind filters as a tolerated alias, but no resolver emits it.)
 const SchemaSQL = `
 CREATE TABLE IF NOT EXISTS nodes (
     id TEXT PRIMARY KEY,

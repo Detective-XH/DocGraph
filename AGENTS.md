@@ -64,7 +64,7 @@ These are DocGraph-exclusive. They hold even for small corpora with few links.
 No single one is decisive; together they tip a "selective" project into a fit.
 
 - **20+ interlinked documents** with Markdown links or `[[wikilinks]]` — reverse-reference and impact edges become worth precomputing.
-- **Docs that quote or describe code surfaces** and a need for docs-code drift checks (opt-in `code_doc` pack).
+- **You have both governed docs *and* a codebase and want the gaps between them** — opt-in `code_doc` surfaces docs-code drift (`code.undocumented_export`, `code.missing_symbol`, `code.unanchored_feature`). It is shallow (file headers, doc comments, test/example names as corpus-level nodes — not type resolution or call graphs) and only pays off when docs already reference code: on a docs-less repo `undocumented_export` flags *every* file and the other two never fire. For code *structure*, use CodeGraph; `code_doc` is the corpus-level doc-surface view CodeGraph's per-symbol docstrings don't give.
 - **CJK or mixed Latin/CJK corpus** where consistent trigram search across files helps.
 
 ### Anti-signals — prefer your own grep/read
@@ -92,8 +92,8 @@ optional embeddings, and git history. It **never executes indexed content.**
 Three domain packs are on by default (`governance`, `research_provenance`,
 `entity`); three are opt-in (`code_doc`, `policy_process`, `assessment_drift`)
 and must be enabled before their drift findings appear. The full drift-finding
-catalogue is in the `docgraph_context` tool description; pack state and enable
-commands are surfaced by `docgraph_status` and `docgraph pack list`.
+catalogue is in the `docgraph_context` tool description; current pack state is
+reported by `docgraph_status` and `docgraph pack list`.
 
 ---
 
