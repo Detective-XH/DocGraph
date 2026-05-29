@@ -61,6 +61,27 @@ const (
 	CodeCodeUnanchoredFeature  = "code.unanchored_feature"
 )
 
+// maxDriftLimit is the upper bound applied to DriftAuditOpts.Limit in
+// GetDriftFindings. opts.Limit flows into the LIMIT ? clause of every sibling
+// finder (conflict/codedoc/research/duplicate/stale), so clamping at this single
+// boundary structurally bounds all of them regardless of caller — same
+// structural-bound rationale as docformat.ReadFileCapped / getIntArgClamped /
+// similarity.maxTargetsPerDoc. Well above any realistic findings count.
+const maxDriftLimit = 10000
+
+// clampDriftLimit normalizes the caller-supplied findings limit: a non-positive
+// value falls back to the default 100, and any value above maxDriftLimit is
+// capped. Both ends are bounded at this one chokepoint.
+func clampDriftLimit(n int) int {
+	if n <= 0 {
+		return 100
+	}
+	if n > maxDriftLimit {
+		return maxDriftLimit
+	}
+	return n
+}
+
 // GetDriftFindings runs the policy/process drift audit and returns advisory
 // findings. Computation is on-demand; no schema migration is required. The
 // findings are not authoritative — they highlight candidates for human review.
@@ -68,9 +89,7 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 	if opts.SimilarityMin <= 0 {
 		opts.SimilarityMin = 0.75
 	}
-	if opts.Limit <= 0 {
-		opts.Limit = 100
-	}
+	opts.Limit = clampDriftLimit(opts.Limit)
 	if opts.AsOf.IsZero() {
 		opts.AsOf = time.Now().UTC()
 	}
