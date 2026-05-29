@@ -336,46 +336,7 @@ func extractCStyle(lang, relPath string, src []byte) ([]CodeDocEntry, error) {
 
 		// Decide kind — compute isTest before the "skip if no content" guard
 		// so that prefix-based test detection (Swift, PHP) works without a comment.
-		kind := KindDocComment
-		headingPrefix := "DocComment"
-
-		isTest := pendingIsTest || phpHasTestTag
-
-		// Swift: func testXxx() (no annotation needed)
-		if lang == "swift" {
-			for _, pfx := range cfg.testFuncPrefixes {
-				if strings.HasPrefix(strings.ToLower(sym), strings.ToLower(pfx)) && sym != pfx {
-					isTest = true
-					break
-				}
-			}
-		}
-
-		// PHP: function name starting with "test"
-		if lang == "php" {
-			for _, pfx := range cfg.testFuncPrefixes {
-				if strings.HasPrefix(strings.ToLower(sym), strings.ToLower(pfx)) && sym != pfx {
-					isTest = true
-					break
-				}
-			}
-		}
-
-		// Rust: inside cfg(test) or has #[test] attr
-		if lang == "rust" && inCfgTestBlock {
-			isTest = true
-		}
-
-		if isTest {
-			kind = KindTestFunc
-			headingPrefix = "Tests"
-		}
-
-		// Rust: look for "# Examples" section in comment → KindExampleFunc
-		if lang == "rust" && kind == KindDocComment && strings.Contains(commentText, "# Examples") {
-			kind = KindExampleFunc
-			headingPrefix = "Examples"
-		}
+		kind, headingPrefix, isTest := resolveDeclKind(lang, sym, commentText, cfg, pendingIsTest, phpHasTestTag, inCfgTestBlock)
 
 		entryFileType := fileType
 		if isTest {
@@ -405,6 +366,44 @@ func extractCStyle(lang, relPath string, src []byte) ([]CodeDocEntry, error) {
 	}
 
 	return entries, nil
+}
+
+// resolveDeclKind decides the doc-entry kind and heading prefix for a declaration
+// line from the accumulated comment and language-specific test/example signals.
+// It is pure (no scan-state mutation), which lifts the kind-decision branching out
+// of the extractCStyle scan loop.
+func resolveDeclKind(lang, sym, commentText string, cfg cStyleConfig, pendingIsTest, phpHasTestTag, inCfgTestBlock bool) (kind, headingPrefix string, isTest bool) {
+	kind = KindDocComment
+	headingPrefix = "DocComment"
+	isTest = pendingIsTest || phpHasTestTag
+
+	// Swift/PHP: function name prefixed with a configured test prefix
+	// (Swift: func testXxx(); PHP: function testXxx()) — no annotation needed.
+	if lang == "swift" || lang == "php" {
+		for _, pfx := range cfg.testFuncPrefixes {
+			if strings.HasPrefix(strings.ToLower(sym), strings.ToLower(pfx)) && sym != pfx {
+				isTest = true
+				break
+			}
+		}
+	}
+
+	// Rust: inside cfg(test) or has #[test] attr.
+	if lang == "rust" && inCfgTestBlock {
+		isTest = true
+	}
+
+	if isTest {
+		kind = KindTestFunc
+		headingPrefix = "Tests"
+	}
+
+	// Rust: a "# Examples" section in the comment → KindExampleFunc.
+	if lang == "rust" && kind == KindDocComment && strings.Contains(commentText, "# Examples") {
+		kind = KindExampleFunc
+		headingPrefix = "Examples"
+	}
+	return kind, headingPrefix, isTest
 }
 
 // ──────────────────────────────────────────────────────────────────────────────

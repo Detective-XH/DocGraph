@@ -414,63 +414,7 @@ func (s *Store) refreshGovernanceProjection(nodeID string) error {
 		_, err := s.db.Exec(`DELETE FROM governance_metadata WHERE node_id = ?`, nodeID)
 		return err
 	}
-	rec := &GovernanceRecord{NodeID: nodeID, UpdatedAt: time.Now().Unix()}
-	if w, ok := winners["status"]; ok {
-		rec.Status = w.value
-	}
-	if w, ok := winners["owner"]; ok {
-		rec.Owner = w.value
-	}
-	if w, ok := winners["approver"]; ok {
-		rec.Approver = w.value
-	}
-	if w, ok := winners["department"]; ok {
-		rec.Department = w.value
-	}
-	if w, ok := winners["effective_date"]; ok {
-		rec.EffectiveDate = w.value
-	}
-	if w, ok := winners["review_due"]; ok {
-		rec.ReviewDue = w.value
-	}
-	if w, ok := winners["supersedes"]; ok {
-		rec.Supersedes = w.value
-	}
-	if w, ok := winners["superseded_by"]; ok {
-		rec.SupersededBy = w.value
-	}
-	if w, ok := winners["sensitivity"]; ok {
-		rec.Sensitivity = w.value
-	}
-	if w, ok := winners["allowed_audience"]; ok {
-		rec.AllowedAudience = w.value
-	}
-	if w, ok := winners["canonical_source"]; ok {
-		rec.CanonicalSource = w.value
-	}
-	_, err = s.db.Exec(`
-		INSERT INTO governance_metadata(
-			node_id, status, owner, approver, department,
-			effective_date, review_due, supersedes, superseded_by,
-			sensitivity, allowed_audience, canonical_source, updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			status           = excluded.status,
-			owner            = excluded.owner,
-			approver         = excluded.approver,
-			department       = excluded.department,
-			effective_date   = excluded.effective_date,
-			review_due       = excluded.review_due,
-			supersedes       = excluded.supersedes,
-			superseded_by    = excluded.superseded_by,
-			sensitivity      = excluded.sensitivity,
-			allowed_audience = excluded.allowed_audience,
-			canonical_source = excluded.canonical_source,
-			updated_at       = excluded.updated_at`,
-		rec.NodeID, rec.Status, rec.Owner, rec.Approver, rec.Department,
-		rec.EffectiveDate, rec.ReviewDue, rec.Supersedes, rec.SupersededBy,
-		rec.Sensitivity, rec.AllowedAudience, rec.CanonicalSource, rec.UpdatedAt)
-	return err
+	return s.writeGovernanceProjection(nodeID, winners, time.Now().Unix())
 }
 
 func (s *Store) refreshResearchProjection(nodeID string) error {
@@ -482,61 +426,5 @@ func (s *Store) refreshResearchProjection(nodeID string) error {
 		_, err := s.db.Exec(`DELETE FROM research_metadata WHERE node_id = ?`, nodeID)
 		return err
 	}
-	rec := &ResearchRecord{NodeID: nodeID, UpdatedAt: time.Now().Unix()}
-	if w, ok := winners["claim_id"]; ok {
-		rec.ClaimID = w.value
-	}
-	if w, ok := winners["evidence"]; ok {
-		rec.Evidence = w.value
-	}
-	if w, ok := winners["source_type"]; ok {
-		rec.SourceType = w.value
-	}
-	if w, ok := winners["confidence"]; ok {
-		rec.Confidence = w.value
-	}
-	if w, ok := winners["event_date"]; ok {
-		rec.EventDate = w.value
-	}
-	if w, ok := winners["assessment_date"]; ok {
-		rec.AssessmentDate = w.value
-	}
-	if w, ok := winners["last_verified"]; ok {
-		rec.LastVerified = w.value
-	}
-	if w, ok := winners["valid_until"]; ok {
-		rec.ValidUntil = w.value
-	}
-	if w, ok := winners["analyst_status"]; ok {
-		rec.AnalystStatus = w.value
-	}
-	if w, ok := winners["client"]; ok {
-		rec.Client = w.value
-	}
-	if w, ok := winners["deliverable_id"]; ok {
-		rec.DeliverableID = w.value
-	}
-	_, err = s.db.Exec(`
-		INSERT INTO research_metadata(
-			node_id, claim_id, evidence, source_type, confidence,
-			event_date, assessment_date, last_verified, valid_until,
-			analyst_status, client, deliverable_id, updated_at
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
-		ON CONFLICT(node_id) DO UPDATE SET
-			claim_id        = excluded.claim_id,
-			evidence        = excluded.evidence,
-			source_type     = excluded.source_type,
-			confidence      = excluded.confidence,
-			event_date      = excluded.event_date,
-			assessment_date = excluded.assessment_date,
-			last_verified   = excluded.last_verified,
-			valid_until     = excluded.valid_until,
-			analyst_status  = excluded.analyst_status,
-			client          = excluded.client,
-			deliverable_id  = excluded.deliverable_id,
-			updated_at      = excluded.updated_at`,
-		rec.NodeID, rec.ClaimID, rec.Evidence, rec.SourceType, rec.Confidence,
-		rec.EventDate, rec.AssessmentDate, rec.LastVerified, rec.ValidUntil,
-		rec.AnalystStatus, rec.Client, rec.DeliverableID, rec.UpdatedAt)
-	return err
+	return s.writeResearchProjection(nodeID, winners, time.Now().Unix())
 }
