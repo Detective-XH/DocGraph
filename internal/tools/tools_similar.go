@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -108,6 +109,21 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	for _, e := range best {
 		deduped = append(deduped, e)
 	}
+	// Order by similarity score (desc) so the most-similar docs come first and
+	// `limit` truncates the least-similar tail. The dedup map above iterates in
+	// random order, so without this both the displayed order AND which results
+	// survive `limit` would be nondeterministic. Canonical source/target is the
+	// stable tiebreak for equal scores.
+	sort.SliceStable(deduped, func(i, j int) bool {
+		si, sj := similarEdgeScore(deduped[i]), similarEdgeScore(deduped[j])
+		if si != sj {
+			return si > sj
+		}
+		if deduped[i].Source != deduped[j].Source {
+			return deduped[i].Source < deduped[j].Source
+		}
+		return deduped[i].Target < deduped[j].Target
+	})
 	if limit > 0 && len(deduped) > limit {
 		deduped = deduped[:limit]
 	}
@@ -149,4 +165,21 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// similarEdgeScore extracts the composite similarity score from a similar_to
+// edge's metadata JSON ($.score, written by both the tfidf and neural engines).
+// Returns 0 when the metadata is absent, unparseable, or has no score.
+func similarEdgeScore(e store.Edge) float64 {
+	if e.Metadata == "" {
+		return 0
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(e.Metadata), &m) != nil {
+		return 0
+	}
+	if s, ok := m["score"].(float64); ok {
+		return s
+	}
+	return 0
 }

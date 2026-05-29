@@ -62,6 +62,268 @@ func TestComputeSimilarityBasic(t *testing.T) {
 	t.Logf("similar_to edges: %d (out of 3 possible pairs)", edgeCount)
 }
 
+// TestComputeSimilarityCrossesBatchBoundary exercises the edgeBatcher flush
+// path that only fires once accumulated edges reach similarityEdgeBatch. Every
+// other test in this package stays within a single batch, so without this the
+// mid-loop flush → reset → continue → final-flush logic has no default-suite
+// coverage (only the DOCGRAPH_SCALING-gated test crosses it, and that is not in
+// CI). Two disjoint groups of identical-excerpt docs make every within-group
+// pair a similar_to edge and every cross-group pair a non-edge, giving an exact
+// analytic count of 2·C(groupSize,2) = groupSize·(groupSize-1). Asserting that
+// count proves multi-batch flushing yields the same result as a single batch.
+func TestComputeSimilarityCrossesBatchBoundary(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	// groupSize=110 → 11,990 edges, comfortably above the 10k batch so the loop
+	// flushes once mid-run (reusing the backing slice) and once at the end.
+	const groupSize = 110
+	// Disjoint vocab per group, identical within a group → cosine 1.0 within,
+	// 0 across. Two groups (not one) keep each term's DF at groupSize < n, so
+	// idf = log(2) > 0 and vectors are non-degenerate — a single all-identical
+	// group would give every term idf 0 → zero vectors → no edges.
+	excerpt := [2]string{
+		"alpha beta gamma delta epsilon zeta eta theta iota kappa",
+		"lorem ipsum dolor amet consectetur adipiscing elit sed nunc velit",
+	}
+	nodes := make([]store.Node, 2*groupSize)
+	for i := range nodes {
+		id := "d" + strconv.Itoa(i) + ".md"
+		nodes[i] = store.Node{ID: id, Kind: "document", Name: "Doc", QualifiedName: id,
+			FilePath: id, StartLine: 1, EndLine: 10, BodyExcerpt: excerpt[i%2], UpdatedAt: 1}
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ComputeSimilarity(st, 0.25); err != nil {
+		t.Fatalf("ComputeSimilarity: %v", err)
+	}
+
+	want := groupSize * (groupSize - 1) // 2·C(groupSize,2)
+	if want <= similarityEdgeBatch {
+		t.Fatalf("test misconfigured: want=%d does not exceed batch size %d, so the flush branch is never crossed", want, similarityEdgeBatch)
+	}
+	if got := countSimilarToEdges(t, st); got != want {
+		t.Fatalf("similar_to edges = %d, want %d (multi-batch flush must equal single-batch result)", got, want)
+	}
+}
+
+// TestScorePairsToBatcherParallelEquivalence proves the pairwise pass yields one
+// identical similar_to edge set across every execution mode — serial vs
+// concurrent (workers 1 vs 4, forced regardless of host cores) and full-scan vs
+// inverted-index pruned (postings forced on, bypassing the density guard) — for
+// both the full-rebuild (changed=nil) and incremental (changed != nil) branches,
+// while crossing the 10k batch boundary through the shared mutex-guarded
+// batcher. Two disjoint single-term clusters make the full rebuild produce
+// exactly 2·C(groupSize,2) = groupSize·(groupSize-1) edges; the incremental run
+// (cluster "a" changed) keeps only the even-even subset. Run under -race
+// -count=3 to surface any data race or nondeterministic miscount.
+func TestScorePairsToBatcherParallelEquivalence(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	const groupSize = 110 // 2·C(110,2) = 11,990 edges, comfortably above similarityEdgeBatch
+	n := 2 * groupSize
+	docs := make([]store.Node, n)
+	features := make([]docFeatures, n)
+	for i := range docs {
+		id := "d" + strconv.Itoa(i) + ".md"
+		docs[i] = store.Node{ID: id, Kind: "document", Name: "Doc", QualifiedName: id,
+			FilePath: id, StartLine: 1, EndLine: 10, UpdatedAt: 1}
+		// Two clusters by parity: identical single-term vectors within a cluster
+		// (cosine 1.0 → edge), disjoint across (cosine 0 → non-edge).
+		term := "a"
+		if i%2 == 1 {
+			term = "b"
+		}
+		features[i] = docFeatures{
+			tfidf:   map[string]float64{term: 1.0},
+			targets: map[string]bool{},
+			tags:    map[string]bool{},
+		}
+	}
+	if err := st.InsertNodes(docs); err != nil { // nodes must exist: edges FK to them
+		t.Fatal(err)
+	}
+
+	want := groupSize * (groupSize - 1) // 2·C(groupSize,2) = 11,990
+	if want <= similarityEdgeBatch {
+		t.Fatalf("test misconfigured: want=%d does not exceed batch size %d", want, similarityEdgeBatch)
+	}
+
+	pi := buildPostingIndex(features)
+
+	// collect runs the pairwise pass with the given worker count, changed filter,
+	// and postings (nil = full scan) and returns the resulting similar_to edge set
+	// keyed by "source|target".
+	collect := func(workers int, changed map[string]bool, postings *postingIndex) map[string]bool {
+		if err := st.DeleteEdgesByKind("similar_to"); err != nil {
+			t.Fatal(err)
+		}
+		total, err := scorePairsToBatcher(st, docs, features, 0.25, changed, workers, postings)
+		if err != nil {
+			t.Fatalf("workers=%d pruned=%v: %v", workers, postings != nil, err)
+		}
+		// GetSimilarEdgesForDoc returns similar_to edges where the doc is source
+		// OR target; the canonical "source|target" key dedups that double-count.
+		// (GetEdgesBySource is deliberately not used — it returns reference-kind
+		// edges only, never similar_to.)
+		set := make(map[string]bool, total)
+		for i := range docs {
+			edges, err := st.GetSimilarEdgesForDoc(docs[i].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range edges {
+				set[e.Source+"|"+e.Target] = true
+			}
+		}
+		if len(set) != total {
+			t.Fatalf("workers=%d pruned=%v: batcher counted total=%d but store holds %d distinct edges", workers, postings != nil, total, len(set))
+		}
+		return set
+	}
+
+	mustEqual := func(name string, got, want map[string]bool) {
+		if len(got) != len(want) {
+			t.Fatalf("%s: edge-set size %d, want %d", name, len(got), len(want))
+		}
+		for k := range want {
+			if !got[k] {
+				t.Fatalf("%s: missing edge %q present in reference set", name, k)
+			}
+		}
+	}
+
+	// Reference: serial full scan. Exact analytic count, crosses the 10k boundary.
+	ref := collect(1, nil, nil)
+	if len(ref) != want {
+		t.Fatalf("reference full scan: %d distinct edges, want %d", len(ref), want)
+	}
+	// Every other mode — parallel, pruned, parallel+pruned — must reproduce it.
+	mustEqual("parallel full", collect(4, nil, nil), ref)
+	mustEqual("serial pruned", collect(1, nil, pi), ref)
+	mustEqual("parallel pruned", collect(4, nil, pi), ref)
+
+	// Incremental (changed != nil): cluster "a" (even indices) changed → only
+	// even-even pairs are scored (odd-odd skipped, cross scores 0). The same edge
+	// set must hold across serial/parallel × full/pruned.
+	changed := make(map[string]bool)
+	for i := range docs {
+		if i%2 == 0 {
+			changed[docs[i].ID] = true
+		}
+	}
+	incRef := collect(1, changed, nil)
+	if len(incRef) == 0 || len(incRef) >= want {
+		t.Fatalf("incremental: %d edges; changed filter should keep some but drop odd-odd pairs (want 0 < n < %d)", len(incRef), want)
+	}
+	mustEqual("incremental parallel", collect(4, changed, nil), incRef)
+	mustEqual("incremental serial pruned", collect(1, changed, pi), incRef)
+	mustEqual("incremental parallel pruned", collect(4, changed, pi), incRef)
+}
+
+// TestPrunedScanMatchesFullScanAcrossSignals proves inverted-index pruning is
+// lossless across ALL three signals — it must keep pairs that match via shared
+// reference targets or tags with no shared term (the cases the plan's
+// "share a term" framing would have dropped, and that WithSharedRefs/WithTags
+// guard at the ComputeSimilarity level) — and must not double-emit a pair that
+// shares more than one feature. A small mixed corpus exercises term+target+tag
+// matches, target-only, tag-only, and a multi-feature pair; the pruned scan must
+// reproduce the full scan's edge set for both serial and parallel workers.
+func TestPrunedScanMatchesFullScanAcrossSignals(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	set := func(xs ...string) map[string]bool {
+		m := make(map[string]bool, len(xs))
+		for _, x := range xs {
+			m[x] = true
+		}
+		return m
+	}
+	tfidf := func(terms ...string) map[string]float64 {
+		m := make(map[string]float64, len(terms))
+		for _, t := range terms {
+			m[t] = 1.0
+		}
+		return m
+	}
+	specs := []struct {
+		id   string
+		feat docFeatures
+	}{
+		// a,b share term+target+tag (multi-feature → must emit ONE edge, not three).
+		{"a.md", docFeatures{tfidf: tfidf("alpha", "beta"), targets: set("T1"), tags: set("sec")}},
+		{"b.md", docFeatures{tfidf: tfidf("alpha", "beta"), targets: set("T1"), tags: set("sec")}},
+		{"c.md", docFeatures{tfidf: tfidf("gamma"), targets: set("T1"), tags: set()}},        // target-only match w/ a,b
+		{"d.md", docFeatures{tfidf: tfidf("delta"), targets: set(), tags: set("sec")}},       // tag-only match w/ a,b
+		{"e.md", docFeatures{tfidf: tfidf("epsilon"), targets: set("T2"), tags: set("ops")}}, // matches nobody
+	}
+	docs := make([]store.Node, len(specs))
+	features := make([]docFeatures, len(specs))
+	for i, s := range specs {
+		docs[i] = store.Node{ID: s.id, Kind: "document", Name: s.id, QualifiedName: s.id,
+			FilePath: s.id, StartLine: 1, EndLine: 10, UpdatedAt: 1}
+		features[i] = s.feat
+	}
+	if err := st.InsertNodes(docs); err != nil { // nodes must exist: edges FK to them
+		t.Fatal(err)
+	}
+
+	pi := buildPostingIndex(features)
+	collect := func(workers int, postings *postingIndex) map[string]bool {
+		if err := st.DeleteEdgesByKind("similar_to"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := scorePairsToBatcher(st, docs, features, 0.05, nil, workers, postings); err != nil {
+			t.Fatalf("workers=%d pruned=%v: %v", workers, postings != nil, err)
+		}
+		out := make(map[string]bool)
+		for i := range docs {
+			edges, err := st.GetSimilarEdgesForDoc(docs[i].ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, e := range edges {
+				out[e.Source+"|"+e.Target] = true
+			}
+		}
+		return out
+	}
+
+	// Reference full scan: a-b (term+target+tag), a-c, b-c (target only), a-d,
+	// b-d (tag only) = 5 edges; c-d and anything with e score 0.
+	full := collect(1, nil)
+	if len(full) != 5 {
+		t.Fatalf("full scan: %d edges, want 5 (a-b, a-c, b-c, a-d, b-d)", len(full))
+	}
+	for _, workers := range []int{1, 4} {
+		got := collect(workers, pi)
+		if len(got) != len(full) {
+			t.Fatalf("pruned workers=%d: %d edges, full scan has %d", workers, len(got), len(full))
+		}
+		for k := range full {
+			if !got[k] {
+				t.Fatalf("pruned workers=%d: missing edge %q present in full scan", workers, k)
+			}
+		}
+	}
+}
+
 func TestComputeSimilarityWithSharedRefs(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	st, err := store.Open(dbPath)
