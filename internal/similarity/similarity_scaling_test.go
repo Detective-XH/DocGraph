@@ -106,8 +106,11 @@ func TestSimilarityScaling(t *testing.T) {
 	_ = denseVocab
 
 	// Scenario A: sparse. Each doc has unique vocab → near-zero cosine → few edges.
-	// Isolates the raw n^2 comparison cost from edge-accumulation memory.
-	for _, n := range []int{500, 1000, 2000, 4000} {
+	// Isolates the raw n^2 comparison cost from edge-accumulation memory. The
+	// n=8000 point exists to show P2(a) inverted-index pruning's asymptotic win:
+	// unique vocab → every posting has length 1 → zero candidates → near-constant
+	// time, while the full scan keeps growing ~4×/doubling.
+	for _, n := range []int{500, 1000, 2000, 4000, 8000} {
 		nn := n
 		measure("A.sparse", func(st *store.Store) int {
 			nodes := make([]store.Node, nn)
