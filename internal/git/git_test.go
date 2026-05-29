@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+func TestIsRepo_NonGitDir(t *testing.T) {
+	tmp := t.TempDir()
+	if IsRepo(tmp) {
+		t.Errorf("expected IsRepo=false for non-git dir %s", tmp)
+	}
+}
+
+func TestIsRepo_GitDir(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+	cmd := exec.Command("git", "-C", tmp, "init")
+	cmd.Env = []string{"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	if !IsRepo(tmp) {
+		t.Errorf("expected IsRepo=true for git dir %s", tmp)
+	}
+}
+
 func TestCollectHistory_NonGitDir(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "doc.md"), []byte("# Hello"), 0o644); err != nil {

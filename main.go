@@ -6,6 +6,7 @@ import (
 )
 
 func main() {
+	defer startProfiling()()
 	if len(os.Args) < 2 {
 		usage()
 	}
