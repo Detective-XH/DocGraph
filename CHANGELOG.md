@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.3 — 2026-05-29
+
+Maintenance release: LLM-facing UX fixes, indexing-correctness fixes, and internal cleanup. No breaking changes.
+
+### Fixed
+
+- `docgraph_node section=` now accepts heading slug anchors (e.g. `neural-embeddings`) in addition to exact heading text.
+- `docgraph_similar` returns actionable guidance when no similar documents are found, instead of an empty result.
+- Agent worktree copies under `.claude/worktrees/` are no longer indexed, preventing duplicate-document pollution in the graph.
+- Closed a trace-invocation gap in the graph tool surface.
+- Corrected LLM callout token accounting for batch-bound enrichment/embeddings operations.
+
+### Changed
+
+- Consolidated duplicated metadata-projection logic and extracted shared store helpers; simplified the C-style doc comment scanner. All behavior-preserving, verified under `go test -race`.
+
+### Docs
+
+- Rewrote `AGENTS.md` as a pre-install fit guide (when DocGraph helps a project and when to reach for it).
+- Clarified scanner skip-dir behavior, `code_doc` fit signals, schema notes, and corrected codebase metrics in the README.
+
+---
+
 ## v0.2.2 — 2026-05-28
 
 LLM callout opt-in, scope confirmation, and cost transparency.
