@@ -63,15 +63,23 @@ func (s *Store) collectNodeCandidates(req searchRequest, candidates map[string]*
 }
 
 func (s *Store) collectNodeLikeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
-	pattern := "%" + escapeLike(req.Query) + "%"
+	matchClause, args := likeTermClauses(req.Terms, []string{"name", "qualified_name", "body_excerpt", "metadata"})
+	if matchClause == "" {
+		// No usable terms (e.g. punctuation-only query) — fall back to a raw
+		// whole-query substring match across the same columns.
+		pattern := "%" + escapeLike(req.Query) + "%"
+		matchClause = `(name LIKE ? ESCAPE '\' OR qualified_name LIKE ? ESCAPE '\' OR body_excerpt LIKE ? ESCAPE '\' OR metadata LIKE ? ESCAPE '\')`
+		args = []any{pattern, pattern, pattern, pattern}
+	}
+	args = append(args, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	rows, err := s.db.Query(`
 		SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
 		FROM nodes
-		WHERE (name LIKE ? ESCAPE '\' OR qualified_name LIKE ? ESCAPE '\' OR body_excerpt LIKE ? ESCAPE '\' OR metadata LIKE ? ESCAPE '\')
+		WHERE `+matchClause+`
 		  AND (? = '' OR kind = ?)
 		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = nodes.file_path AND cf.kind = 'code_file'))
 		ORDER BY name
-		LIMIT ?`, pattern, pattern, pattern, pattern, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return err
 	}
@@ -125,18 +133,24 @@ func (s *Store) collectSectionCandidates(req searchRequest, candidates map[strin
 }
 
 func (s *Store) collectSectionLikeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
-	pattern := "%" + escapeLike(req.Query) + "%"
+	matchClause, args := likeTermClauses(req.Terms, []string{"sc.heading_path", "sc.text"})
+	if matchClause == "" {
+		pattern := "%" + escapeLike(req.Query) + "%"
+		matchClause = `(sc.heading_path LIKE ? ESCAPE '\' OR sc.text LIKE ? ESCAPE '\')`
+		args = []any{pattern, pattern}
+	}
+	args = append(args, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	rows, err := s.db.Query(`
 		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
 		       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at,
 		       sc.heading_path, sc.text
 		FROM section_chunks sc
 		JOIN nodes n ON n.id = sc.node_id
-		WHERE (sc.heading_path LIKE ? ESCAPE '\' OR sc.text LIKE ? ESCAPE '\')
+		WHERE `+matchClause+`
 		  AND (? = '' OR n.kind = ?)
 		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = n.file_path AND cf.kind = 'code_file'))
 		ORDER BY n.file_path, n.start_line
-		LIMIT ?`, pattern, pattern, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
+		LIMIT ?`, args...)
 	if err != nil {
 		return err
 	}

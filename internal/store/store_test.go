@@ -408,6 +408,73 @@ func TestFTS5CJK(t *testing.T) {
 			t.Errorf("expected cjk-doc.md, got %q", results[0].Node.ID)
 		}
 	})
+
+	t.Run("multi-term all-short CJK query", func(t *testing.T) {
+		// Two 2-char CJK terms: the query is not Short under the old single-term
+		// rule, so it hit FTS MATCH → 0 trigram rows with no fallback. The terms
+		// are non-adjacent in the body ("情報分析結果在此"), so a whole-query LIKE
+		// would also miss — only a per-term AND fallback matches.
+		results, err := st.Search("情報 結果", "", 10)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		if len(results) == 0 {
+			t.Fatal("expected per-term LIKE fallback match for '情報 結果', got 0 results")
+		}
+		if results[0].Node.ID != "cjk-doc.md" {
+			t.Errorf("expected cjk-doc.md, got %q", results[0].Node.ID)
+		}
+	})
+
+	t.Run("multi-term all-short CJK requires ALL terms", func(t *testing.T) {
+		// "情報" is in the body but "无关" is not → per-term AND must exclude it.
+		results, err := st.Search("情報 无关", "", 10)
+		if err != nil {
+			t.Fatalf("Search failed: %v", err)
+		}
+		for _, r := range results {
+			if r.Node.ID == "cjk-doc.md" {
+				t.Fatalf("per-term AND must require every term; doc lacks '无关' yet matched")
+			}
+		}
+	})
+}
+
+func TestSearchMultiTermAllShortLatin(t *testing.T) {
+	// Latin sub-trigram multi-term: "is" + "to" are each <3 chars, so the query
+	// is all-short → LIKE fallback. Before the fix it hit FTS MATCH → 0 rows.
+	st := tempStore(t)
+	nodes := []Node{
+		{
+			ID: "a.md", Kind: "document", Name: "Alpha",
+			QualifiedName: "a.md", FilePath: "a.md",
+			StartLine: 1, EndLine: 3, BodyExcerpt: "this is how to do it", UpdatedAt: 1,
+		},
+		{
+			ID: "b.md", Kind: "document", Name: "Beta",
+			QualifiedName: "b.md", FilePath: "b.md",
+			StartLine: 1, EndLine: 3, BodyExcerpt: "an unrelated sentence", UpdatedAt: 1,
+		},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes failed: %v", err)
+	}
+	results, err := st.Search("is to", "", 10)
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	var gotA bool
+	for _, r := range results {
+		if r.Node.ID == "b.md" {
+			t.Fatalf("b.md contains neither 'is' nor 'to' as both terms; per-term AND must exclude it")
+		}
+		if r.Node.ID == "a.md" {
+			gotA = true
+		}
+	}
+	if !gotA {
+		t.Fatal("expected a.md (contains both 'is' and 'to') for all-short query 'is to', got none")
+	}
 }
 
 func TestDeleteFileData(t *testing.T) {

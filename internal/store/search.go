@@ -104,7 +104,11 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		req.Query = req.Query[:1000]
 	}
 	req.Terms = queryTerms(req.Query)
-	req.Short = len(req.Query) < 3 || (len(req.Terms) == 1 && len([]rune(req.Terms[0])) < 3)
+	// FTS5 uses a trigram tokenizer (>=3 chars), so any query whose terms are
+	// all sub-trigram yields zero FTS rows — route it to the LIKE fallback.
+	// This covers a single 2-char term AND the multi-term case (e.g. two 2-char
+	// CJK words), which would otherwise hit FTS MATCH and silently return nothing.
+	req.Short = len(req.Query) < 3 || allTermsSubTrigram(req.Terms)
 	if req.Intent == "" {
 		req.Intent = inferSearchIntent(req.Query, req.Kind)
 	}
