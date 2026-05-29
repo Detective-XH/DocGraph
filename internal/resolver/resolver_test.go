@@ -363,3 +363,54 @@ func TestResolvePathTraversal(t *testing.T) {
 		}
 	})
 }
+
+// TestResolveNoPanicOnAdversarialInput locks in the audit verdict that
+// resolver.Resolve has no panic vector (security-audit backlog #4). Resolve
+// runs on the watcher reindex goroutine, so a panic would crash serve. It feeds
+// a store seeded with degenerate document nodes (empty name/path, same-basename
+// collisions that drive disambiguate) and a batch of malformed unresolved refs
+// (empty/anchor-only/unicode/null-byte targets, every reference kind, an
+// unknown kind) and asserts Resolve returns without panicking or erroring.
+func TestResolveNoPanicOnAdversarialInput(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	// Two docs share a basename in different dirs → exercises disambiguate().
+	// One doc has an empty Name and an unusual path.
+	nodes := []store.Node{
+		{ID: "a/dup.md", Kind: "document", Name: "Dup", QualifiedName: "a/dup.md", FilePath: "a/dup.md", StartLine: 1, EndLine: 10, UpdatedAt: 1},
+		{ID: "b/dup.md", Kind: "document", Name: "Dup", QualifiedName: "b/dup.md", FilePath: "b/dup.md", StartLine: 1, EndLine: 10, UpdatedAt: 1},
+		{ID: "blank.md", Kind: "document", Name: "", QualifiedName: "blank.md", FilePath: "blank.md", StartLine: 1, EndLine: 10, UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	refs := []store.UnresolvedRef{
+		{FromNodeID: "blank.md", ReferenceText: "", ReferenceKind: "markdown_link", FilePath: "blank.md"},
+		{FromNodeID: "blank.md", ReferenceText: "#only-anchor", ReferenceKind: "markdown_link", FilePath: "blank.md"},
+		{FromNodeID: "blank.md", ReferenceText: "dup", ReferenceKind: "wikilink", FilePath: "a/dup.md"},
+		{FromNodeID: "blank.md", ReferenceText: "dup|alias#frag", ReferenceKind: "wikilink", FilePath: "b/dup.md"},
+		{FromNodeID: "blank.md", ReferenceText: "image.png", ReferenceKind: "embed", FilePath: "blank.md"},
+		{FromNodeID: "blank.md", ReferenceText: "https://example.com", ReferenceKind: "external", FilePath: "blank.md"},
+		{FromNodeID: "blank.md", ReferenceText: "標題🔥\x00", ReferenceKind: "wikilink", FilePath: "blank.md"},
+		{FromNodeID: "blank.md", ReferenceText: "../../../etc/passwd", ReferenceKind: "markdown_link", FilePath: "blank.md"},
+		{FromNodeID: "blank.md", ReferenceText: "whatever", ReferenceKind: "unknown_kind", FilePath: "blank.md"},
+	}
+	if err := st.InsertUnresolvedRefs(refs); err != nil {
+		t.Fatal(err)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Resolve panicked on adversarial input: %v", r)
+		}
+	}()
+	if err := Resolve(st); err != nil {
+		t.Fatalf("Resolve returned error on adversarial input: %v", err)
+	}
+}

@@ -298,3 +298,69 @@ func TestComputeNeuralSimilarityForDoc_Idempotent(t *testing.T) {
 		t.Errorf("expected at most 1 neural edge, got %d", neuralCount)
 	}
 }
+
+// TestComputeSimilarityNoPanicOnAdversarialInput locks in the audit verdict that
+// similarity.Compute* has no panic vector (security-audit backlog #4). It runs
+// on the watcher reindex goroutine, so a panic would crash serve. The risky
+// spots are the idf log (n/df), the cosine division by vector norms, and the
+// jaccard union division — each case probes a degenerate corpus and asserts the
+// full and incremental entry points both return across a range of thresholds
+// (including 0, negative, and >1).
+func TestComputeSimilarityNoPanicOnAdversarialInput(t *testing.T) {
+	doc := func(id, name, body string, tags ...string) store.Node {
+		md := ""
+		if len(tags) > 0 {
+			ts := make([]string, len(tags))
+			copy(ts, tags)
+			b, _ := json.Marshal(map[string]interface{}{"tags": ts})
+			md = string(b)
+		}
+		return store.Node{ID: id, Kind: "document", Name: name, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 10, BodyExcerpt: body, Metadata: md, UpdatedAt: 1}
+	}
+	cases := []struct {
+		name  string
+		nodes []store.Node
+	}{
+		{"empty corpus", nil},
+		{"single document", []store.Node{doc("solo.md", "Solo", "lonely body text")}},
+		{"all bodies empty", []store.Node{doc("a.md", "A", ""), doc("b.md", "B", "   \n\t  ")}},
+		{"unicode-only bodies (no ascii tokens)", []store.Node{doc("a.md", "A", "你好世界🔥"), doc("b.md", "B", "안녕하세요🌊")}},
+		// Every doc shares the single term "alpha" → df==n → idf log(1)==0 →
+		// zero tf-idf vectors → cosine denom==0 (must hit the guard, not divide).
+		{"term in every doc (zero vectors)", []store.Node{doc("a.md", "A", "alpha alpha"), doc("b.md", "B", "alpha"), doc("c.md", "C", "alpha alpha alpha")}},
+		{"empty and overlapping tag sets", []store.Node{doc("a.md", "A", "alpha beta", "x", "y"), doc("b.md", "B", "alpha beta"), doc("c.md", "C", "alpha beta", "y", "z")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "test.db")
+			st, err := store.Open(dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			if len(tc.nodes) > 0 {
+				if err := st.InsertNodes(tc.nodes); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Compute panicked on %q: %v", tc.name, r)
+				}
+			}()
+			changed := make([]string, len(tc.nodes))
+			for i, n := range tc.nodes {
+				changed[i] = n.ID
+			}
+			for _, th := range []float64{-1, 0, 0.1, 1, 2} {
+				if err := ComputeSimilarity(st, th); err != nil {
+					t.Fatalf("ComputeSimilarity(th=%v) error: %v", th, err)
+				}
+				if err := ComputeSimilarityIncremental(st, changed, th); err != nil {
+					t.Fatalf("ComputeSimilarityIncremental(th=%v) error: %v", th, err)
+				}
+			}
+		})
+	}
+}
