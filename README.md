@@ -77,7 +77,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13 MB |
-| Codebase | ~18,570 lines of Go (+ ~17,800 lines of tests) |
+| Codebase | ~18,540 lines of Go (+ ~18,120 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -164,7 +164,6 @@ Available skills bundled in the binary:
 
 `docgraph_graph` supports `operation=incoming|outgoing|impact|trace`. Use
 `document` for incoming, outgoing, and impact; use `from` and `to` for trace.
-`--tool-profile full` and `--tool-profile dual` are deprecated and ignored.
 
 ### Tools
 

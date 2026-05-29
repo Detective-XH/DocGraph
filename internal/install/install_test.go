@@ -10,7 +10,7 @@ import (
 func TestPlanJSONMCPDetectsCreateUpdateUnchanged(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, ".mcp.json")
-	server := localServer(root, false, "")
+	server := localServer(root, false)
 
 	action, detail, err := planJSONMCP(path, server)
 	if err != nil {
@@ -47,7 +47,7 @@ func TestPlanCodexManagedBlockDetectsUpdate(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("CODEX_HOME", root)
 	path := filepath.Join(root, "config.toml")
-	server := globalServer(root, false, "")
+	server := globalServer(root, false)
 
 	if err := os.WriteFile(path, []byte(`# BEGIN DocGraph MCP
 [mcp_servers.docgraph]
@@ -78,28 +78,26 @@ args = []
 	}
 }
 
-func TestInstallProfileNeverAddsServerArg(t *testing.T) {
+func TestInstallServerArgsHaveNoToolProfile(t *testing.T) {
 	root := t.TempDir()
 
-	for _, profile := range []string{"", "full", "compact"} {
-		server := localServer(root, false, profile)
-		want := []string{"serve", "--path", "."}
-		if !equalStrings(server.Args, want) {
-			t.Fatalf("profile %q local server args = %#v, want %#v", profile, server.Args, want)
-		}
+	server := localServer(root, false)
+	want := []string{"serve", "--path", "."}
+	if !equalStrings(server.Args, want) {
+		t.Fatalf("local server args = %#v, want %#v", server.Args, want)
+	}
 
-		server = globalServer(root, true, profile)
-		want = []string{"serve", "--workspace", root}
-		if !equalStrings(server.Args, want) {
-			t.Fatalf("profile %q workspace server args = %#v, want %#v", profile, server.Args, want)
-		}
+	server = globalServer(root, true)
+	want = []string{"serve", "--workspace", root}
+	if !equalStrings(server.Args, want) {
+		t.Fatalf("workspace server args = %#v, want %#v", server.Args, want)
 	}
 }
 
 func TestPlanOmitsToolProfileServerArg(t *testing.T) {
 	root := t.TempDir()
 
-	results, err := Plan(root, Options{Clients: "claude", ToolProfile: "compact"})
+	results, err := Plan(root, Options{Clients: "claude"})
 	if err != nil {
 		t.Fatal(err)
 	}

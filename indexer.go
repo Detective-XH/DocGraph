@@ -71,7 +71,7 @@ func indexPathOpts(dir string, force bool) *store.Store {
 			if packs, pErr := existing.GetDomainPacks(); pErr == nil {
 				savedPackEnabled = make(map[string]bool, len(packs))
 				for _, p := range packs {
-					savedPackEnabled[p.ID] = p.EnabledByDefault
+					savedPackEnabled[p.ID] = p.Enabled
 				}
 			}
 			existing.Close()

@@ -31,7 +31,7 @@ func TestInitDryRunOmitsToolProfileServerArg(t *testing.T) {
 	projectDir := t.TempDir()
 
 	output := captureStderr(t, func() {
-		cmdInit([]string{"--dry-run", "--install-clients", "claude", "--tool-profile", "compact", projectDir})
+		cmdInit([]string{"--dry-run", "--install-clients", "claude", projectDir})
 	})
 
 	if strings.Contains(output, "--tool-profile") {

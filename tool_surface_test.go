@@ -24,7 +24,7 @@ func TestToolSurfaceRegistryDefault(t *testing.T) {
 		"docgraph_graph", "docgraph_history", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
-	actual := registeredToolNames(t, tools.ToolProfileCompact, tools.RegisterOpts{})
+	actual := registeredToolNames(t, tools.RegisterOpts{})
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Suite A tool surface mismatch.\nexpected: %s\nactual:   %s",
 			strings.Join(expected, ", "), strings.Join(actual, ", "))
@@ -38,7 +38,7 @@ func TestToolSurfaceRegistryEmbeddingsOnly(t *testing.T) {
 		"docgraph_graph", "docgraph_history", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
-	actual := registeredToolNames(t, tools.ToolProfileCompact, tools.RegisterOpts{EnableEmbeddings: true})
+	actual := registeredToolNames(t, tools.RegisterOpts{EnableEmbeddings: true})
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Suite B tool surface mismatch.\nexpected: %s\nactual:   %s",
 			strings.Join(expected, ", "), strings.Join(actual, ", "))
@@ -52,7 +52,7 @@ func TestToolSurfaceRegistryEnrichmentOnly(t *testing.T) {
 		"docgraph_graph", "docgraph_history", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
-	actual := registeredToolNames(t, tools.ToolProfileCompact, tools.RegisterOpts{EnableEnrichment: true})
+	actual := registeredToolNames(t, tools.RegisterOpts{EnableEnrichment: true})
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Suite C tool surface mismatch.\nexpected: %s\nactual:   %s",
 			strings.Join(expected, ", "), strings.Join(actual, ", "))
@@ -66,7 +66,7 @@ func TestToolSurfaceRegistryBoth(t *testing.T) {
 		"docgraph_files", "docgraph_graph", "docgraph_history", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
-	actual := registeredToolNames(t, tools.ToolProfileCompact, tools.RegisterOpts{EnableEmbeddings: true, EnableEnrichment: true})
+	actual := registeredToolNames(t, tools.RegisterOpts{EnableEmbeddings: true, EnableEnrichment: true})
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatalf("Suite D tool surface mismatch.\nexpected: %s\nactual:   %s",
 			strings.Join(expected, ", "), strings.Join(actual, ", "))
@@ -112,12 +112,11 @@ func TestServerInstructionsFitBudget(t *testing.T) {
 	}
 }
 
-
-func registeredToolNames(t *testing.T, profile tools.ToolProfile, opts tools.RegisterOpts) []string {
+func registeredToolNames(t *testing.T, opts tools.RegisterOpts) []string {
 	t.Helper()
 
 	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
-	tools.RegisterWithProfileOpts(srv, nil, "", profile, opts)
+	tools.RegisterWithOpts(srv, nil, "", opts)
 
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()

@@ -7,32 +7,6 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
-func TestParseToolProfile(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want ToolProfile
-	}{
-		{raw: "", want: ToolProfileCompact},
-		{raw: "full", want: ToolProfileCompact},
-		{raw: " compact ", want: ToolProfileCompact},
-		{raw: "DUAL", want: ToolProfileCompact},
-	}
-
-	for _, tc := range cases {
-		got, err := ParseToolProfile(tc.raw)
-		if err != nil {
-			t.Fatalf("ParseToolProfile(%q) returned error: %v", tc.raw, err)
-		}
-		if got != tc.want {
-			t.Fatalf("ParseToolProfile(%q) = %q, want %q", tc.raw, got, tc.want)
-		}
-	}
-
-	if _, err := ParseToolProfile("narrow"); err == nil {
-		t.Fatal("expected invalid profile to return an error")
-	}
-}
-
 func TestGraphFacadeIncomingReturnsReferences(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
@@ -184,4 +158,3 @@ func newGraphFacadeTestHandler(t *testing.T) (*handler, *store.Store) {
 	}
 	return h, st
 }
-

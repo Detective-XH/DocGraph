@@ -94,7 +94,7 @@ func printPackList(st *store.Store) {
 	fmt.Println("PACK\tDOMAIN\tVERSION\tENABLED\tFIELDS\tDESCRIPTION")
 	for _, pack := range packs {
 		enabled := "no"
-		if pack.EnabledByDefault {
+		if pack.Enabled {
 			enabled = "yes"
 		}
 		fmt.Printf("%s\t%s\t%s\t%s\t%d\t%s\n",
