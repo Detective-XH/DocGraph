@@ -14,6 +14,7 @@ type searchRequest struct {
 	Terms          []string
 	ExpandedTerms  []string
 	Short          bool
+	IncludeCode    bool
 	CandidateLimit int
 	Governance     GovernanceSearchOptions
 	Research       ResearchSearchOptions
@@ -45,11 +46,16 @@ func newSearchRequest(opts SearchOptions) searchRequest {
 			governance.AsOfDate = ""
 		}
 	}
+	kind := strings.TrimSpace(opts.Kind)
+	// Asking for code_file explicitly is itself an opt-in to code results;
+	// otherwise the kind!='code_file' filter below would null out the request.
+	includeCode := opts.IncludeCode || kind == "code_file"
 	return searchRequest{
 		Query:          strings.TrimSpace(opts.Query),
-		Kind:           strings.TrimSpace(opts.Kind),
+		Kind:           kind,
 		Limit:          limit,
 		Intent:         opts.Intent,
+		IncludeCode:    includeCode,
 		CandidateLimit: candidateLimit,
 		Governance:     governance,
 		Research:       research,

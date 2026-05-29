@@ -127,9 +127,27 @@ func weightedTermScore(terms []string, text string, weight float64) float64 {
 	return score
 }
 
+// FTS relevance boost calibration. SQLite FTS5 bm25() returns a more-negative
+// score for a more-relevant row, so -rank is a positive relevance magnitude
+// (real hits land roughly in 0.5..15 with the column weights in use).
+const (
+	// ftsBoostScale maps bm25 magnitude to score 1:1. The previous 1e6 scale
+	// pushed every real hit past the cap, saturating to a flat boost and
+	// discarding the bm25 signal entirely.
+	ftsBoostScale = 1.0
+	// ftsBoostCap bounds the boost at the strongest field weight (name=12), so
+	// a top FTS hit is comparable to a name-field match but never dominates the
+	// Go-side field/graph/metadata ranking. It also tames corpus-dependent
+	// bm25 magnitudes — runaway scores clamp here.
+	ftsBoostCap = 12.0
+)
+
 func ftsRankBoost(rank float64) float64 {
 	if rank < 0 {
-		return math.Min(-rank*1000000, 8)
+		return math.Min(-rank*ftsBoostScale, ftsBoostCap)
 	}
+	// rank >= 0 only at the IDF<=0 boundary: a term so common it carries
+	// near-zero relevance, so bm25 collapses to ~0. Keep the prior small,
+	// decaying fallback — such a hit earns a negligible boost either way.
 	return 1 / (1 + rank)
 }

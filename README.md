@@ -77,7 +77,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13 MB |
-| Codebase | ~18,940 lines of Go (+ ~18,540 lines of tests) |
+| Codebase | ~18,980 lines of Go (+ ~18,730 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -169,7 +169,7 @@ Available skills bundled in the binary:
 
 | # | Tool | Description |
 |---|------|-------------|
-| 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) with section-level results, field-weighted ranking, graph-aware reranking, and governance/research/entity filters |
+| 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) with section-level results, field-weighted ranking, graph-aware reranking, and governance/research/entity filters. Returns documentation only by default; pass `include_code=true` or `kind=code_file` to include `code_doc`-pack code files |
 | 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process, research, and (when `code_doc` is enabled) docs-code drift audit reports |
 | 3 | `docgraph_graph` | Graph traversal facade. `operation=incoming` (who references this doc), `operation=outgoing` (what this doc links to), `operation=impact` (blast radius, configurable depth), `operation=trace` (shortest path between two docs). Use `document=` for incoming/outgoing/impact; `from=` and `to=` for trace |
 | 4 | `docgraph_node` | Single document details with metadata, structure, and edges |
@@ -294,7 +294,7 @@ nodes when the `code_doc` domain pack is enabled.
   - Inspect state: `docgraph pack list /path/to/project`
 - Supported languages include Go, Python, Ruby, JavaScript, TypeScript, Svelte, Vue, Rust, C, C++, Java, Swift, C#, PHP, Kotlin, Dart, Lua, Luau, Pascal, SQL, and Liquid
 - Adds one `code_file` node per source file; incremental `pack enable` sync completes in 1–4s for 40–80 code files, up to ~12s for 300+ code files
-- After enabling, `kind=code_file` is immediately available in `docgraph_search` and `format=drift_audit` surfaces `code.*` findings
+- After enabling, `docgraph_search` still returns documentation only by default — opt code files in with `kind=code_file` or `include_code=true` — and `format=drift_audit` surfaces `code.*` findings
 - `--force` re-index resets domain pack state — re-run `docgraph pack enable code_doc <path>` after a force rebuild
 - This is shallow documentation indexing only; CodeGraph remains the intended tool for call graphs, type resolution, routes, and code impact
 

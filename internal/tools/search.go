@@ -17,8 +17,9 @@ import (
 var searchTool = mcp.NewTool("docgraph_search",
 	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use governance and research filters to constrain retrieval without adding separate tools."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms")),
-	mcp.WithString("kind", mcp.Description("Filter by node kind: document, heading, definition, tag")),
+	mcp.WithString("kind", mcp.Description("Filter by node kind: document, heading, definition, tag. Code files (code_doc pack) are excluded by default; pass kind=code_file or include_code=true to surface them.")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
+	mcp.WithBoolean("include_code", mcp.Description("Include code_file results from the code_doc pack alongside documentation. Default false (docs only).")),
 	mcp.WithString("status", mcp.Description("Filter by governance status (e.g. approved, draft, superseded). Requires metadata reindex.")),
 	mcp.WithString("sensitivity", mcp.Description("Filter by sensitivity (e.g. public, internal, confidential, restricted). Requires metadata reindex.")),
 	mcp.WithString("canonical_source", mcp.Description("Filter by canonical source marker or value. Requires metadata reindex.")),
@@ -46,6 +47,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	query = sanitizeArg(query, maxArgLength)
 	kind := getStringArg(args, "kind", "")
 	limit := getIntArgClamped(args, "limit", 10, 1, 200)
+	includeCode := getBoolArg(args, "include_code", false)
 	statusFilter := sanitizeArg(getStringArg(args, "status", ""), 100)
 	sensitivityFilter := sanitizeArg(getStringArg(args, "sensitivity", ""), 100)
 	canonicalSourceFilter := sanitizeArg(getStringArg(args, "canonical_source", ""), 300)
@@ -57,9 +59,10 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	analystStatusFilter := sanitizeArg(getStringArg(args, "analyst_status", ""), 100)
 
 	opts := store.SearchOptions{
-		Query: query,
-		Kind:  kind,
-		Limit: limit,
+		Query:       query,
+		Kind:        kind,
+		Limit:       limit,
+		IncludeCode: includeCode,
 		Governance: store.GovernanceSearchOptions{
 			Status:          statusFilter,
 			Sensitivity:     sensitivityFilter,
