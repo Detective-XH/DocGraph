@@ -56,9 +56,9 @@ const (
 
 // Docs-code drift finding codes.
 const (
-	CodeCodeMissingSymbol       = "code.missing_symbol"
-	CodeCodeUndocumentedExport  = "code.undocumented_export"
-	CodeCodeUnanchoredFeature   = "code.unanchored_feature"
+	CodeCodeMissingSymbol      = "code.missing_symbol"
+	CodeCodeUndocumentedExport = "code.undocumented_export"
+	CodeCodeUnanchoredFeature  = "code.unanchored_feature"
 )
 
 // GetDriftFindings runs the policy/process drift audit and returns advisory

@@ -161,7 +161,7 @@ func luaFileHeader(lines []string) (string, int, int) {
 		if end >= 0 {
 			block := joined[:end+2]
 			lineCount := strings.Count(block, "\n")
-			text := strings.TrimSpace(block[4 : end]) // strip --[[ and ]]
+			text := strings.TrimSpace(block[4:end]) // strip --[[ and ]]
 			return text, start + 1, start + 1 + lineCount
 		}
 	}

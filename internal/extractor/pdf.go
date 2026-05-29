@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	pdfMaxPages    = 500
-	pdfMaxTextLen  = 10 * 1024 // 10 KB per section chunk
-	pdfExcerptLen  = 500       // 500 byte body excerpt cap
-	pdfScannedThreshold = 50   // avg chars/page below which we flag as image-only
+	pdfMaxPages         = 500
+	pdfMaxTextLen       = 10 * 1024 // 10 KB per section chunk
+	pdfExcerptLen       = 500       // 500 byte body excerpt cap
+	pdfScannedThreshold = 50        // avg chars/page below which we flag as image-only
 )
 
 func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
@@ -249,4 +249,3 @@ func sectionHash(text string) string {
 	h := sha256.Sum256([]byte(text))
 	return fmt.Sprintf("%x", h)
 }
-

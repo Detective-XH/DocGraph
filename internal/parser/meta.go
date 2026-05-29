@@ -106,7 +106,7 @@ func (b *metaParser) Close(node gast.Node, reader text.Reader, pc parser.Context
 }
 
 func (b *metaParser) CanInterruptParagraph() bool { return false }
-func (b *metaParser) CanAcceptIndentedLine() bool  { return false }
+func (b *metaParser) CanAcceptIndentedLine() bool { return false }
 
 // ---------------------------------------------------------------------------
 // AST transformer (no-op — frontmatter node is already removed in Close)

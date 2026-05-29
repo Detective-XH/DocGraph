@@ -150,8 +150,8 @@ func (s *Store) conflictingBySupersedes(opts DriftAuditOpts) ([]DriftFinding, er
 		      HAVING COUNT(*) > 1
 		  )
 		ORDER BY gm.supersedes, gm.node_id
-		LIMIT 1000
-	`)
+		LIMIT ?
+	`, opts.Limit)
 	if err != nil {
 		return nil, err
 	}

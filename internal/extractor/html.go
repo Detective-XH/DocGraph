@@ -25,17 +25,17 @@ func extractHTML(absPath, relPath string, src []byte, hash string) (*parser.Pars
 		buf       strings.Builder
 	}
 	var (
-		title, body  strings.Builder
-		headings     []store.Node
-		sectionTexts []string    // per-section body text, parallel to headings
-		sectionBuf   strings.Builder
-		inSection    bool        // true after the first heading has closed
-		rawLinks     []parser.RawLink
-		metaTuples   []store.MetadataTuple
+		title, body                        strings.Builder
+		headings                           []store.Node
+		sectionTexts                       []string // per-section body text, parallel to headings
+		sectionBuf                         strings.Builder
+		inSection                          bool // true after the first heading has closed
+		rawLinks                           []parser.RawLink
+		metaTuples                         []store.MetadataTuple
 		inHead, inTitle, inScript, inStyle bool
-		cur          *hstate
-		globalIdx    int
-		lineNum      = 1
+		cur                                *hstate
+		globalIdx                          int
+		lineNum                            = 1
 	)
 
 	z := html.NewTokenizer(bytes.NewReader(src))
@@ -186,10 +186,10 @@ func extractHTML(absPath, relPath string, src []byte, hash string) (*parser.Pars
 	htmlComputeEndLines(headings, docEndLine)
 
 	return &parser.ParseResult{
-		DocNode:        docNode,
-		Headings:       headings,
-		Edges:          htmlContainmentEdges(relPath, headings),
-		RawLinks:       rawLinks,
+		DocNode:  docNode,
+		Headings: headings,
+		Edges:    htmlContainmentEdges(relPath, headings),
+		RawLinks: rawLinks,
 		FileInfo: store.FileInfo{
 			Path: relPath, ContentHash: hash, Size: int64(len(src)),
 			ModifiedAt: 0, IndexedAt: time.Now().Unix(),
@@ -223,7 +223,10 @@ func htmlComputeEndLines(headings []store.Node, docEndLine int) {
 
 func htmlContainmentEdges(docID string, headings []store.Node) []store.Edge {
 	var edges []store.Edge
-	type frame struct{ level int; id string }
+	type frame struct {
+		level int
+		id    string
+	}
 	stack := []frame{{0, docID}}
 	for _, h := range headings {
 		for len(stack) > 1 && stack[len(stack)-1].level >= h.Level {
@@ -236,7 +239,10 @@ func htmlContainmentEdges(docID string, headings []store.Node) []store.Edge {
 }
 
 func htmlSectionChunks(relPath string, headings []store.Node, sectionTexts []string, contentHash string) []store.SectionChunk {
-	type sf struct{ level int; name string }
+	type sf struct {
+		level int
+		name  string
+	}
 	var stack []sf
 	var chunks []store.SectionChunk
 	for i, h := range headings {

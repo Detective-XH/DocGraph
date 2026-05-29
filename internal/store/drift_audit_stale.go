@@ -86,9 +86,9 @@ func (s *Store) findSupersededReferenced(opts DriftAuditOpts) ([]DriftFinding, e
 	var findings []DriftFinding
 	// allowedKinds restricts to the three reference edge kinds per spec.
 	allowedKinds := map[string]bool{
-		"references":    true,
-		"wikilinks_to":  true,
-		"related_to":    true,
+		"references":   true,
+		"wikilinks_to": true,
+		"related_to":   true,
 	}
 
 	for _, sup := range superseded {

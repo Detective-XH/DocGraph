@@ -4,10 +4,10 @@ import "testing"
 
 func TestGetIntArgClamped(t *testing.T) {
 	cases := []struct {
-		name           string
-		val            any
-		def, lo, hi    int
-		want           int
+		name        string
+		val         any
+		def, lo, hi int
+		want        int
 	}{
 		{"missing uses default", nil, 10, 1, 200, 10},
 		{"negative clamps to lo", float64(-1), 10, 1, 200, 1},

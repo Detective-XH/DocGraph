@@ -43,4 +43,3 @@ func TestExtractMalformedPDFDoesNotPanic(t *testing.T) {
 		}()
 	}
 }
-

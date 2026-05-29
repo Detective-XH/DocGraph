@@ -30,15 +30,15 @@ type RawLink struct {
 
 // ParseResult contains all data extracted from a single markdown file.
 type ParseResult struct {
-	DocNode         store.Node
-	Headings        []store.Node
-	Defs            []store.Node
-	Tags            []store.Node // Deduplicated tag nodes
-	Edges           []store.Edge
-	RawLinks        []RawLink
-	FileInfo        store.FileInfo
-	SectionChunks   []store.SectionChunk
-	MetadataTuples  []store.MetadataTuple // Normalized key/value pairs from frontmatter
+	DocNode        store.Node
+	Headings       []store.Node
+	Defs           []store.Node
+	Tags           []store.Node // Deduplicated tag nodes
+	Edges          []store.Edge
+	RawLinks       []RawLink
+	FileInfo       store.FileInfo
+	SectionChunks  []store.SectionChunk
+	MetadataTuples []store.MetadataTuple // Normalized key/value pairs from frontmatter
 }
 
 var inlineWikilinkRe = regexp.MustCompile(`(!?)\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)

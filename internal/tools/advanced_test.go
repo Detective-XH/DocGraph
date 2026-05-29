@@ -410,4 +410,3 @@ func TestHandleSimilar_EmptyGivesGuidance(t *testing.T) {
 		t.Errorf("expected actionable guidance pointing to docgraph_graph, got: %s", text)
 	}
 }
-
