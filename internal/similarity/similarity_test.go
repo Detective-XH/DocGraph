@@ -116,8 +116,8 @@ func TestComputeSimilarityWithTags(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	tagsAB, _ := json.Marshal(map[string]interface{}{"tags": []string{"security", "compliance"}})
-	tagsC, _ := json.Marshal(map[string]interface{}{"tags": []string{"tutorial", "quickstart"}})
+	tagsAB, _ := json.Marshal(map[string]any{"tags": []string{"security", "compliance"}})
+	tagsC, _ := json.Marshal(map[string]any{"tags": []string{"tutorial", "quickstart"}})
 
 	nodes := []store.Node{
 		{ID: "policy.md", Kind: "document", Name: "Policy", QualifiedName: "policy.md", FilePath: "policy.md", StartLine: 1, EndLine: 10, BodyExcerpt: "alpha bravo", Metadata: string(tagsAB), UpdatedAt: 1},
@@ -256,7 +256,7 @@ func TestComputeNeuralSimilarityForDoc(t *testing.T) {
 
 	var neuralEdge *store.Edge
 	for i, e := range allEdges {
-		var m map[string]interface{}
+		var m map[string]any
 		json.Unmarshal([]byte(e.Metadata), &m)
 		if eng, _ := m["engine"].(string); eng == "neural" {
 			neuralEdge = &allEdges[i]
@@ -266,7 +266,7 @@ func TestComputeNeuralSimilarityForDoc(t *testing.T) {
 		t.Error("expected neural similar_to edge between governance and security, found none")
 	}
 	if neuralEdge != nil {
-		var m map[string]interface{}
+		var m map[string]any
 		json.Unmarshal([]byte(neuralEdge.Metadata), &m)
 		if m["model_id"] != "test-model" {
 			t.Errorf("expected model_id=test-model, got %v", m["model_id"])
@@ -313,7 +313,7 @@ func TestComputeSimilarityNoPanicOnAdversarialInput(t *testing.T) {
 		if len(tags) > 0 {
 			ts := make([]string, len(tags))
 			copy(ts, tags)
-			b, _ := json.Marshal(map[string]interface{}{"tags": ts})
+			b, _ := json.Marshal(map[string]any{"tags": ts})
 			md = string(b)
 		}
 		return store.Node{ID: id, Kind: "document", Name: name, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 10, BodyExcerpt: body, Metadata: md, UpdatedAt: 1}

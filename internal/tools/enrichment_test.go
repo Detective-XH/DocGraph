@@ -50,7 +50,7 @@ func TestHandleEnrichmentPending_ReturnsFrontmatterlessDocs(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 	insertToolEnrichmentDoc(t, st, "b.md", "hash-b", true)
 
-	res, err := callTool(h, h.handleEnrichmentPending, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentPending, map[string]any{
 		"content_mode": "excerpt",
 	})
 	if err != nil {
@@ -79,7 +79,7 @@ func TestHandleEnrichmentProcess_StoresSummaryAndAgentMetadata(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 	injectEnrichmentToken(h, "test-tok-001", "a.pdf")
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "test-tok-001",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -129,7 +129,7 @@ func TestHandleEnrichmentProcess_RejectsUnsupportedMetadata(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 	injectEnrichmentToken(h, "test-tok-002", "a.pdf")
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "test-tok-002",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -149,7 +149,7 @@ func TestHandleEnrichmentProcess_RequiresModelID(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 	injectEnrichmentToken(h, "test-tok-003", "a.pdf")
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "test-tok-003",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -167,7 +167,7 @@ func TestHandleEnrichmentProcess_RequiresToken(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"doc_id":       "a.pdf",
 		"content_hash": "hash-a",
 		"summary":      "Agent summary.",
@@ -186,7 +186,7 @@ func TestHandleEnrichmentProcess_RequiresToken(t *testing.T) {
 
 func TestHandleEnrichmentProcess_RejectsInvalidToken(t *testing.T) {
 	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "bad-token",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -211,7 +211,7 @@ func TestHandleEnrichmentProcess_RejectsExpiredToken(t *testing.T) {
 		docIDs:    map[string]struct{}{"a.pdf": {}},
 	})
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "expired-tok",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -234,7 +234,7 @@ func TestHandleEnrichmentProcess_TokenIsConsumedOnce(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 	injectEnrichmentToken(h, "single-use-tok", "a.pdf")
 
-	args := map[string]interface{}{
+	args := map[string]any{
 		"confirmation_token": "single-use-tok",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -268,7 +268,7 @@ func TestHandleEnrichmentProcess_TokenAuthorizesEntireBatch(t *testing.T) {
 		{"b.pdf", "hash-b"},
 		{"c.pdf", "hash-c"},
 	} {
-		res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+		res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 			"confirmation_token": "batch-tok",
 			"doc_id":             doc.id,
 			"content_hash":       doc.hash,
@@ -287,7 +287,7 @@ func TestHandleEnrichmentProcess_TokenDeletedOnlyAfterLastDoc(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "b.pdf", "hash-b", false)
 	injectEnrichmentToken(h, "two-doc-tok", "a.pdf", "b.pdf")
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "two-doc-tok",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -301,7 +301,7 @@ func TestHandleEnrichmentProcess_TokenDeletedOnlyAfterLastDoc(t *testing.T) {
 		t.Fatal("token must survive between docs in the same batch")
 	}
 
-	res, err = callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err = callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "two-doc-tok",
 		"doc_id":             "b.pdf",
 		"content_hash":       "hash-b",
@@ -322,7 +322,7 @@ func TestHandleEnrichmentProcess_RejectsUnauthorizedDocAndKeepsToken(t *testing.
 	insertToolEnrichmentDoc(t, st, "rogue.pdf", "hash-rogue", false)
 	injectEnrichmentToken(h, "scoped-tok", "a.pdf")
 
-	res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "scoped-tok",
 		"doc_id":             "rogue.pdf",
 		"content_hash":       "hash-rogue",
@@ -343,7 +343,7 @@ func TestHandleEnrichmentProcess_RejectsUnauthorizedDocAndKeepsToken(t *testing.
 	}
 
 	// The originally authorized doc must still be processable on the same token.
-	res, err = callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+	res, err = callTool(h, h.handleEnrichmentProcess, map[string]any{
 		"confirmation_token": "scoped-tok",
 		"doc_id":             "a.pdf",
 		"content_hash":       "hash-a",
@@ -363,7 +363,7 @@ func TestHandleEnrichmentPending_AllSensitiveYieldsNoToken(t *testing.T) {
 	insertToolEnrichmentDoc(t, st, "secret/a.pdf", "hash-a", false)
 	insertToolEnrichmentDoc(t, st, "secret/b.pdf", "hash-b", false)
 
-	res, err := callTool(h, h.handleEnrichmentPending, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichmentPending, map[string]any{
 		"content_mode": "excerpt",
 	})
 	if err != nil {
@@ -398,7 +398,7 @@ func TestHandleEnrichmentProcess_ConcurrentBatchIsRaceFree(t *testing.T) {
 		wg.Add(1)
 		go func(idx int, id, hash string) {
 			defer wg.Done()
-			res, err := callTool(h, h.handleEnrichmentProcess, map[string]interface{}{
+			res, err := callTool(h, h.handleEnrichmentProcess, map[string]any{
 				"confirmation_token": "race-tok",
 				"doc_id":             id,
 				"content_hash":       hash,
@@ -427,7 +427,7 @@ func TestHandleEnrichmentFacade_RoutesActions(t *testing.T) {
 	h, st := newTestHandler(t)
 	insertToolEnrichmentDoc(t, st, "a.pdf", "hash-a", false)
 
-	res, err := callTool(h, h.handleEnrichment, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichment, map[string]any{
 		"action":       "pending",
 		"content_mode": "excerpt",
 	})
@@ -444,7 +444,7 @@ func TestHandleEnrichmentFacade_RoutesActions(t *testing.T) {
 
 func TestHandleEnrichmentFacade_RejectsUnknownAction(t *testing.T) {
 	h, _ := newTestHandler(t)
-	res, err := callTool(h, h.handleEnrichment, map[string]interface{}{
+	res, err := callTool(h, h.handleEnrichment, map[string]any{
 		"action": "unknown",
 	})
 	if err != nil {

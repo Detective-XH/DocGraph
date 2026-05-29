@@ -398,11 +398,11 @@ func extractTagSet(metadataJSON string) map[string]bool {
 	if metadataJSON == "" {
 		return set
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(metadataJSON), &m); err != nil {
 		return set
 	}
-	arr, _ := m["tags"].([]interface{})
+	arr, _ := m["tags"].([]any)
 	for _, v := range arr {
 		if s, ok := v.(string); ok {
 			set[strings.ToLower(s)] = true
@@ -490,7 +490,7 @@ func ComputeNeuralSimilarityForDoc(st *store.Store, docID, modelID string, thres
 		if src > tgt {
 			src, tgt = tgt, src
 		}
-		meta, _ := json.Marshal(map[string]interface{}{
+		meta, _ := json.Marshal(map[string]any{
 			"engine":   "neural",
 			"model_id": modelID,
 			"score":    roundTo(score, 4),

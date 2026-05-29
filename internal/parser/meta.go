@@ -20,12 +20,12 @@ import (
 var metaContextKey = parser.NewContextKey()
 
 type metaData struct {
-	Map   map[string]interface{}
+	Map   map[string]any
 	Error error
 }
 
 // MetaGet returns the YAML frontmatter map stored in a parser.Context.
-func MetaGet(pc parser.Context) map[string]interface{} {
+func MetaGet(pc parser.Context) map[string]any {
 	v := pc.Get(metaContextKey)
 	if v == nil {
 		return nil
@@ -92,7 +92,7 @@ func (b *metaParser) Close(node gast.Node, reader text.Reader, pc parser.Context
 	if len(raw) > maxFrontmatterBytes {
 		d.Error = bytes.ErrTooLarge
 	} else {
-		m := map[string]interface{}{}
+		m := map[string]any{}
 		if err := yaml.Unmarshal(raw, &m); err != nil {
 			d.Error = err
 		} else {

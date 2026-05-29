@@ -247,7 +247,7 @@ func (s *Store) collectMetadataFilteredCandidates(req searchRequest, candidates 
 }
 
 func (s *Store) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
-	args := []interface{}{}
+	args := []any{}
 	where := []string{"n.kind = 'document'"}
 	if req.Governance.Status != "" ||
 		req.Governance.Sensitivity != "" ||

@@ -46,7 +46,7 @@ func TestHandleSearchResearchFilter(t *testing.T) {
 		t.Fatalf("UpsertResearchMetadata: %v", err)
 	}
 
-	res, err := callTool(h, h.handleSearch, map[string]interface{}{
+	res, err := callTool(h, h.handleSearch, map[string]any{
 		"query":       "alpha",
 		"source_type": "primary",
 		"confidence":  "high",
@@ -106,7 +106,7 @@ func TestHandleSearchResearchFilterAppliesLimitAfterFTS(t *testing.T) {
 		}
 	}
 
-	res, err := callTool(h, h.handleSearch, map[string]interface{}{
+	res, err := callTool(h, h.handleSearch, map[string]any{
 		"query":       "alpha",
 		"source_type": "primary",
 		"confidence":  "high",
@@ -168,7 +168,7 @@ func TestHandleSearchResearchFilterDoesNotDropLowRankMetadataHit(t *testing.T) {
 		t.Fatalf("UpsertResearchMetadata: %v", err)
 	}
 
-	res, err := callTool(h, h.handleSearch, map[string]interface{}{
+	res, err := callTool(h, h.handleSearch, map[string]any{
 		"query":       "alpha",
 		"source_type": "primary",
 		"confidence":  "high",
@@ -242,7 +242,7 @@ func TestHandleContextWorkspaceUsesResultProjectStore(t *testing.T) {
 		{Name: "project-b", Path: t.TempDir(), Store: storeB},
 	}}}
 
-	res, err := callTool(h, h.handleContext, map[string]interface{}{
+	res, err := callTool(h, h.handleContext, map[string]any{
 		"task":            "target",
 		"maxNodes":        float64(1),
 		"maxContentBytes": float64(2000),
@@ -287,7 +287,7 @@ func TestHandleNodeResearchSection(t *testing.T) {
 		t.Fatalf("UpsertResearchMetadata: %v", err)
 	}
 
-	res, err := callTool(h, h.handleNode, map[string]interface{}{
+	res, err := callTool(h, h.handleNode, map[string]any{
 		"document": "research-node.md",
 	})
 	if err != nil {

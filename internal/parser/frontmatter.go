@@ -14,7 +14,7 @@ var wikilinkRe = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
 
 // ExtractFrontmatter extracts YAML frontmatter from markdown bytes using goldmark-meta.
 // Returns nil, nil if no frontmatter is present.
-func ExtractFrontmatter(source []byte) (map[string]interface{}, error) {
+func ExtractFrontmatter(source []byte) (map[string]any, error) {
 	md := goldmark.New(goldmark.WithExtensions(MetaExt))
 	ctx := parser.NewContext()
 	doc := md.Parser().Parse(text.NewReader(source), parser.WithContext(ctx))
@@ -29,7 +29,7 @@ func ExtractFrontmatter(source []byte) (map[string]interface{}, error) {
 
 // FrontmatterToJSON converts a frontmatter map to a JSON string.
 // Returns "" if fm is nil.
-func FrontmatterToJSON(fm map[string]interface{}) string {
+func FrontmatterToJSON(fm map[string]any) string {
 	if fm == nil {
 		return ""
 	}
@@ -41,7 +41,7 @@ func FrontmatterToJSON(fm map[string]interface{}) string {
 }
 
 // GetTags extracts the "tags" field from frontmatter, handling both []interface{} and []string.
-func GetTags(fm map[string]interface{}) []string {
+func GetTags(fm map[string]any) []string {
 	if fm == nil {
 		return nil
 	}
@@ -51,7 +51,7 @@ func GetTags(fm map[string]interface{}) []string {
 	}
 
 	switch v := raw.(type) {
-	case []interface{}:
+	case []any:
 		tags := make([]string, 0, len(v))
 		for _, item := range v {
 			if s, ok := item.(string); ok {
@@ -67,7 +67,7 @@ func GetTags(fm map[string]interface{}) []string {
 }
 
 // GetTitle extracts the "title" field from frontmatter.
-func GetTitle(fm map[string]interface{}) string {
+func GetTitle(fm map[string]any) string {
 	if fm == nil {
 		return ""
 	}
@@ -84,7 +84,7 @@ func GetTitle(fm map[string]interface{}) string {
 
 // GetWikilinks scans all string values in the frontmatter map for [[...]] patterns
 // and returns the wikilink targets. Handles both string and slice values.
-func GetWikilinks(fm map[string]interface{}) []string {
+func GetWikilinks(fm map[string]any) []string {
 	if fm == nil {
 		return nil
 	}
@@ -93,7 +93,7 @@ func GetWikilinks(fm map[string]interface{}) []string {
 		switch v := val.(type) {
 		case string:
 			targets = append(targets, extractWikilinks(v)...)
-		case []interface{}:
+		case []any:
 			for _, item := range v {
 				if s, ok := item.(string); ok {
 					targets = append(targets, extractWikilinks(s)...)

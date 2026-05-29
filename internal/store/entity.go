@@ -229,7 +229,7 @@ func (s *Store) GetEntityStats() (entities int, mentions int, err error) {
 }
 
 // nullableString returns nil for an empty string (maps to SQL NULL).
-func nullableString(s string) interface{} {
+func nullableString(s string) any {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}

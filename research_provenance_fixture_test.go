@@ -82,7 +82,7 @@ func TestResearchProvenanceFixtureShapes(t *testing.T) {
 	dir := filepath.Join("testdata", "research-provenance")
 
 	valid := mustFixtureFrontmatter(t, dir, "valid-claim.md")
-	evidence, ok := valid["evidence"].([]interface{})
+	evidence, ok := valid["evidence"].([]any)
 	if !ok {
 		t.Fatalf("valid-claim evidence has type %T, want []interface{}", valid["evidence"])
 	}
@@ -91,7 +91,7 @@ func TestResearchProvenanceFixtureShapes(t *testing.T) {
 	}
 
 	advisory := mustFixtureFrontmatter(t, dir, "advisory-conflict.md")
-	if _, ok := advisory["skill_advisory"].(map[string]interface{}); !ok {
+	if _, ok := advisory["skill_advisory"].(map[string]any); !ok {
 		t.Fatalf("skill_advisory has type %T, want map[string]interface{}", advisory["skill_advisory"])
 	}
 
@@ -153,7 +153,7 @@ func TestResearchProvenanceFixtureIndexesResearchMetadata(t *testing.T) {
 	}
 }
 
-func mustFixtureFrontmatter(t *testing.T, dir, file string) map[string]interface{} {
+func mustFixtureFrontmatter(t *testing.T, dir, file string) map[string]any {
 	t.Helper()
 
 	source, err := os.ReadFile(filepath.Join(dir, file))

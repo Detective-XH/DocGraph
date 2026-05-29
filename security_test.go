@@ -23,7 +23,7 @@ import (
 // mcpCall sends an initialize handshake followed by a single tools/call to the
 // MCP server over stdio pipes and returns the raw JSON-RPC response line for
 // the tool call.
-func mcpCall(t *testing.T, st *store.Store, toolName string, args map[string]interface{}) string {
+func mcpCall(t *testing.T, st *store.Store, toolName string, args map[string]any) string {
 	t.Helper()
 
 	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
@@ -53,12 +53,12 @@ func mcpCall(t *testing.T, st *store.Store, toolName string, args map[string]int
 	scanner.Buffer(make([]byte, 1<<20), 1<<20)
 
 	// 1. Send initialize
-	initReq, _ := json.Marshal(map[string]interface{}{
+	initReq, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "initialize",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"protocolVersion": "2024-11-05",
-			"capabilities":    map[string]interface{}{},
-			"clientInfo":      map[string]interface{}{"name": "security-test", "version": "0.1"},
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "security-test", "version": "0.1"},
 		},
 	})
 	if _, err := clientW.Write(append(initReq, '\n')); err != nil {
@@ -70,9 +70,9 @@ func mcpCall(t *testing.T, st *store.Store, toolName string, args map[string]int
 
 	// 2. Send tool call
 	argsJSON, _ := json.Marshal(args)
-	toolReq, _ := json.Marshal(map[string]interface{}{
+	toolReq, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-		"params": map[string]interface{}{
+		"params": map[string]any{
 			"name":      toolName,
 			"arguments": json.RawMessage(argsJSON),
 		},
@@ -95,12 +95,12 @@ func mcpCall(t *testing.T, st *store.Store, toolName string, args map[string]int
 
 // requireValidJSONRPC parses the response line and asserts it is a valid
 // JSON-RPC 2.0 message with the expected id. Returns the parsed map.
-func requireValidJSONRPC(t *testing.T, raw string) map[string]interface{} {
+func requireValidJSONRPC(t *testing.T, raw string) map[string]any {
 	t.Helper()
 	if raw == "" {
 		t.Fatal("empty response from MCP server")
 	}
-	var resp map[string]interface{}
+	var resp map[string]any
 	if err := json.Unmarshal([]byte(raw), &resp); err != nil {
 		t.Fatalf("response is not valid JSON: %v\nraw: %s", err, raw[:min(len(raw), 200)])
 	}
@@ -115,17 +115,17 @@ func requireValidJSONRPC(t *testing.T, raw string) map[string]interface{} {
 }
 
 // getContentText extracts the first content[].text from a successful result.
-func getContentText(t *testing.T, resp map[string]interface{}) string {
+func getContentText(t *testing.T, resp map[string]any) string {
 	t.Helper()
-	result, ok := resp["result"].(map[string]interface{})
+	result, ok := resp["result"].(map[string]any)
 	if !ok {
 		return ""
 	}
-	content, ok := result["content"].([]interface{})
+	content, ok := result["content"].([]any)
 	if !ok || len(content) == 0 {
 		return ""
 	}
-	first, ok := content[0].(map[string]interface{})
+	first, ok := content[0].(map[string]any)
 	if !ok {
 		return ""
 	}
@@ -135,13 +135,13 @@ func getContentText(t *testing.T, resp map[string]interface{}) string {
 
 // isErrorResult checks whether the response is an MCP tool error result
 // (isError: true in result) or a JSON-RPC level error.
-func isErrorResult(resp map[string]interface{}) bool {
+func isErrorResult(resp map[string]any) bool {
 	// JSON-RPC level error
 	if resp["error"] != nil {
 		return true
 	}
 	// MCP tool-level error (result.isError == true)
-	if result, ok := resp["result"].(map[string]interface{}); ok {
+	if result, ok := resp["result"].(map[string]any); ok {
 		if isErr, ok := result["isError"].(bool); ok && isErr {
 			return true
 		}
@@ -159,7 +159,7 @@ func TestMCPOversizedQuery(t *testing.T) {
 	// Build a 50000 character query
 	bigQuery := strings.Repeat("A", 50000)
 
-	raw := mcpCall(t, st, "docgraph_search", map[string]interface{}{
+	raw := mcpCall(t, st, "docgraph_search", map[string]any{
 		"query": bigQuery,
 	})
 
@@ -188,7 +188,7 @@ func TestMCPSQLInjectionViaSearch(t *testing.T) {
 	st := indexTestProject(t, fixtureDir(t, "project-a"))
 
 	// Send a classic SQL injection payload
-	raw := mcpCall(t, st, "docgraph_search", map[string]interface{}{
+	raw := mcpCall(t, st, "docgraph_search", map[string]any{
 		"query": `"; DROP TABLE nodes; --`,
 	})
 
@@ -210,7 +210,7 @@ func TestMCPSQLInjectionViaSearch(t *testing.T) {
 	}
 
 	// Follow-up search must still work
-	raw2 := mcpCall(t, st, "docgraph_search", map[string]interface{}{
+	raw2 := mcpCall(t, st, "docgraph_search", map[string]any{
 		"query": "Document",
 	})
 	resp2 := requireValidJSONRPC(t, raw2)
@@ -230,32 +230,32 @@ func TestMCPTypeConfusion(t *testing.T) {
 	cases := []struct {
 		name     string
 		toolName string
-		args     map[string]interface{}
+		args     map[string]any
 	}{
 		{
 			name:     "query as number",
 			toolName: "docgraph_search",
-			args:     map[string]interface{}{"query": 42},
+			args:     map[string]any{"query": 42},
 		},
 		{
 			name:     "limit as string",
 			toolName: "docgraph_search",
-			args:     map[string]interface{}{"query": "test", "limit": "abc"},
+			args:     map[string]any{"query": "test", "limit": "abc"},
 		},
 		{
 			name:     "document as array",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "incoming", "document": []interface{}{1, 2, 3}},
+			args:     map[string]any{"operation": "incoming", "document": []any{1, 2, 3}},
 		},
 		{
 			name:     "query as boolean",
 			toolName: "docgraph_search",
-			args:     map[string]interface{}{"query": true},
+			args:     map[string]any{"query": true},
 		},
 		{
 			name:     "document as map",
 			toolName: "docgraph_node",
-			args:     map[string]interface{}{"document": map[string]interface{}{"evil": true}},
+			args:     map[string]any{"document": map[string]any{"evil": true}},
 		},
 	}
 
@@ -281,22 +281,22 @@ func TestMCPNullArguments(t *testing.T) {
 	cases := []struct {
 		name     string
 		toolName string
-		args     map[string]interface{}
+		args     map[string]any
 	}{
 		{
 			name:     "null query",
 			toolName: "docgraph_search",
-			args:     map[string]interface{}{"query": nil},
+			args:     map[string]any{"query": nil},
 		},
 		{
 			name:     "null document",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "incoming", "document": nil},
+			args:     map[string]any{"operation": "incoming", "document": nil},
 		},
 		{
 			name:     "null task",
 			toolName: "docgraph_context",
-			args:     map[string]interface{}{"task": nil},
+			args:     map[string]any{"task": nil},
 		},
 	}
 
@@ -331,7 +331,7 @@ func TestMCPPathTraversalViaDocument(t *testing.T) {
 
 	for _, payload := range traversalPayloads {
 		t.Run(payload, func(t *testing.T) {
-			raw := mcpCall(t, st, "docgraph_graph", map[string]interface{}{
+			raw := mcpCall(t, st, "docgraph_graph", map[string]any{
 				"operation": "incoming",
 				"document":  payload,
 			})
@@ -352,7 +352,7 @@ func TestMCPPathTraversalViaDocument(t *testing.T) {
 			}
 
 			// Also check via docgraph_node
-			rawNode := mcpCall(t, st, "docgraph_node", map[string]interface{}{
+			rawNode := mcpCall(t, st, "docgraph_node", map[string]any{
 				"document": payload,
 			})
 			respNode := requireValidJSONRPC(t, rawNode)
@@ -377,47 +377,47 @@ func TestMCPEmptyAndMissingArgs(t *testing.T) {
 	cases := []struct {
 		name     string
 		toolName string
-		args     map[string]interface{}
+		args     map[string]any
 	}{
 		{
 			name:     "empty query string",
 			toolName: "docgraph_search",
-			args:     map[string]interface{}{"query": ""},
+			args:     map[string]any{"query": ""},
 		},
 		{
 			name:     "missing query entirely",
 			toolName: "docgraph_search",
-			args:     map[string]interface{}{},
+			args:     map[string]any{},
 		},
 		{
 			name:     "empty document string",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "incoming", "document": ""},
+			args:     map[string]any{"operation": "incoming", "document": ""},
 		},
 		{
 			name:     "missing document entirely",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "incoming"},
+			args:     map[string]any{"operation": "incoming"},
 		},
 		{
 			name:     "missing from/to for trace",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "trace"},
+			args:     map[string]any{"operation": "trace"},
 		},
 		{
 			name:     "empty from/to for trace",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "trace", "from": "", "to": ""},
+			args:     map[string]any{"operation": "trace", "from": "", "to": ""},
 		},
 		{
 			name:     "empty task for context",
 			toolName: "docgraph_context",
-			args:     map[string]interface{}{"task": ""},
+			args:     map[string]any{"task": ""},
 		},
 		{
 			name:     "missing all args for impact",
 			toolName: "docgraph_graph",
-			args:     map[string]interface{}{"operation": "impact"},
+			args:     map[string]any{"operation": "impact"},
 		},
 	}
 
