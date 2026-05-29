@@ -131,16 +131,21 @@ func (s *Store) InsertDocumentMetadata(nodeID string, tuples []MetadataTuple) er
 // applying authority ordering: highest-priority source per key wins; on ties, newer updated_at.
 // Called after InsertDocumentMetadata during indexing.
 func (s *Store) UpsertGovernanceMetadata(nodeID string, tuples []MetadataTuple) error {
-	// Build winning value per governance key.
-	type winner struct {
-		value     string
-		priority  int
-		updatedAt int64
-	}
 	now := time.Now().Unix()
-	projectionKeys := domainpacks.FieldColumnMap(domainpacks.PackGovernance)
-	winners := make(map[string]winner, len(projectionKeys))
+	winners := winnersFromTuples(tuples, domainpacks.PackGovernance, now)
+	if len(winners) == 0 {
+		return nil
+	}
+	return s.writeGovernanceProjection(nodeID, winners, now)
+}
 
+// winnersFromTuples resolves the highest-authority value per projected column from
+// in-memory metadata tuples, applying sourcePriority ordering (higher priority wins;
+// ties broken by most-recent). Used by the Upsert* entry points; the refresh* paths
+// resolve the same way from persisted rows via metadataProjectionWinners.
+func winnersFromTuples(tuples []MetadataTuple, packID string, now int64) map[string]projectionWinner {
+	projectionKeys := domainpacks.FieldColumnMap(packID)
+	winners := make(map[string]projectionWinner, len(projectionKeys))
 	for _, t := range tuples {
 		col, ok := projectionKeys[t.Key]
 		if !ok {
@@ -152,13 +157,15 @@ func (s *Store) UpsertGovernanceMetadata(nodeID string, tuples []MetadataTuple) 
 				continue
 			}
 		}
-		winners[col] = winner{value: t.Value, priority: prio, updatedAt: now}
+		winners[col] = projectionWinner{value: t.Value, priority: prio, updatedAt: now}
 	}
+	return winners
+}
 
-	if len(winners) == 0 {
-		return nil
-	}
-
+// writeGovernanceProjection upserts the resolved winners into governance_metadata.
+// Callers handle the empty-winners case (Upsert skips, refresh deletes) before
+// calling; this runs only when at least one column has a winning value.
+func (s *Store) writeGovernanceProjection(nodeID string, winners map[string]projectionWinner, now int64) error {
 	rec := &GovernanceRecord{NodeID: nodeID, UpdatedAt: now}
 	if w, ok := winners["status"]; ok {
 		rec.Status = w.value
@@ -224,33 +231,17 @@ func (s *Store) UpsertGovernanceMetadata(nodeID string, tuples []MetadataTuple) 
 // UpsertResearchMetadata projects research provenance keys from tuples into research_metadata,
 // applying the same source authority ordering as governance metadata.
 func (s *Store) UpsertResearchMetadata(nodeID string, tuples []MetadataTuple) error {
-	type winner struct {
-		value     string
-		priority  int
-		updatedAt int64
-	}
 	now := time.Now().Unix()
-	projectionKeys := domainpacks.FieldColumnMap(domainpacks.PackResearchProvenance)
-	winners := make(map[string]winner, len(projectionKeys))
-
-	for _, t := range tuples {
-		col, ok := projectionKeys[t.Key]
-		if !ok {
-			continue
-		}
-		prio := sourcePriority[t.Source]
-		if w, exists := winners[col]; exists {
-			if prio < w.priority || (prio == w.priority && now <= w.updatedAt) {
-				continue
-			}
-		}
-		winners[col] = winner{value: t.Value, priority: prio, updatedAt: now}
-	}
-
+	winners := winnersFromTuples(tuples, domainpacks.PackResearchProvenance, now)
 	if len(winners) == 0 {
 		return nil
 	}
+	return s.writeResearchProjection(nodeID, winners, now)
+}
 
+// writeResearchProjection upserts the resolved winners into research_metadata.
+// Same empty-winners contract as writeGovernanceProjection.
+func (s *Store) writeResearchProjection(nodeID string, winners map[string]projectionWinner, now int64) error {
 	rec := &ResearchRecord{NodeID: nodeID, UpdatedAt: now}
 	if w, ok := winners["claim_id"]; ok {
 		rec.ClaimID = w.value

@@ -6,6 +6,39 @@ import (
 	"time"
 )
 
+// TestRefreshMetadataProjection_EmptyWinnersDeletesStaleRow guards the empty-case
+// branch of the refresh path: when no document_metadata rows resolve to a projected
+// column, the stale typed-projection row must be DELETEd (whereas the Upsert path
+// returns nil and keeps it). The shared writeGovernanceProjection helper never runs
+// in this case, so the delete must stay in refreshGovernanceProjection itself.
+func TestRefreshMetadataProjection_EmptyWinnersDeletesStaleRow(t *testing.T) {
+	st := newTestStore(t)
+	insertTestNode(t, st, "doc/policy.md", "doc/policy.md")
+
+	// Seed a governance projection directly, with no backing document_metadata rows.
+	if err := st.UpsertGovernanceMetadata("doc/policy.md", []MetadataTuple{
+		{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
+	}); err != nil {
+		t.Fatalf("UpsertGovernanceMetadata: %v", err)
+	}
+	if gov, err := st.GetGovernanceMetadata("doc/policy.md"); err != nil || gov == nil {
+		t.Fatalf("expected governance row before refresh; err=%v gov=%v", err, gov)
+	}
+
+	// With zero document_metadata rows, refresh resolves no winners and must delete
+	// the stale projection rather than leave it in place.
+	if err := st.RefreshMetadataProjections("doc/policy.md"); err != nil {
+		t.Fatalf("RefreshMetadataProjections: %v", err)
+	}
+	gov, err := st.GetGovernanceMetadata("doc/policy.md")
+	if err != nil {
+		t.Fatalf("GetGovernanceMetadata: %v", err)
+	}
+	if gov != nil {
+		t.Fatalf("expected stale governance row deleted by empty-winners refresh, got %+v", gov)
+	}
+}
+
 func upsertTestFile(t *testing.T, st *Store, path, hash string, hasFrontmatter bool) {
 	t.Helper()
 	if err := st.UpsertFile(FileInfo{
