@@ -119,6 +119,22 @@ func queryTerms(query string) []string {
 	return out
 }
 
+// allTermsSubTrigram reports whether every query term is shorter than the FTS5
+// trigram tokenizer's 3-char minimum. Such queries produce no trigrams, so FTS
+// MATCH returns nothing and the LIKE fallback must handle them. Returns false
+// for an empty term list (nothing to fall back on).
+func allTermsSubTrigram(terms []string) bool {
+	if len(terms) == 0 {
+		return false
+	}
+	for _, t := range terms {
+		if len([]rune(t)) >= 3 {
+			return false
+		}
+	}
+	return true
+}
+
 func normalizeSearchTerm(term string) string {
 	term = strings.TrimFunc(strings.ToLower(term), func(r rune) bool {
 		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '/' || r == '.')
