@@ -12,7 +12,8 @@ func (s *Store) collectExactCandidates(req searchRequest, candidates map[string]
 		FROM nodes
 		WHERE (id = ? OR file_path = ? OR qualified_name = ? OR lower(name) = lower(?))
 		  AND (? = '' OR kind = ?)
-		LIMIT ?`, q, q, q, q, req.Kind, req.Kind, req.CandidateLimit)
+		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = nodes.file_path AND cf.kind = 'code_file'))
+		LIMIT ?`, q, q, q, q, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	if err != nil {
 		return err
 	}
@@ -43,8 +44,9 @@ func (s *Store) collectNodeCandidates(req searchRequest, candidates map[string]*
 		JOIN nodes n ON n.rowid = nodes_fts.rowid
 		WHERE nodes_fts MATCH ?
 		  AND (? = '' OR n.kind = ?)
+		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = n.file_path AND cf.kind = 'code_file'))
 		ORDER BY rank
-		LIMIT ?`, ftsQuery, req.Kind, req.Kind, req.CandidateLimit)
+		LIMIT ?`, ftsQuery, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	if err != nil {
 		return err
 	}
@@ -67,8 +69,9 @@ func (s *Store) collectNodeLikeCandidates(req searchRequest, candidates map[stri
 		FROM nodes
 		WHERE (name LIKE ? ESCAPE '\' OR qualified_name LIKE ? ESCAPE '\' OR body_excerpt LIKE ? ESCAPE '\' OR metadata LIKE ? ESCAPE '\')
 		  AND (? = '' OR kind = ?)
+		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = nodes.file_path AND cf.kind = 'code_file'))
 		ORDER BY name
-		LIMIT ?`, pattern, pattern, pattern, pattern, req.Kind, req.Kind, req.CandidateLimit)
+		LIMIT ?`, pattern, pattern, pattern, pattern, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	if err != nil {
 		return err
 	}
@@ -101,8 +104,9 @@ func (s *Store) collectSectionCandidates(req searchRequest, candidates map[strin
 		JOIN nodes n ON n.id = sc.node_id
 		WHERE section_chunks_fts MATCH ?
 		  AND (? = '' OR n.kind = ?)
+		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = n.file_path AND cf.kind = 'code_file'))
 		ORDER BY rank
-		LIMIT ?`, ftsQuery, req.Kind, req.Kind, req.CandidateLimit)
+		LIMIT ?`, ftsQuery, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	if err != nil {
 		return err
 	}
@@ -130,8 +134,9 @@ func (s *Store) collectSectionLikeCandidates(req searchRequest, candidates map[s
 		JOIN nodes n ON n.id = sc.node_id
 		WHERE (sc.heading_path LIKE ? ESCAPE '\' OR sc.text LIKE ? ESCAPE '\')
 		  AND (? = '' OR n.kind = ?)
+		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = n.file_path AND cf.kind = 'code_file'))
 		ORDER BY n.file_path, n.start_line
-		LIMIT ?`, pattern, pattern, req.Kind, req.Kind, req.CandidateLimit)
+		LIMIT ?`, pattern, pattern, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
 	if err != nil {
 		return err
 	}

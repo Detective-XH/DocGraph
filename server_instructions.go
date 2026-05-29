@@ -37,7 +37,7 @@ Search results use [project/]doc.md#heading:line-end — strip the [project/] pr
 - docgraph_graph operation=impact with depth > 2 can return many results — start with depth=1.
 - docgraph_context includes source content by default; set includeContent=false when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
-- Code documentation surface (code_doc pack, disabled by default): docgraph pack enable code_doc <path>; use docgraph pack list <path> to inspect state. When enabled, format=drift_audit also surfaces code.missing_symbol, code.undocumented_export, and code.unanchored_feature findings.
+- Code documentation (code_doc pack, off by default): docgraph pack enable code_doc <path>. When enabled, docgraph_search is docs-only unless include_code=true or kind=code_file; format=drift_audit surfaces code.missing_symbol, code.undocumented_export, code.unanchored_feature findings.
 
 ## LLM callout tools (opt-in)
 

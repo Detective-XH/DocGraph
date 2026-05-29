@@ -18,13 +18,22 @@ const (
 // SearchOptions keeps search quality upgrades extensible without adding new MCP tools.
 // Governance, research, and entity filters are additive optional constraints.
 type SearchOptions struct {
-	Query      string
-	Kind       string
-	Limit      int
-	Intent     SearchIntent
-	Governance GovernanceSearchOptions
-	Research   ResearchSearchOptions
-	Entity     EntitySearchOptions
+	Query string
+	Kind  string
+	Limit int
+	// IncludeCode opts code_doc-pack results back in. Default false:
+	// docgraph_search returns documentation only, so an enabled code_doc pack
+	// does not flood doc queries with .go internals. The filter excludes any
+	// node whose file is a code_file — the file-level code_file node AND its
+	// kind="heading" children (test funcs, doc comments) — since kind alone
+	// cannot tell a code heading from a markdown heading. It is a no-op when
+	// the pack is off. Passing Kind == "code_file" implies IncludeCode (see
+	// newSearchRequest), otherwise that filter would null out the request.
+	IncludeCode bool
+	Intent      SearchIntent
+	Governance  GovernanceSearchOptions
+	Research    ResearchSearchOptions
+	Entity      EntitySearchOptions
 }
 
 // EntitySearchOptions carries entity/source graph filter constraints.
