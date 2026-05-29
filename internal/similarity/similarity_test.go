@@ -3,6 +3,7 @@ package similarity
 import (
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -362,5 +363,57 @@ func TestComputeSimilarityNoPanicOnAdversarialInput(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestBuildCappedTargetsBoundsReferenceSet locks the per-doc targets cap added
+// for security-audit backlog #6: an untrusted document with far more distinct
+// outgoing references than maxTargetsPerDoc must yield a targets set bounded at
+// the cap, so the O(n^2) Jaccard pass cannot be amplified by a single crafted
+// file. Below the cap, the set is exact.
+func TestBuildCappedTargetsBoundsReferenceSet(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cap.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	const over = maxTargetsPerDoc + 500
+	// Target nodes (FK requires targets to exist) + the source document.
+	nodes := make([]store.Node, 0, over+1)
+	nodes = append(nodes, store.Node{ID: "src.md", Kind: "document", Name: "Src",
+		QualifiedName: "src.md", FilePath: "src.md", StartLine: 1, EndLine: 1, UpdatedAt: 1})
+	for k := range over {
+		id := "t" + strconv.Itoa(k)
+		nodes = append(nodes, store.Node{ID: id, Kind: "heading", Name: "h",
+			QualifiedName: id, FilePath: "src.md", StartLine: 1, EndLine: 1, UpdatedAt: 1})
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+	edges := make([]store.Edge, over)
+	for k := range over {
+		edges[k] = store.Edge{Source: "src.md", Target: "t" + strconv.Itoa(k), Kind: "wikilinks_to"}
+	}
+	if err := st.InsertEdges(edges); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := buildCappedTargets(st, "src.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != maxTargetsPerDoc {
+		t.Fatalf("over-cap doc: targets = %d, want capped at %d", len(got), maxTargetsPerDoc)
+	}
+
+	// A doc with few references is returned in full (cap does not under-count).
+	under, err := buildCappedTargets(st, "t0") // t0 has no outgoing edges
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(under) != 0 {
+		t.Fatalf("no-ref doc: targets = %d, want 0", len(under))
 	}
 }
