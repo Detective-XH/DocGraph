@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
+	"github.com/Detective-XH/docgraph/internal/docformat"
 	"github.com/Detective-XH/docgraph/internal/entitygraph"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
@@ -123,7 +124,8 @@ func indexStore(root string, st *store.Store) error {
 		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
 			continue
 		}
-		src, err := os.ReadFile(e.Path)
+		ext := strings.ToLower(filepath.Ext(e.RelPath))
+		src, err := docformat.ReadFileCapped(e.Path, docformat.MaxFileSizeByExt[ext])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
 			continue

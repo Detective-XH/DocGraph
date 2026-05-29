@@ -45,7 +45,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	}
 	query = sanitizeArg(query, maxArgLength)
 	kind := getStringArg(args, "kind", "")
-	limit := getIntArg(args, "limit", 10)
+	limit := getIntArgClamped(args, "limit", 10, 1, 200)
 	statusFilter := sanitizeArg(getStringArg(args, "status", ""), 100)
 	sensitivityFilter := sanitizeArg(getStringArg(args, "sensitivity", ""), 100)
 	canonicalSourceFilter := sanitizeArg(getStringArg(args, "canonical_source", ""), 300)

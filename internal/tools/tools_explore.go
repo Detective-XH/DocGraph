@@ -22,7 +22,7 @@ func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultError("query parameter is required"), nil
 	}
 	query = sanitizeArg(query, maxArgLength)
-	maxDocs := getIntArg(args, "maxDocs", 5)
+	maxDocs := getIntArgClamped(args, "maxDocs", 5, 1, 200)
 
 	var results []store.SearchResult
 	var err error

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
+	"github.com/Detective-XH/docgraph/internal/docformat"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
@@ -252,10 +253,11 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
-		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
+		ext := strings.ToLower(filepath.Ext(e.RelPath))
+		if !codeDocEnabled && codedoc.IsCodeExt(ext) {
 			continue
 		}
-		src, err := os.ReadFile(e.Path)
+		src, err := docformat.ReadFileCapped(e.Path, docformat.MaxFileSizeByExt[ext])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
 			continue

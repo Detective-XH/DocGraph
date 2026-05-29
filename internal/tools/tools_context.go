@@ -54,7 +54,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultError("task parameter is required"), nil
 	}
 	task = sanitizeArg(task, maxArgLength)
-	maxNodes := getIntArg(args, "maxNodes", 10)
+	maxNodes := getIntArgClamped(args, "maxNodes", 10, 1, 200)
 	includeContent := getBoolArg(args, "includeContent", true)
 	maxContentBytes := getIntArg(args, "maxContentBytes", 2000)
 	if maxContentBytes <= 0 {

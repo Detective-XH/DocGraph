@@ -1,10 +1,42 @@
 package docformat
 
+import (
+	"fmt"
+	"io"
+	"os"
+)
+
 // SupportedExt reports whether the lower-cased file extension is handled by
 // DocGraph's indexing pipeline.
 func SupportedExt(ext string) bool {
 	_, ok := MaxFileSizeByExt[ext]
 	return ok
+}
+
+// ReadFileCapped reads path fully into memory but returns an error if the file
+// exceeds limit bytes. It bounds the live read with an io.LimitReader instead
+// of trusting a scan-time size check, which is separated from the read by a
+// TOCTOU window (and absent entirely on live, MCP-triggered reads). A non-
+// positive limit reads the file with no cap.
+func ReadFileCapped(path string, limit int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	if limit <= 0 {
+		return io.ReadAll(f)
+	}
+
+	data, err := io.ReadAll(io.LimitReader(f, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("file %q exceeds read cap of %d bytes", path, limit)
+	}
+	return data, nil
 }
 
 // MaxFileSizeByExt maps each supported extension to its physical-file size

@@ -15,7 +15,17 @@ import (
 // absPath is the absolute on-disk path; relPath is the path relative to the
 // project root (used as the canonical node ID prefix).  src is the raw file
 // bytes; hash is the pre-computed SHA-256 hex string.
-func Extract(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
+func Extract(absPath, relPath string, src []byte, hash string) (res *parser.ParseResult, err error) {
+	// Untrusted documents are parsed by third-party libraries (notably
+	// ledongthuc/pdf, which panics on malformed input — proven by
+	// FuzzExtractPDF). Recover so a hostile file degrades to a skipped file
+	// with an error, never a crash of the long-lived `serve` watcher process.
+	defer func() {
+		if r := recover(); r != nil {
+			res = nil
+			err = fmt.Errorf("extractor: recovered from panic parsing %q: %v", relPath, r)
+		}
+	}()
 	ext := strings.ToLower(filepath.Ext(relPath))
 	switch ext {
 	case ".docx":
