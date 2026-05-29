@@ -118,6 +118,10 @@ func indexStore(root string, st *store.Store) error {
 		return err
 	}
 	codeDocEnabled, _ := st.IsPackEnabled("code_doc")
+	// Probe once: if root is not a git work tree (or git is absent), skip the
+	// per-file CollectHistory fork entirely — on a non-repo tree every call is
+	// a guaranteed fast-fail, thousands of wasted forks on a --force rebuild.
+	gitEnabled := git.IsRepo(root)
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
@@ -192,17 +196,19 @@ func indexStore(root string, st *store.Store) error {
 		if err := st.UpsertFile(res.FileInfo); err != nil {
 			return err
 		}
-		h := git.CollectHistory(root, e.RelPath)
-		if err := st.UpsertFileHistory(store.FileHistory{
-			Path:          h.Path,
-			CommitCount:   h.CommitCount,
-			FirstCommitAt: h.FirstCommitAt,
-			LastCommitAt:  h.LastCommitAt,
-			AuthorCount:   h.AuthorCount,
-			LastAuthor:    h.LastAuthor,
-			LastSubject:   h.LastSubject,
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "history %s: %v\n", e.RelPath, err)
+		if gitEnabled {
+			h := git.CollectHistory(root, e.RelPath)
+			if err := st.UpsertFileHistory(store.FileHistory{
+				Path:          h.Path,
+				CommitCount:   h.CommitCount,
+				FirstCommitAt: h.FirstCommitAt,
+				LastCommitAt:  h.LastCommitAt,
+				AuthorCount:   h.AuthorCount,
+				LastAuthor:    h.LastAuthor,
+				LastSubject:   h.LastSubject,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "history %s: %v\n", e.RelPath, err)
+			}
 		}
 		nNew++
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)

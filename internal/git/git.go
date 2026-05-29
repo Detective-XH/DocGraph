@@ -8,6 +8,19 @@ import (
 	"strings"
 )
 
+// IsRepo reports whether root is inside a git work tree. It runs
+// `git rev-parse --is-inside-work-tree` once, letting callers short-circuit
+// per-file CollectHistory forks when the tree is not version-controlled
+// (or git is not installed). Returns false on any error.
+func IsRepo(root string) bool {
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree")
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return string(bytes.TrimSpace(out)) == "true"
+}
+
 // FileHistory holds git commit statistics for a single file.
 type FileHistory struct {
 	Path          string

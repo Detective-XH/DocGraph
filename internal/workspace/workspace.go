@@ -238,6 +238,10 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	if err != nil {
 		return fmt.Errorf("[%s] code_doc pack state: %w", p.Name, err)
 	}
+	// Probe once: if the project root is not a git work tree (or git is
+	// absent), skip the per-file CollectHistory fork entirely — on a non-repo
+	// tree every call is a guaranteed fast-fail, thousands of wasted forks.
+	gitEnabled := git.IsRepo(p.Path)
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
@@ -303,17 +307,19 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		if err := p.Store.UpsertFile(res.FileInfo); err != nil {
 			return err
 		}
-		fh := git.CollectHistory(p.Path, e.RelPath)
-		if err := p.Store.UpsertFileHistory(store.FileHistory{
-			Path:          fh.Path,
-			CommitCount:   fh.CommitCount,
-			FirstCommitAt: fh.FirstCommitAt,
-			LastCommitAt:  fh.LastCommitAt,
-			AuthorCount:   fh.AuthorCount,
-			LastAuthor:    fh.LastAuthor,
-			LastSubject:   fh.LastSubject,
-		}); err != nil {
-			fmt.Fprintf(os.Stderr, "[%s] history %s: %v\n", p.Name, e.RelPath, err)
+		if gitEnabled {
+			fh := git.CollectHistory(p.Path, e.RelPath)
+			if err := p.Store.UpsertFileHistory(store.FileHistory{
+				Path:          fh.Path,
+				CommitCount:   fh.CommitCount,
+				FirstCommitAt: fh.FirstCommitAt,
+				LastCommitAt:  fh.LastCommitAt,
+				AuthorCount:   fh.AuthorCount,
+				LastAuthor:    fh.LastAuthor,
+				LastSubject:   fh.LastSubject,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "[%s] history %s: %v\n", p.Name, e.RelPath, err)
+			}
 		}
 		nNew++
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
