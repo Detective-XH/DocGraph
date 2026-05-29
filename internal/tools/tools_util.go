@@ -13,6 +13,12 @@ import (
 
 const maxArgLength = 10000
 
+// maxListLimit is a generous upper bound for "max results" arguments whose
+// sink has no tighter natural cap. It is far above any realistic request, so
+// it never changes legitimate behavior; its only job is to reject pathological
+// values (e.g. an overflowed int from a huge JSON number).
+const maxListLimit = 100000
+
 func sanitizeArg(s string, max int) string {
 	if len(s) > max {
 		return s[:max]
@@ -57,6 +63,22 @@ func getIntArg(args map[string]any, key string, defaultVal int) int {
 	default:
 		return defaultVal
 	}
+}
+
+// getIntArgClamped parses an int arg like getIntArg, then clamps the result to
+// [lo, hi]. Clamping at retrieval guarantees every consumer receives a bounded
+// value regardless of whether its own sink re-checks, closing the class of
+// "a new int arg reaches a slice/SQL sink without a downstream guard" bugs.
+// Pass lo=0 where 0 carries a dedicated "unlimited" meaning at the sink.
+func getIntArgClamped(args map[string]any, key string, defaultVal, lo, hi int) int {
+	n := getIntArg(args, key, defaultVal)
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
 }
 
 func getBoolArg(args map[string]any, key string, defaultVal bool) bool {

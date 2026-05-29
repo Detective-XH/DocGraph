@@ -10,7 +10,7 @@ func (s *Store) DeleteSimilarityEdgesForDocs(nodeIDs []string) error {
 		return nil
 	}
 	placeholders := make([]string, len(nodeIDs))
-	args := make([]interface{}, 0, len(nodeIDs)*2+1)
+	args := make([]any, 0, len(nodeIDs)*2+1)
 	args = append(args, "similar_to")
 	for i, id := range nodeIDs {
 		placeholders[i] = "?"

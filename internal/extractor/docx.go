@@ -20,12 +20,12 @@ import (
 
 // Security limits.
 const (
-	docxMaxDocumentXML  = 30 * 1024 * 1024 // 30 MB for word/document.xml
-	docxMaxOtherEntry   = 1 * 1024 * 1024  // 1 MB for all other entries
-	docxMaxTotalBytes   = 50 * 1024 * 1024 // 50 MB total uncompressed budget
-	docxMaxEntries      = 500
-	docxBodyExcerptCap  = 500
-	docxSectionTextCap  = 10 * 1024 // 10 KB section text cap
+	docxMaxDocumentXML = 30 * 1024 * 1024 // 30 MB for word/document.xml
+	docxMaxOtherEntry  = 1 * 1024 * 1024  // 1 MB for all other entries
+	docxMaxTotalBytes  = 50 * 1024 * 1024 // 50 MB total uncompressed budget
+	docxMaxEntries     = 500
+	docxBodyExcerptCap = 500
+	docxSectionTextCap = 10 * 1024 // 10 KB section text cap
 )
 
 // headingStyleRe matches Heading1..Heading6 and variants like "Heading 1", "heading-1".
@@ -61,8 +61,8 @@ type docBody struct {
 }
 
 type paragraph struct {
-	Props     paraProps   `xml:"pPr"`
-	Runs      []run       `xml:"r"`
+	Props      paraProps   `xml:"pPr"`
+	Runs       []run       `xml:"r"`
 	Hyperlinks []hyperlink `xml:"hyperlink"`
 }
 

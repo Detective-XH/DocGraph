@@ -46,7 +46,7 @@ func TestHandleSearchGovernanceFilter_Empty(t *testing.T) {
 	}
 
 	// Search for status="approved" — should match 0 docs, no error.
-	res, err := callTool(h, h.handleSearch, map[string]interface{}{
+	res, err := callTool(h, h.handleSearch, map[string]any{
 		"query":  "draft",
 		"status": "approved",
 	})

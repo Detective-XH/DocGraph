@@ -63,7 +63,7 @@ func TestSyncDomainPacksPreservesDisabledState(t *testing.T) {
 		t.Fatalf("GetDomainPacks: %v", err)
 	}
 	for _, pack := range packs {
-		if pack.ID == domainpacks.PackGovernance && pack.EnabledByDefault {
+		if pack.ID == domainpacks.PackGovernance && pack.Enabled {
 			t.Fatal("SyncDomainPacks overwrote disabled state")
 		}
 	}
@@ -101,7 +101,7 @@ func TestSyncDomainPacksAcceptsOptionalPack(t *testing.T) {
 	for _, got := range packs {
 		if got.ID == "client_deliverable" {
 			found = true
-			if got.EnabledByDefault {
+			if got.Enabled {
 				t.Fatal("optional pack should be disabled by default")
 			}
 			if len(got.Fields) != 2 {

@@ -100,7 +100,23 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 				pending = make(map[string][]string)
 				mu.Unlock()
 				for projectPath, files := range batch {
-					onChange(projectPath, files)
+					// onChange runs the reindex pipeline (parse → resolver →
+					// similarity → store) over files that just changed on disk —
+					// i.e. untrusted content. This callback executes on the
+					// AfterFunc timer goroutine, which has no parent recover, so
+					// an unrecovered panic here (e.g. a malformed document that
+					// slips past the per-file parser recover) would kill the
+					// whole serve process. Contain it per project so one bad
+					// file can neither crash the server nor block re-indexing of
+					// the other projects in the batch.
+					func(projectPath string, files []string) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("watcher: recovered from panic re-indexing %s: %v", projectPath, r)
+							}
+						}()
+						onChange(projectPath, files)
+					}(projectPath, files)
 				}
 			})
 		case err, ok := <-w.Errors:

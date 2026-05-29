@@ -36,7 +36,7 @@ func (h *handler) handleGraphFacade(ctx context.Context, req mcp.CallToolRequest
 		if document == "" {
 			return mcp.NewToolResultError("document parameter is required"), nil
 		}
-		return h.renderIncomingLinks(document, getIntArg(args, "limit", 10))
+		return h.renderIncomingLinks(document, getIntArgClamped(args, "limit", 10, 0, maxListLimit))
 	case "outgoing":
 		if hasGraphTraceArgs(args) {
 			return mcp.NewToolResultError("from and to parameters are only valid for operation=trace"), nil
@@ -45,7 +45,7 @@ func (h *handler) handleGraphFacade(ctx context.Context, req mcp.CallToolRequest
 		if document == "" {
 			return mcp.NewToolResultError("document parameter is required"), nil
 		}
-		return h.renderOutgoingLinks(document, getIntArg(args, "limit", 10))
+		return h.renderOutgoingLinks(document, getIntArgClamped(args, "limit", 10, 0, maxListLimit))
 	case "impact":
 		if hasGraphTraceArgs(args) {
 			return mcp.NewToolResultError("from and to parameters are only valid for operation=trace"), nil
@@ -54,7 +54,7 @@ func (h *handler) handleGraphFacade(ctx context.Context, req mcp.CallToolRequest
 		if document == "" {
 			return mcp.NewToolResultError("document parameter is required"), nil
 		}
-		return h.renderImpact(document, getIntArg(args, "depth", 2))
+		return h.renderImpact(document, getIntArgClamped(args, "depth", 2, 1, 5))
 	case "trace":
 		if sanitizeArg(getStringArg(args, "document", ""), maxArgLength) != "" {
 			return mcp.NewToolResultError("document parameter is only valid for operation=incoming, operation=outgoing, and operation=impact"), nil

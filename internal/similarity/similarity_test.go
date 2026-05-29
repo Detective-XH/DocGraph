@@ -3,6 +3,7 @@ package similarity
 import (
 	"encoding/json"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -115,8 +116,8 @@ func TestComputeSimilarityWithTags(t *testing.T) {
 	}
 	t.Cleanup(func() { st.Close() })
 
-	tagsAB, _ := json.Marshal(map[string]interface{}{"tags": []string{"security", "compliance"}})
-	tagsC, _ := json.Marshal(map[string]interface{}{"tags": []string{"tutorial", "quickstart"}})
+	tagsAB, _ := json.Marshal(map[string]any{"tags": []string{"security", "compliance"}})
+	tagsC, _ := json.Marshal(map[string]any{"tags": []string{"tutorial", "quickstart"}})
 
 	nodes := []store.Node{
 		{ID: "policy.md", Kind: "document", Name: "Policy", QualifiedName: "policy.md", FilePath: "policy.md", StartLine: 1, EndLine: 10, BodyExcerpt: "alpha bravo", Metadata: string(tagsAB), UpdatedAt: 1},
@@ -255,7 +256,7 @@ func TestComputeNeuralSimilarityForDoc(t *testing.T) {
 
 	var neuralEdge *store.Edge
 	for i, e := range allEdges {
-		var m map[string]interface{}
+		var m map[string]any
 		json.Unmarshal([]byte(e.Metadata), &m)
 		if eng, _ := m["engine"].(string); eng == "neural" {
 			neuralEdge = &allEdges[i]
@@ -265,7 +266,7 @@ func TestComputeNeuralSimilarityForDoc(t *testing.T) {
 		t.Error("expected neural similar_to edge between governance and security, found none")
 	}
 	if neuralEdge != nil {
-		var m map[string]interface{}
+		var m map[string]any
 		json.Unmarshal([]byte(neuralEdge.Metadata), &m)
 		if m["model_id"] != "test-model" {
 			t.Errorf("expected model_id=test-model, got %v", m["model_id"])
@@ -296,5 +297,123 @@ func TestComputeNeuralSimilarityForDoc_Idempotent(t *testing.T) {
 	}
 	if neuralCount > 1 {
 		t.Errorf("expected at most 1 neural edge, got %d", neuralCount)
+	}
+}
+
+// TestComputeSimilarityNoPanicOnAdversarialInput locks in the audit verdict that
+// similarity.Compute* has no panic vector (security-audit backlog #4). It runs
+// on the watcher reindex goroutine, so a panic would crash serve. The risky
+// spots are the idf log (n/df), the cosine division by vector norms, and the
+// jaccard union division — each case probes a degenerate corpus and asserts the
+// full and incremental entry points both return across a range of thresholds
+// (including 0, negative, and >1).
+func TestComputeSimilarityNoPanicOnAdversarialInput(t *testing.T) {
+	doc := func(id, name, body string, tags ...string) store.Node {
+		md := ""
+		if len(tags) > 0 {
+			ts := make([]string, len(tags))
+			copy(ts, tags)
+			b, _ := json.Marshal(map[string]any{"tags": ts})
+			md = string(b)
+		}
+		return store.Node{ID: id, Kind: "document", Name: name, QualifiedName: id, FilePath: id, StartLine: 1, EndLine: 10, BodyExcerpt: body, Metadata: md, UpdatedAt: 1}
+	}
+	cases := []struct {
+		name  string
+		nodes []store.Node
+	}{
+		{"empty corpus", nil},
+		{"single document", []store.Node{doc("solo.md", "Solo", "lonely body text")}},
+		{"all bodies empty", []store.Node{doc("a.md", "A", ""), doc("b.md", "B", "   \n\t  ")}},
+		{"unicode-only bodies (no ascii tokens)", []store.Node{doc("a.md", "A", "你好世界🔥"), doc("b.md", "B", "안녕하세요🌊")}},
+		// Every doc shares the single term "alpha" → df==n → idf log(1)==0 →
+		// zero tf-idf vectors → cosine denom==0 (must hit the guard, not divide).
+		{"term in every doc (zero vectors)", []store.Node{doc("a.md", "A", "alpha alpha"), doc("b.md", "B", "alpha"), doc("c.md", "C", "alpha alpha alpha")}},
+		{"empty and overlapping tag sets", []store.Node{doc("a.md", "A", "alpha beta", "x", "y"), doc("b.md", "B", "alpha beta"), doc("c.md", "C", "alpha beta", "y", "z")}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := filepath.Join(t.TempDir(), "test.db")
+			st, err := store.Open(dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { st.Close() })
+			if len(tc.nodes) > 0 {
+				if err := st.InsertNodes(tc.nodes); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			defer func() {
+				if r := recover(); r != nil {
+					t.Fatalf("Compute panicked on %q: %v", tc.name, r)
+				}
+			}()
+			changed := make([]string, len(tc.nodes))
+			for i, n := range tc.nodes {
+				changed[i] = n.ID
+			}
+			for _, th := range []float64{-1, 0, 0.1, 1, 2} {
+				if err := ComputeSimilarity(st, th); err != nil {
+					t.Fatalf("ComputeSimilarity(th=%v) error: %v", th, err)
+				}
+				if err := ComputeSimilarityIncremental(st, changed, th); err != nil {
+					t.Fatalf("ComputeSimilarityIncremental(th=%v) error: %v", th, err)
+				}
+			}
+		})
+	}
+}
+
+// TestBuildCappedTargetsBoundsReferenceSet locks the per-doc targets cap added
+// for security-audit backlog #6: an untrusted document with far more distinct
+// outgoing references than maxTargetsPerDoc must yield a targets set bounded at
+// the cap, so the O(n^2) Jaccard pass cannot be amplified by a single crafted
+// file. Below the cap, the set is exact.
+func TestBuildCappedTargetsBoundsReferenceSet(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "cap.db")
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+
+	const over = maxTargetsPerDoc + 500
+	// Target nodes (FK requires targets to exist) + the source document.
+	nodes := make([]store.Node, 0, over+1)
+	nodes = append(nodes, store.Node{ID: "src.md", Kind: "document", Name: "Src",
+		QualifiedName: "src.md", FilePath: "src.md", StartLine: 1, EndLine: 1, UpdatedAt: 1})
+	for k := range over {
+		id := "t" + strconv.Itoa(k)
+		nodes = append(nodes, store.Node{ID: id, Kind: "heading", Name: "h",
+			QualifiedName: id, FilePath: "src.md", StartLine: 1, EndLine: 1, UpdatedAt: 1})
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+	edges := make([]store.Edge, over)
+	for k := range over {
+		edges[k] = store.Edge{Source: "src.md", Target: "t" + strconv.Itoa(k), Kind: "wikilinks_to"}
+	}
+	if err := st.InsertEdges(edges); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := buildCappedTargets(st, "src.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != maxTargetsPerDoc {
+		t.Fatalf("over-cap doc: targets = %d, want capped at %d", len(got), maxTargetsPerDoc)
+	}
+
+	// A doc with few references is returned in full (cap does not under-count).
+	under, err := buildCappedTargets(st, "t0") // t0 has no outgoing edges
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(under) != 0 {
+		t.Fatalf("no-ref doc: targets = %d, want 0", len(under))
 	}
 }

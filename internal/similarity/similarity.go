@@ -30,6 +30,38 @@ type docFeatures struct {
 	tags    map[string]bool
 }
 
+// maxTargetsPerDoc bounds the per-document reference set used for the Jaccard
+// "shared targets" signal. The pairwise loop pays O(|targets|) per pair across
+// O(n^2) pairs and holds one such set per doc for the entire pass (the
+// incremental path rebuilds every doc's set on every reindex), so an untrusted
+// document with hundreds of thousands of distinct wikilinks/references — a
+// single <=1MB .md can carry ~100k — would amplify both CPU and memory far out
+// of proportion to its size. Legitimate documents have at most tens-to-hundreds
+// of distinct outgoing references, so this cap never bites a real corpus. Same
+// structural-bound rationale as docformat.ReadFileCapped / getIntArgClamped.
+const maxTargetsPerDoc = 10000
+
+// buildCappedTargets loads a document's outgoing reference targets (the kinds
+// GetEdgesBySource returns: references/wikilinks_to/related_to/embeds) into a
+// set, capped at maxTargetsPerDoc. On truncation it logs once to stderr so the
+// degradation is observable rather than silent.
+func buildCappedTargets(st *store.Store, docID string) (map[string]bool, error) {
+	edges, err := st.GetEdgesBySource(docID)
+	if err != nil {
+		return nil, fmt.Errorf("get edges for %s: %w", docID, err)
+	}
+	targets := make(map[string]bool)
+	for _, e := range edges {
+		if len(targets) >= maxTargetsPerDoc {
+			fmt.Fprintf(os.Stderr, "similarity: %s has %d reference edges; capping the similarity target set at %d (excess ignored for scoring)\n",
+				docID, len(edges), maxTargetsPerDoc)
+			break
+		}
+		targets[e.Target] = true
+	}
+	return targets, nil
+}
+
 // ComputeSimilarity computes pairwise topic similarity between all documents
 // using a hybrid of TF-IDF text similarity, shared reference targets, and tag
 // overlap. Edges of kind "similar_to" are inserted for pairs whose composite
@@ -65,13 +97,9 @@ func ComputeSimilarity(st *store.Store, threshold float64) error {
 	for i, d := range docs {
 		tokens := tokenize(d.Name + " " + d.BodyExcerpt)
 
-		targets := make(map[string]bool)
-		edges, err := st.GetEdgesBySource(d.ID)
+		targets, err := buildCappedTargets(st, d.ID)
 		if err != nil {
-			return fmt.Errorf("get edges for %s: %w", d.ID, err)
-		}
-		for _, e := range edges {
-			targets[e.Target] = true
+			return err
 		}
 
 		raw[i] = rawDoc{
@@ -201,13 +229,9 @@ func ComputeSimilarityIncremental(st *store.Store, changedDocIDs []string, thres
 	df := make(map[string]int)
 	for i, d := range docs {
 		tokens := tokenize(d.Name + " " + d.BodyExcerpt)
-		targets := make(map[string]bool)
-		edges, err := st.GetEdgesBySource(d.ID)
+		targets, err := buildCappedTargets(st, d.ID)
 		if err != nil {
-			return fmt.Errorf("get edges for %s: %w", d.ID, err)
-		}
-		for _, e := range edges {
-			targets[e.Target] = true
+			return err
 		}
 		raw[i] = rawDoc{id: d.ID, tokens: tokens, targets: targets, tags: extractTagSet(d.Metadata)}
 		seen := make(map[string]bool)
@@ -374,11 +398,11 @@ func extractTagSet(metadataJSON string) map[string]bool {
 	if metadataJSON == "" {
 		return set
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(metadataJSON), &m); err != nil {
 		return set
 	}
-	arr, _ := m["tags"].([]interface{})
+	arr, _ := m["tags"].([]any)
 	for _, v := range arr {
 		if s, ok := v.(string); ok {
 			set[strings.ToLower(s)] = true
@@ -466,7 +490,7 @@ func ComputeNeuralSimilarityForDoc(st *store.Store, docID, modelID string, thres
 		if src > tgt {
 			src, tgt = tgt, src
 		}
-		meta, _ := json.Marshal(map[string]interface{}{
+		meta, _ := json.Marshal(map[string]any{
 			"engine":   "neural",
 			"model_id": modelID,
 			"score":    roundTo(score, 4),

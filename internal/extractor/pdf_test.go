@@ -235,18 +235,10 @@ func FuzzExtractPDF(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
-		// Must not panic. Errors are acceptable.
-		tmp, err := os.CreateTemp("", "docgraph-fuzz-*.pdf")
-		if err != nil {
-			return
-		}
-		tmpPath := tmp.Name()
-		defer os.Remove(tmpPath)
-		tmp.Write(data) //nolint:errcheck
-		tmp.Close()
-
+		// Exercise the production dispatch entry (Extract), which carries the
+		// panic-recovery guard. Must not panic; errors are acceptable.
 		hash := sha256hex(data)
-		result, _ := extractPDF(tmpPath, "fuzz/input.pdf", data, hash)
+		result, _ := Extract("/tmp/fuzz-input.pdf", "fuzz/input.pdf", data, hash)
 		if result != nil && result.DocNode.ID != "fuzz/input.pdf" {
 			t.Errorf("fuzz: DocNode.ID = %q; want %q", result.DocNode.ID, "fuzz/input.pdf")
 		}

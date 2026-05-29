@@ -62,8 +62,14 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			allEmbStats = append(allEmbStats, *s)
 		}
 		appendEmbeddingStats(&sb, allEmbStats)
+		appendWorkspaceEnrichmentStats(&sb, h)
 		appendWorkspaceDomainPacks(&sb, h)
 		appendWorkspaceMetadataQualityStats(&sb, h)
+		if es, err := h.workspace.GetEntityStats(); err == nil && (es.TotalEntities > 0 || es.TotalMentions > 0) {
+			sb.WriteString("\n### Entity Graph\n")
+			fmt.Fprintf(&sb, "Entities: %d | Mentions: %d\n", es.TotalEntities, es.TotalMentions)
+		}
+		appendWorkspaceDriftAudit(&sb, h)
 		appendLLMCalloutState(&sb, h)
 	} else {
 		stats, err := h.store.GetStats()
@@ -206,7 +212,39 @@ func appendDriftAuditStats(sb *strings.Builder, st *store.Store) {
 	if err != nil || len(findings) == 0 {
 		return
 	}
-	summary := store.SummarizeDriftFindings(findings)
+	appendDriftSummary(sb, store.SummarizeDriftFindings(findings))
+}
+
+// appendWorkspaceDriftAudit fans out the drift audit across every project and
+// renders a single combined summary, mirroring the single-store branch.
+func appendWorkspaceDriftAudit(sb *strings.Builder, h *handler) {
+	if h == nil || h.workspace == nil {
+		return
+	}
+	agg := store.DriftAuditStats{BySeverity: map[string]int{}, ByCode: map[string]int{}}
+	for _, project := range h.workspace.Projects {
+		findings, err := project.Store.GetDriftFindings(store.DriftAuditOpts{})
+		if err != nil || len(findings) == 0 {
+			continue
+		}
+		summary := store.SummarizeDriftFindings(findings)
+		agg.TotalFindings += summary.TotalFindings
+		for code, count := range summary.BySeverity {
+			agg.BySeverity[code] += count
+		}
+		for code, count := range summary.ByCode {
+			agg.ByCode[code] += count
+		}
+	}
+	appendDriftSummary(sb, agg)
+}
+
+// appendDriftSummary renders a drift summary, omitting the section entirely when
+// there are no findings so a clean project adds no noise to docgraph_status.
+func appendDriftSummary(sb *strings.Builder, summary store.DriftAuditStats) {
+	if summary.TotalFindings == 0 {
+		return
+	}
 	sb.WriteString("\n### Drift Audit\n")
 	fmt.Fprintf(sb, "Total findings: %d", summary.TotalFindings)
 	if e := summary.BySeverity["error"]; e > 0 {
@@ -220,6 +258,28 @@ func appendDriftAuditStats(sb *strings.Builder, st *store.Store) {
 		fmt.Fprintf(sb, "  %s: %d\n", code, count)
 	}
 	sb.WriteString("Use `docgraph_context format=drift_audit` for full report.\n")
+}
+
+// appendWorkspaceEnrichmentStats fans out enrichment stats across every project
+// and renders the aggregate, mirroring the single-store branch.
+func appendWorkspaceEnrichmentStats(sb *strings.Builder, h *handler) {
+	if h == nil || h.workspace == nil {
+		return
+	}
+	var agg store.EnrichmentStats
+	for _, project := range h.workspace.Projects {
+		stats, err := project.Store.GetEnrichmentStats()
+		if err != nil {
+			continue
+		}
+		agg.EligibleDocs += stats.EligibleDocs
+		agg.EnrichedDocs += stats.EnrichedDocs
+		agg.StaleDocs += stats.StaleDocs
+	}
+	if agg.EligibleDocs == 0 {
+		return
+	}
+	appendEnrichmentStats(sb, agg)
 }
 
 func sortedIssueCounts(counts map[string]int) []string {
@@ -256,7 +316,7 @@ func appendDomainPackStats(sb *strings.Builder, packs []domainpacks.Pack, stats 
 	sb.WriteString("|------|--------|---------|---------|--------|-------------|\n")
 	for _, pack := range packs {
 		enabled := "no"
-		if pack.EnabledByDefault {
+		if pack.Enabled {
 			enabled = "yes"
 		}
 		desc := truncateRunes(pack.Description, 60)
@@ -265,7 +325,7 @@ func appendDomainPackStats(sb *strings.Builder, packs []domainpacks.Pack, stats 
 	}
 	// Capability notes for disabled built-in packs.
 	for _, pack := range packs {
-		if pack.EnabledByDefault || !pack.BuiltIn {
+		if pack.Enabled || !pack.BuiltIn {
 			continue
 		}
 		note := packCapabilityNote(pack)
@@ -321,7 +381,7 @@ func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
 				byID[pack.ID] = agg
 			}
 			agg.projectCount++
-			if pack.EnabledByDefault {
+			if pack.Enabled {
 				agg.enabledProjects++
 			}
 		}

@@ -24,7 +24,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultError("document parameter is required"), nil
 	}
 	document = sanitizeArg(document, maxArgLength)
-	limit := getIntArg(args, "limit", 10)
+	limit := getIntArgClamped(args, "limit", 10, 0, maxListLimit)
 	engine := strings.ToLower(strings.TrimSpace(getStringArg(args, "engine", "auto")))
 	if engine == "neural" && !h.enableEmbeddings {
 		return mcp.NewToolResultError("Neural similarity requires --enable-embeddings. Restart the server with that flag, or use the default TF-IDF similarity instead."), nil

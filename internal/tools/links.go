@@ -166,7 +166,7 @@ func extractURL(metadata string) string {
 	if metadata == "" {
 		return "(no URL)"
 	}
-	var m map[string]interface{}
+	var m map[string]any
 	if err := json.Unmarshal([]byte(metadata), &m); err != nil {
 		return metadata
 	}

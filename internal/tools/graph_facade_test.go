@@ -7,36 +7,10 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
-func TestParseToolProfile(t *testing.T) {
-	cases := []struct {
-		raw  string
-		want ToolProfile
-	}{
-		{raw: "", want: ToolProfileCompact},
-		{raw: "full", want: ToolProfileCompact},
-		{raw: " compact ", want: ToolProfileCompact},
-		{raw: "DUAL", want: ToolProfileCompact},
-	}
-
-	for _, tc := range cases {
-		got, err := ParseToolProfile(tc.raw)
-		if err != nil {
-			t.Fatalf("ParseToolProfile(%q) returned error: %v", tc.raw, err)
-		}
-		if got != tc.want {
-			t.Fatalf("ParseToolProfile(%q) = %q, want %q", tc.raw, got, tc.want)
-		}
-	}
-
-	if _, err := ParseToolProfile("narrow"); err == nil {
-		t.Fatal("expected invalid profile to return an error")
-	}
-}
-
 func TestGraphFacadeIncomingReturnsReferences(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "incoming", "document": "b.md", "limit": float64(10)})
+	res, err := callTool(h, h.handleGraphFacade, map[string]any{"operation": "incoming", "document": "b.md", "limit": float64(10)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +26,7 @@ func TestGraphFacadeIncomingReturnsReferences(t *testing.T) {
 func TestGraphFacadeOutgoingReturnsLinks(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "outgoing", "document": "b.md", "limit": float64(10)})
+	res, err := callTool(h, h.handleGraphFacade, map[string]any{"operation": "outgoing", "document": "b.md", "limit": float64(10)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +42,7 @@ func TestGraphFacadeOutgoingReturnsLinks(t *testing.T) {
 func TestGraphFacadeImpactReturnsAffectedDocs(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "impact", "document": "b.md", "depth": float64(2)})
+	res, err := callTool(h, h.handleGraphFacade, map[string]any{"operation": "impact", "document": "b.md", "depth": float64(2)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +58,7 @@ func TestGraphFacadeImpactReturnsAffectedDocs(t *testing.T) {
 func TestGraphFacadeTraceFindsPath(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "trace", "from": "c.md", "to": "b.md"})
+	res, err := callTool(h, h.handleGraphFacade, map[string]any{"operation": "trace", "from": "c.md", "to": "b.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +75,7 @@ func TestTraceNoPathMessage(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
 	// d.md has no outgoing edges, so d.md → c.md has no path.
-	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "trace", "from": "d.md", "to": "c.md"})
+	res, err := callTool(h, h.handleGraphFacade, map[string]any{"operation": "trace", "from": "d.md", "to": "c.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +91,7 @@ func TestTraceNoPathMessage(t *testing.T) {
 func TestGraphFacadeRejectsUnknownOperation(t *testing.T) {
 	h, _ := newGraphFacadeTestHandler(t)
 
-	res, err := callTool(h, h.handleGraphFacade, map[string]interface{}{"operation": "sideways", "document": "b.md"})
+	res, err := callTool(h, h.handleGraphFacade, map[string]any{"operation": "sideways", "document": "b.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,15 +108,15 @@ func TestGraphFacadeValidatesRequiredInputs(t *testing.T) {
 
 	cases := []struct {
 		name string
-		args map[string]interface{}
+		args map[string]any
 		want string
 	}{
-		{name: "incoming document", args: map[string]interface{}{"operation": "incoming"}, want: "document parameter is required"},
-		{name: "outgoing document", args: map[string]interface{}{"operation": "outgoing"}, want: "document parameter is required"},
-		{name: "impact document", args: map[string]interface{}{"operation": "impact"}, want: "document parameter is required"},
-		{name: "trace endpoints", args: map[string]interface{}{"operation": "trace", "from": "a.md"}, want: "both 'from' and 'to' parameters are required"},
-		{name: "incoming trace args", args: map[string]interface{}{"operation": "incoming", "document": "b.md", "from": "a.md"}, want: "from and to parameters are only valid for operation=trace"},
-		{name: "trace document arg", args: map[string]interface{}{"operation": "trace", "document": "b.md", "from": "a.md", "to": "b.md"}, want: "document parameter is only valid"},
+		{name: "incoming document", args: map[string]any{"operation": "incoming"}, want: "document parameter is required"},
+		{name: "outgoing document", args: map[string]any{"operation": "outgoing"}, want: "document parameter is required"},
+		{name: "impact document", args: map[string]any{"operation": "impact"}, want: "document parameter is required"},
+		{name: "trace endpoints", args: map[string]any{"operation": "trace", "from": "a.md"}, want: "both 'from' and 'to' parameters are required"},
+		{name: "incoming trace args", args: map[string]any{"operation": "incoming", "document": "b.md", "from": "a.md"}, want: "from and to parameters are only valid for operation=trace"},
+		{name: "trace document arg", args: map[string]any{"operation": "trace", "document": "b.md", "from": "a.md", "to": "b.md"}, want: "document parameter is only valid"},
 	}
 
 	for _, tc := range cases {
@@ -184,4 +158,3 @@ func newGraphFacadeTestHandler(t *testing.T) (*handler, *store.Store) {
 	}
 	return h, st
 }
-

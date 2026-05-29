@@ -19,7 +19,7 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 	args := request.GetArguments()
 	pathFilter := getStringArg(args, "path", "")
 	pathFilter = sanitizeArg(pathFilter, maxArgLength)
-	fileLimit := getIntArg(args, "limit", 50)
+	fileLimit := getIntArgClamped(args, "limit", 50, 0, maxListLimit)
 
 	var files []store.FileInfo
 	var err error

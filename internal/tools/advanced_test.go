@@ -204,7 +204,7 @@ func TestHandleContext_ContextPackIncludesEvidenceAndImpact(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := callTool(h, h.handleContext, map[string]interface{}{
+	res, err := callTool(h, h.handleContext, map[string]any{
 		"task":           "incident response",
 		"format":         "context_pack",
 		"maxNodes":       float64(1),
@@ -272,7 +272,7 @@ func TestHandleNode_SectionChunkPresent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := callTool(h, h.handleNode, map[string]interface{}{
+	res, err := callTool(h, h.handleNode, map[string]any{
 		"document": "doc.md",
 		"section":  "Intro",
 	})
@@ -320,7 +320,7 @@ func TestHandleNode_SectionFallbackLiveRead(t *testing.T) {
 	}
 	// No chunk upserted — triggers live read fallback.
 
-	res, err := callTool(h, h.handleNode, map[string]interface{}{
+	res, err := callTool(h, h.handleNode, map[string]any{
 		"document": "doc2.md",
 		"section":  "Intro",
 	})
@@ -365,7 +365,7 @@ func TestHandleNode_SectionBySlugAnchor(t *testing.T) {
 	}
 
 	// Pass the slug anchor exactly as it appears in search results — not the raw heading text.
-	res, err := callTool(h, h.handleNode, map[string]interface{}{
+	res, err := callTool(h, h.handleNode, map[string]any{
 		"document": "doc.md",
 		"section":  "neural-embeddings-agent-driven",
 	})
@@ -395,7 +395,7 @@ func TestHandleSimilar_EmptyGivesGuidance(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res, err := callTool(h, h.handleSimilar, map[string]interface{}{"document": "unique.md"})
+	res, err := callTool(h, h.handleSimilar, map[string]any{"document": "unique.md"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,4 +410,3 @@ func TestHandleSimilar_EmptyGivesGuidance(t *testing.T) {
 		t.Errorf("expected actionable guidance pointing to docgraph_graph, got: %s", text)
 	}
 }
-

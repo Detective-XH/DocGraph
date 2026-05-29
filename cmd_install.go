@@ -9,10 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/install"
-	"github.com/Detective-XH/docgraph/internal/tools"
 )
 
 func cmdInstall(args []string) {
@@ -20,7 +20,6 @@ func cmdInstall(args []string) {
 	clients := fset.String("clients", "auto", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
-	toolProfileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
 	interactive := fset.Bool("interactive", false, "Review planned changes and ask before writing")
@@ -33,11 +32,7 @@ func cmdInstall(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	toolProfile, err := tools.ParseToolProfile(*toolProfileRaw)
-	if err != nil {
-		log.Fatal(err)
-	}
-	opts := install.Options{Clients: *clients, Workspace: *workspaceMode, Scope: *scope, DryRun: *dryRun, ToolProfile: string(toolProfile)}
+	opts := install.Options{Clients: *clients, Workspace: *workspaceMode, Scope: *scope, DryRun: *dryRun}
 	if *dryRun || *interactive {
 		planned, err := install.Plan(root, opts)
 		if err != nil {
@@ -70,13 +65,11 @@ func cmdInstall(args []string) {
 }
 
 func claudeInstalled(results []install.Result) bool {
-	for _, r := range results {
-		if install.IsClaudeResult(r) {
-			_, err := exec.LookPath("claude")
-			return err == nil
-		}
+	if !slices.ContainsFunc(results, install.IsClaudeResult) {
+		return false
 	}
-	return false
+	_, err := exec.LookPath("claude")
+	return err == nil
 }
 
 func printInstallResults(results []install.Result) {

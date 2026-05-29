@@ -31,14 +31,22 @@ type Field struct {
 // Pack is a declarative schema pack. Packs define metadata fields and optional
 // typed projection columns without owning core schema migrations directly.
 type Pack struct {
-	ID               string
-	Name             string
-	Version          string
-	Domain           string
-	Description      string
-	Status           string
-	BuiltIn          bool
+	ID          string
+	Name        string
+	Version     string
+	Domain      string
+	Description string
+	Status      string
+	BuiltIn     bool
+	// EnabledByDefault is the compile-time default declared by the pack
+	// definition in the registry. It seeds the per-project enabled state on
+	// first sync but is NOT the live state — read Enabled for that.
 	EnabledByDefault bool
+	// Enabled is the current per-project state, populated by
+	// store.GetDomainPacks from the SQLite domain_packs table. It is the zero
+	// value on packs obtained directly from the registry (use EnabledByDefault
+	// there); a per-project override can diverge from EnabledByDefault.
+	Enabled          bool
 	MinSchemaVersion int
 	Fields           []Field
 }
@@ -73,11 +81,6 @@ func Packs() []Pack {
 	return defaultRegistry.Packs()
 }
 
-// EnabledPacks returns process-wide packs enabled by default, sorted by ID.
-func EnabledPacks() []Pack {
-	return defaultRegistry.EnabledPacks()
-}
-
 // FieldColumnMap returns metadata-key to projection-column mapping for a pack.
 func FieldColumnMap(packID string) map[string]string {
 	return defaultRegistry.FieldColumnMap(packID)
@@ -107,18 +110,6 @@ func (r *Registry) Packs() []Pack {
 		out = append(out, clonePack(pack))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
-}
-
-// EnabledPacks returns packs whose default state is enabled.
-func (r *Registry) EnabledPacks() []Pack {
-	packs := r.Packs()
-	out := packs[:0]
-	for _, pack := range packs {
-		if pack.EnabledByDefault {
-			out = append(out, pack)
-		}
-	}
 	return out
 }
 

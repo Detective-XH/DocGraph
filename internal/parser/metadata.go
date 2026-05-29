@@ -31,7 +31,7 @@ var wikilinkValueRe = regexp.MustCompile(`^\[\[.+\]\]$`)
 //   - value_type is inferred: date, bool, list (JSON array), number, ref, or string.
 //   - Top-level tuples use source="frontmatter".
 //   - Nested "skill_advisory" values use source="skill_advisory".
-func ExtractMetadataTuples(fm map[string]interface{}) []store.MetadataTuple {
+func ExtractMetadataTuples(fm map[string]any) []store.MetadataTuple {
 	if len(fm) == 0 {
 		return nil
 	}
@@ -63,8 +63,8 @@ func ExtractMetadataTuples(fm map[string]interface{}) []store.MetadataTuple {
 	return out
 }
 
-func flattenAdvisoryValue(val interface{}, updatedAt int64) []store.MetadataTuple {
-	m, ok := val.(map[string]interface{})
+func flattenAdvisoryValue(val any, updatedAt int64) []store.MetadataTuple {
+	m, ok := val.(map[string]any)
 	if !ok {
 		return nil
 	}
@@ -80,12 +80,12 @@ func flattenAdvisoryValue(val interface{}, updatedAt int64) []store.MetadataTupl
 }
 
 // flattenValue converts a single frontmatter key/value into one or more MetadataTuples.
-func flattenValue(key string, val interface{}, updatedAt int64) []store.MetadataTuple {
+func flattenValue(key string, val any, updatedAt int64) []store.MetadataTuple {
 	switch v := val.(type) {
-	case []interface{}:
+	case []any:
 		return []store.MetadataTuple{listTuple(key, v, updatedAt)}
 	case []string:
-		items := make([]interface{}, len(v))
+		items := make([]any, len(v))
 		for i, s := range v {
 			items[i] = s
 		}
@@ -104,7 +104,7 @@ func flattenValue(key string, val interface{}, updatedAt int64) []store.Metadata
 			ValueType: "number",
 			Source:    "frontmatter",
 		}}
-	case map[string]interface{}:
+	case map[string]any:
 		// Nested object: encode as JSON string, treat as string type.
 		b, _ := json.Marshal(v)
 		return []store.MetadataTuple{{
@@ -139,7 +139,7 @@ func stringTuple(key, v string, _ int64) store.MetadataTuple {
 	}
 }
 
-func listTuple(key string, items []interface{}, _ int64) store.MetadataTuple {
+func listTuple(key string, items []any, _ int64) store.MetadataTuple {
 	strs := make([]string, 0, len(items))
 	for _, item := range items {
 		strs = append(strs, fmt.Sprintf("%v", item))

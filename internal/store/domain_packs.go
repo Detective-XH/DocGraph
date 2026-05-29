@@ -124,7 +124,7 @@ func (s *Store) GetDomainPacks() ([]domainpacks.Pack, error) {
 		); err != nil {
 			return nil, err
 		}
-		pack.EnabledByDefault = enabled == 1
+		pack.Enabled = enabled == 1
 		pack.BuiltIn = builtin == 1
 		packIndex[pack.ID] = len(packs)
 		packs = append(packs, pack)

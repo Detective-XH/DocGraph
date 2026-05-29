@@ -3,16 +3,22 @@ package store
 import (
 	"database/sql"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Detective-XH/docgraph/internal/docformat"
 	"github.com/Detective-XH/docgraph/internal/domainpacks"
 
 	_ "modernc.org/sqlite"
 )
+
+// maxLiveReadBytes bounds on-demand section reads. It sits above the largest
+// supported physical-file cap (50 MB for PDF) so any legitimately indexed file
+// is always readable, while a file that grew unbounded after indexing is
+// rejected instead of loaded whole into memory.
+const maxLiveReadBytes = 64 * 1024 * 1024
 
 type Node struct {
 	ID            string
@@ -461,7 +467,7 @@ func ReadSectionContent(filePath string, startLine, endLine int, projectRoot str
 		return "", fmt.Errorf("path escapes project root")
 	}
 
-	data, err := os.ReadFile(fileReal)
+	data, err := docformat.ReadFileCapped(fileReal, maxLiveReadBytes)
 	if err != nil {
 		return "", fmt.Errorf("read file: %w", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
+	"github.com/Detective-XH/docgraph/internal/docformat"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
@@ -187,18 +188,6 @@ func (w *Workspace) FindProject(name string) *Project {
 	}
 	return nil
 }
-func (w *Workspace) GetIncomingEdges(projectName, nodeID string) ([]store.Edge, error) {
-	if p := w.FindProject(projectName); p != nil {
-		return p.Store.GetIncomingEdges(nodeID)
-	}
-	return nil, fmt.Errorf("project %q not found", projectName)
-}
-func (w *Workspace) GetOutgoingEdges(projectName, nodeID string) ([]store.Edge, error) {
-	if p := w.FindProject(projectName); p != nil {
-		return p.Store.GetOutgoingEdges(nodeID)
-	}
-	return nil, fmt.Errorf("project %q not found", projectName)
-}
 func (w *Workspace) FindNodeByName(name string) (*store.Node, string, error) {
 	for _, p := range w.Projects {
 		if n, err := p.Store.FindNodeByName(name); err == nil && n != nil {
@@ -252,10 +241,11 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
-		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
+		ext := strings.ToLower(filepath.Ext(e.RelPath))
+		if !codeDocEnabled && codedoc.IsCodeExt(ext) {
 			continue
 		}
-		src, err := os.ReadFile(e.Path)
+		src, err := docformat.ReadFileCapped(e.Path, docformat.MaxFileSizeByExt[ext])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
 			continue
@@ -358,7 +348,7 @@ func loadExcludeList(path string) map[string]bool {
 		return nil
 	}
 	m := make(map[string]bool)
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" && line[0] != '#' {
 			m[line] = true

@@ -61,7 +61,7 @@ func (h *handler) handleEmbeddingsFacadePending(args map[string]any) (*mcp.CallT
 	}
 
 	var results []pendingEmbeddingResult
-	limit := getIntArg(args, "limit", 50)
+	limit := getIntArgClamped(args, "limit", 50, 1, maxListLimit)
 	if h.workspace != nil {
 		for _, p := range h.workspace.Projects {
 			docs, err := p.Store.GetPendingEmbeddings(modelID, limit)

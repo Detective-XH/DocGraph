@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/install"
-	"github.com/Detective-XH/docgraph/internal/tools"
 )
 
 func cmdInit(args []string) {
@@ -18,7 +17,6 @@ func cmdInit(args []string) {
 	installClients := fset.String("install-clients", "", "Install MCP config for clients: auto, all, or comma-separated client names")
 	workspaceMode := fset.Bool("workspace", false, "Configure installed clients to use serve --workspace")
 	scope := fset.String("scope", "", "Installation scope for Claude Code: 'user' registers globally via claude mcp add")
-	toolProfileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	withSkills := fset.Bool("with-skills", false, "Copy bundled skills to .claude/skills/ (skips existing directories)")
 	updateSkills := fset.Bool("update-skills", false, "Re-install bundled skills, overwriting existing files")
 	dryRun := fset.Bool("dry-run", false, "Print planned changes without writing files")
@@ -32,16 +30,11 @@ func cmdInit(args []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	toolProfile, err := tools.ParseToolProfile(*toolProfileRaw)
-	if err != nil {
-		log.Fatal(err)
-	}
 	if *dryRun || *interactive {
 		printInitPlan(root, *installClients, install.Options{
-			Clients:     *installClients,
-			Workspace:   *workspaceMode,
-			Scope:       *scope,
-			ToolProfile: string(toolProfile),
+			Clients:   *installClients,
+			Workspace: *workspaceMode,
+			Scope:     *scope,
 		}, *withSkills, *updateSkills)
 		if *dryRun {
 			return
@@ -51,7 +44,7 @@ func cmdInit(args []string) {
 			return
 		}
 	}
-	if err := initProject(root, toolProfile); err != nil {
+	if err := initProject(root); err != nil {
 		log.Fatal(err)
 	}
 	if *withSkills {
@@ -60,7 +53,7 @@ func cmdInit(args []string) {
 		}
 	}
 	if *installClients != "" {
-		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope, ToolProfile: string(toolProfile)})
+		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -135,7 +128,7 @@ func planGitignore(path, line string) initPlanItem {
 	if err != nil {
 		return initPlanItem{action: "inspect", path: path, detail: err.Error()}
 	}
-	for _, existing := range strings.Split(string(data), "\n") {
+	for existing := range strings.SplitSeq(string(data), "\n") {
 		if strings.TrimSpace(existing) == line {
 			return initPlanItem{action: "unchanged", path: path, detail: line + " already present"}
 		}
@@ -143,7 +136,7 @@ func planGitignore(path, line string) initPlanItem {
 	return initPlanItem{action: "update", path: path, detail: "append " + line}
 }
 
-func initProject(root string, _ tools.ToolProfile) error {
+func initProject(root string) error {
 	if err := os.MkdirAll(filepath.Join(root, ".docgraph"), 0o755); err != nil {
 		return err
 	}
@@ -189,8 +182,7 @@ func ensureGitignoreLine(path, line string) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	lines := strings.Split(string(data), "\n")
-	for _, existing := range lines {
+	for existing := range strings.SplitSeq(string(data), "\n") {
 		if strings.TrimSpace(existing) == line {
 			return nil
 		}

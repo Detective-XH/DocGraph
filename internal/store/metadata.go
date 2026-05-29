@@ -427,15 +427,12 @@ func (s *Store) GetMetadataStats() (MetadataStats, error) {
 // the given status and/or sensitivity filter. Empty string means "no filter".
 // Results are ordered by node_id; limit 0 means no cap.
 func (s *Store) GetNodesByGovernance(status, sensitivity string, limit int) ([]Node, error) {
-	args := []interface{}{}
-	where := "1=1"
+	var conds sqlConds
 	if status != "" {
-		where += " AND gm.status = ?"
-		args = append(args, status)
+		conds.add("gm.status = ?", status)
 	}
 	if sensitivity != "" {
-		where += " AND gm.sensitivity = ?"
-		args = append(args, sensitivity)
+		conds.add("gm.sensitivity = ?", sensitivity)
 	}
 	limitClause := ""
 	if limit > 0 {
@@ -449,9 +446,9 @@ func (s *Store) GetNodesByGovernance(status, sensitivity string, limit int) ([]N
 		WHERE %s
 		ORDER BY n.id
 		%s
-	`, where, limitClause)
+	`, conds.where(), limitClause)
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.db.Query(q, conds.values()...)
 	if err != nil {
 		return nil, err
 	}
@@ -472,23 +469,18 @@ func (s *Store) GetNodesByGovernance(status, sensitivity string, limit int) ([]N
 // GetNodesByResearch returns document nodes whose research_metadata matches all
 // non-empty filters. limit 0 means no cap.
 func (s *Store) GetNodesByResearch(claimID, sourceType, confidence, analystStatus string, limit int) ([]Node, error) {
-	args := []interface{}{}
-	where := "1=1"
+	var conds sqlConds
 	if claimID != "" {
-		where += " AND rm.claim_id = ?"
-		args = append(args, claimID)
+		conds.add("rm.claim_id = ?", claimID)
 	}
 	if sourceType != "" {
-		where += " AND rm.source_type = ?"
-		args = append(args, sourceType)
+		conds.add("rm.source_type = ?", sourceType)
 	}
 	if confidence != "" {
-		where += " AND rm.confidence = ?"
-		args = append(args, confidence)
+		conds.add("rm.confidence = ?", confidence)
 	}
 	if analystStatus != "" {
-		where += " AND rm.analyst_status = ?"
-		args = append(args, analystStatus)
+		conds.add("rm.analyst_status = ?", analystStatus)
 	}
 	limitClause := ""
 	if limit > 0 {
@@ -502,9 +494,9 @@ func (s *Store) GetNodesByResearch(claimID, sourceType, confidence, analystStatu
 		WHERE %s
 		ORDER BY n.id
 		%s
-	`, where, limitClause)
+	`, conds.where(), limitClause)
 
-	rows, err := s.db.Query(q, args...)
+	rows, err := s.db.Query(q, conds.values()...)
 	if err != nil {
 		return nil, err
 	}

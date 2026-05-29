@@ -1,37 +1,10 @@
 package tools
 
 import (
-	"fmt"
-	"os"
-	"strings"
-
 	"github.com/mark3labs/mcp-go/server"
 )
 
-// ToolProfile selects the MCP tool surface exposed to an agent.
-type ToolProfile string
-
-const (
-	ToolProfileCompact ToolProfile = "compact"
-)
-
-// ParseToolProfile normalizes user input to ToolProfileCompact.
-func ParseToolProfile(raw string) (ToolProfile, error) {
-	switch ToolProfile(strings.ToLower(strings.TrimSpace(raw))) {
-	case "", "compact":
-		return ToolProfileCompact, nil
-	case "full", "dual":
-		fmt.Fprintf(os.Stderr, "warning: --tool-profile %q is deprecated; using compact\n", raw)
-		return ToolProfileCompact, nil
-	default:
-		return "", fmt.Errorf("invalid tool profile %q: valid profile is compact", raw)
-	}
-}
-
-// registerTools accepts a ToolProfile to preserve the public Register*
-// signatures, but only the compact profile is implemented today
-// (ParseToolProfile collapses every input to ToolProfileCompact).
-func registerTools(s *server.MCPServer, h *handler, _ ToolProfile, opts RegisterOpts) {
+func registerTools(s *server.MCPServer, h *handler, opts RegisterOpts) {
 	registerCompactTools(s, h, opts)
 }
 

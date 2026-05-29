@@ -36,17 +36,11 @@ func cmdServe(args []string) {
 	fset := flag.NewFlagSet("serve", flag.ExitOnError)
 	p := fset.String("path", "", "Project directory to index and serve")
 	ws := fset.String("workspace", "", "Workspace root (index all child dirs as projects)")
-	profileRaw := fset.String("tool-profile", "", "MCP tool profile (deprecated: only compact is supported)")
 	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	enableEmbeddings := fset.Bool("enable-embeddings", false, "Register docgraph_embeddings (sends content to external LLM provider)")
 	enableEnrichment := fset.Bool("enable-enrichment", false, "Register docgraph_enrichment (sends content to external LLM provider)")
 	fset.Parse(args)
-
-	profile, err := tools.ParseToolProfile(*profileRaw)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	regOpts := tools.RegisterOpts{
 		EnableEmbeddings: *enableEmbeddings,
@@ -64,7 +58,7 @@ func cmdServe(args []string) {
 		defer w.Close()
 		w.NoGitignore = noGitignore
 		w.SimilarityThreshold = similarityThreshold
-		setIndexing := tools.RegisterWorkspaceWithProfileOpts(srv, w, profile, regOpts)
+		setIndexing := tools.RegisterWorkspaceWithOpts(srv, w, regOpts)
 		doSync := func() {
 			defer setIndexing(false)
 			w.IndexAll()
@@ -98,7 +92,7 @@ func cmdServe(args []string) {
 		warm := dbExists(path)
 		st := openStore(path)
 		defer st.Close()
-		setIndexing := tools.RegisterWithProfileOpts(srv, st, absRoot, profile, regOpts)
+		setIndexing := tools.RegisterWithOpts(srv, st, absRoot, regOpts)
 		doSync := func() {
 			defer setIndexing(false)
 			if err := indexStore(absRoot, st); err != nil {

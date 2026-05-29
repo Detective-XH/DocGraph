@@ -18,7 +18,7 @@ import (
 // flag. Callers should pass true before a cold-start background index and
 // false (via defer) when it finishes.
 func Register(s *server.MCPServer, st *store.Store, projectRoot string) func(bool) {
-	return RegisterWithProfile(s, st, projectRoot, ToolProfileCompact)
+	return RegisterWithOpts(s, st, projectRoot, RegisterOpts{})
 }
 
 // RegisterOpts configures which opt-in LLM callout tools are registered.
@@ -28,44 +28,28 @@ type RegisterOpts struct {
 	EnableEnrichment bool
 }
 
-// RegisterWithProfile registers the MCP tools selected by profile and returns
-// a func(bool) to set the indexing flag.
-func RegisterWithProfile(s *server.MCPServer, st *store.Store, projectRoot string, profile ToolProfile) func(bool) {
-	return RegisterWithProfileOpts(s, st, projectRoot, profile, RegisterOpts{})
-}
-
-// RegisterWithProfileOpts is like RegisterWithProfile but accepts opt-in tool flags.
-func RegisterWithProfileOpts(s *server.MCPServer, st *store.Store, projectRoot string, profile ToolProfile, opts RegisterOpts) func(bool) {
+// RegisterWithOpts registers the MCP tools with opt-in LLM callout flags and
+// returns a func(bool) to set the indexing flag.
+func RegisterWithOpts(s *server.MCPServer, st *store.Store, projectRoot string, opts RegisterOpts) func(bool) {
 	h := &handler{
 		store:            st,
 		projectRoot:      projectRoot,
 		enableEmbeddings: opts.EnableEmbeddings,
 		enableEnrichment: opts.EnableEnrichment,
 	}
-	registerTools(s, h, profile, opts)
+	registerTools(s, h, opts)
 	return h.indexing.Store
 }
 
-// RegisterWorkspace registers all tools for a workspace and returns the same
-// indexing-flag setter.
-func RegisterWorkspace(s *server.MCPServer, w *workspace.Workspace) func(bool) {
-	return RegisterWorkspaceWithProfile(s, w, ToolProfileCompact)
-}
-
-// RegisterWorkspaceWithProfile registers the MCP tools selected by profile for
-// a workspace and returns the same indexing-flag setter.
-func RegisterWorkspaceWithProfile(s *server.MCPServer, w *workspace.Workspace, profile ToolProfile) func(bool) {
-	return RegisterWorkspaceWithProfileOpts(s, w, profile, RegisterOpts{})
-}
-
-// RegisterWorkspaceWithProfileOpts is like RegisterWorkspaceWithProfile but accepts opt-in tool flags.
-func RegisterWorkspaceWithProfileOpts(s *server.MCPServer, w *workspace.Workspace, profile ToolProfile, opts RegisterOpts) func(bool) {
+// RegisterWorkspaceWithOpts registers the MCP tools for a workspace, with opt-in
+// LLM callout flags, and returns the indexing-flag setter.
+func RegisterWorkspaceWithOpts(s *server.MCPServer, w *workspace.Workspace, opts RegisterOpts) func(bool) {
 	h := &handler{
 		workspace:        w,
 		enableEmbeddings: opts.EnableEmbeddings,
 		enableEnrichment: opts.EnableEnrichment,
 	}
-	registerTools(s, h, profile, opts)
+	registerTools(s, h, opts)
 	return h.indexing.Store
 }
 

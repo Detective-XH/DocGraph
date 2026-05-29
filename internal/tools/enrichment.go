@@ -51,7 +51,7 @@ func (h *handler) handleEnrichment(ctx context.Context, request mcp.CallToolRequ
 
 func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
-	limit := getIntArg(args, "limit", defaultEnrichmentLimit)
+	limit := getIntArgClamped(args, "limit", defaultEnrichmentLimit, 1, maxListLimit)
 	contentMode := getStringArg(args, "content_mode", "full")
 	if contentMode != "full" && contentMode != "excerpt" {
 		contentMode = "full"
