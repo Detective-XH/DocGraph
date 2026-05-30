@@ -204,15 +204,13 @@ func formatQualityIssueCodes(issues []store.MetadataQualityIssue, limit int) str
 // appendDriftAuditStats adds a compact policy drift audit summary to the status
 // output. It omits the section entirely when there are no findings, so a clean
 // project has no extra noise in docgraph_status output.
-func appendDriftAuditStats(sb *strings.Builder, st *store.Store) {
-	if st == nil {
+func appendDriftAuditStats(sb *strings.Builder, auditor DriftAuditor) {
+	if auditor == nil {
 		return
 	}
-	findings, err := st.GetDriftFindings(store.DriftAuditOpts{})
-	if err != nil || len(findings) == 0 {
-		return
+	if summary, ok := driftSummaryFor(auditor); ok {
+		appendDriftSummary(sb, summary)
 	}
-	appendDriftSummary(sb, store.SummarizeDriftFindings(findings))
 }
 
 // appendWorkspaceDriftAudit fans out the drift audit across every project and
@@ -223,11 +221,10 @@ func appendWorkspaceDriftAudit(sb *strings.Builder, h *handler) {
 	}
 	agg := store.DriftAuditStats{BySeverity: map[string]int{}, ByCode: map[string]int{}}
 	for _, project := range h.workspace.Projects {
-		findings, err := project.Store.GetDriftFindings(store.DriftAuditOpts{})
-		if err != nil || len(findings) == 0 {
+		summary, ok := driftSummaryFor(project.Store)
+		if !ok {
 			continue
 		}
-		summary := store.SummarizeDriftFindings(findings)
 		agg.TotalFindings += summary.TotalFindings
 		for code, count := range summary.BySeverity {
 			agg.BySeverity[code] += count
