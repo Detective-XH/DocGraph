@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
@@ -221,7 +222,22 @@ func indexStore(root string, st *store.Store, force bool) error {
 			}
 		}
 		// Phase B — per-file dependent writes (nodes now exist, so FKs resolve).
-		for _, res := range batch {
+		// Collect git history for the whole batch up front, fanning the per-file
+		// `git log --follow` forks across NumCPU workers. On a large versioned
+		// corpus this is by far the dominant index cost (a serial loop pegs one
+		// core on `--follow` rename detection while the rest idle); see
+		// git.CollectHistories. The forks are pure and independent; the
+		// UpsertFileHistory writes below stay serial under IndexMu (SQLite is a
+		// single writer), so results[idx] aligns with the batch order.
+		var histories []git.FileHistory
+		if gitEnabled {
+			relPaths := make([]string, len(batch))
+			for i, res := range batch {
+				relPaths[i] = res.FileInfo.Path
+			}
+			histories = git.CollectHistories(root, relPaths, runtime.NumCPU())
+		}
+		for idx, res := range batch {
 			relPath := res.FileInfo.Path
 			if len(res.MetadataTuples) > 0 {
 				if err := st.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
@@ -258,7 +274,7 @@ func indexStore(root string, st *store.Store, force bool) error {
 				return err
 			}
 			if gitEnabled {
-				h := git.CollectHistory(root, relPath)
+				h := histories[idx]
 				if err := st.UpsertFileHistory(store.FileHistory{
 					Path:          h.Path,
 					CommitCount:   h.CommitCount,

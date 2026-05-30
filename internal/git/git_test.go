@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,5 +143,96 @@ func TestCollectHistory_CommittedFile(t *testing.T) {
 	}
 	if h.Path != "adr.md" {
 		t.Errorf("expected path=adr.md, got %s", h.Path)
+	}
+}
+
+// TestCollectHistories_ParallelMatchesSerial proves the fan-out wrapper returns
+// the exact per-file FileHistory the serial path would, in input order, across
+// every worker regime (serial, parallel, oversubscribed). Files get distinct
+// commit counts and the input order is unsorted with an untracked path mixed in,
+// so an off-by-worker or alphabetical-ordering bug cannot accidentally pass. Run
+// under -race, it also guards the disjoint-slot writes against data races.
+func TestCollectHistories_ParallelMatchesSerial(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+
+	day := 0
+	commit := func(name, content string) {
+		t.Helper()
+		day++
+		date := fmt.Sprintf("2024-01-%02dT00:00:00Z", day) // distinct, monotonic timestamps
+		env := []string{
+			"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp,
+			"GIT_AUTHOR_NAME=Alice", "GIT_AUTHOR_EMAIL=alice@example.com",
+			"GIT_COMMITTER_NAME=Alice", "GIT_COMMITTER_EMAIL=alice@example.com",
+			"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date,
+		}
+		run := func(args ...string) {
+			cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
+			cmd.Env = env
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", name)
+		run("commit", "-m", "edit "+name)
+	}
+
+	initEnv := []string{"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp}
+	for _, args := range [][]string{
+		{"init"}, {"config", "user.email", "alice@example.com"},
+		{"config", "user.name", "Alice"}, {"config", "commit.gpgsign", "false"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
+		cmd.Env = initEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Distinct histories: a.md×1, b.md×2, c.md×3.
+	commit("a.md", "a1")
+	commit("b.md", "b1")
+	commit("c.md", "c1")
+	commit("b.md", "b2")
+	commit("c.md", "c2")
+	commit("c.md", "c3")
+
+	// Unsorted input + an untracked path: results must align to input order
+	// (not alphabetical) and the zero-value row for the missing file must pass
+	// through at its slot.
+	relPaths := []string{"c.md", "a.md", "missing.md", "b.md"}
+	want := make([]FileHistory, len(relPaths))
+	for i, p := range relPaths {
+		want[i] = CollectHistory(tmp, p)
+	}
+	if want[0].CommitCount != 3 || want[1].CommitCount != 1 ||
+		want[2].CommitCount != 0 || want[3].CommitCount != 2 {
+		t.Fatalf("setup: unexpected serial commit counts: %d %d %d %d",
+			want[0].CommitCount, want[1].CommitCount, want[2].CommitCount, want[3].CommitCount)
+	}
+
+	for _, workers := range []int{1, 2, 8, 100} {
+		got := CollectHistories(tmp, relPaths, workers)
+		if len(got) != len(want) {
+			t.Fatalf("workers=%d: len(got)=%d, want %d", workers, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("workers=%d slot %d: got %+v, want %+v", workers, i, got[i], want[i])
+			}
+		}
+	}
+
+	if got := CollectHistories(tmp, nil, 8); len(got) != 0 {
+		t.Errorf("nil paths: len(got)=%d, want 0", len(got))
+	}
+	if got := CollectHistories(tmp, []string{"a.md"}, 8); len(got) != 1 || got[0] != want[1] {
+		t.Errorf("single path: got %+v, want %+v", got, want[1])
 	}
 }
