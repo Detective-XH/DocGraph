@@ -202,6 +202,20 @@ func (s *Store) UpsertFile(f FileInfo) error {
 	return err
 }
 
+// NodesIsEmpty reports whether the nodes base table has no rows — i.e. this index
+// run started against a fresh/cold DB. Callers use it to skip the eager per-file
+// stale-row delete block on a cold-start, where every DELETE matches 0 rows and is
+// a true no-op (no rows → no FK cascade → no AFTER DELETE trigger). See the call
+// site for why an empty nodes table implies the delete targets are empty too.
+// EXISTS short-circuits on the first row, so it stays O(1) on a populated DB.
+func (s *Store) NodesIsEmpty() (bool, error) {
+	var present int
+	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM nodes)`).Scan(&present); err != nil {
+		return false, fmt.Errorf("NodesIsEmpty: %w", err)
+	}
+	return present == 0, nil
+}
+
 func (s *Store) DeleteFileData(filePath string) error {
 	tx, err := s.db.Begin()
 	if err != nil {
