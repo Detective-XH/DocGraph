@@ -1,6 +1,9 @@
 package store
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 // TestHistoryRerankActivatesOnChurn verifies applyHistoryReranking is wired but
 // contributes nothing without git history, and proves it DOES activate —
@@ -218,4 +221,74 @@ func TestHistoryRerankAuthorCountContributes(t *testing.T) {
 			"zzzzz.md above aaaaa.md (a=#%d, z=#%d). Half the churn proxy contributes nothing.", ja, jz)
 	}
 	t.Logf("author-count term verified load-bearing: author 20 vs 1 (equal commits) flipped zzzzz.md to #%d", jz)
+}
+
+// TestHistoryRerankIgnoresMalformedCounts is the defense-in-depth guard against a
+// malformed/corrupt file_history row. A real git row always has commit_count≥1 and
+// author_count≥1, but the schema does not CHECK >=0, so a hand-corrupted row could
+// carry negative counts. Feeding math.Log1p a value < -1 returns NaN, which would
+// poison c.Score and leave the search sort comparator (Rank < Rank) undefined —
+// corrupting result order. applyHistoryReranking must drop such a row entirely.
+//
+// Isolation mirrors TestHistoryRerankActivatesOnChurn: aaaaa.md and zzzzz.md are
+// identical in every text field and equal-length (8 chars), so with no usable
+// history they TIE and FilePath-ascending puts aaaaa.md first. We then write a
+// NEGATIVE-count history row on ONE twin. Asserting (a) neither Rank is NaN and
+// (b) the twins still tie in FilePath order proves the malformed row produced
+// neither a NaN nor a phantom boost — it was ignored, exactly like the baseline.
+func TestHistoryRerankIgnoresMalformedCounts(t *testing.T) {
+	st := tempStore(t)
+
+	const body = "telemetry metrics overview dashboard"
+	twins := []Node{
+		{ID: "aaaaa.md", Kind: "document", Name: "Telemetry Guide", QualifiedName: "aaaaa.md",
+			FilePath: "aaaaa.md", StartLine: 1, EndLine: 5, BodyExcerpt: body, UpdatedAt: 1},
+		{ID: "zzzzz.md", Kind: "document", Name: "Telemetry Guide", QualifiedName: "zzzzz.md",
+			FilePath: "zzzzz.md", StartLine: 1, EndLine: 5, BodyExcerpt: body, UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(twins); err != nil {
+		t.Fatalf("InsertNodes twins: %v", err)
+	}
+	if err := st.UpsertSectionChunks([]SectionChunk{
+		sectionChunk("aaaaa.md", "aaaaa.md", "h1", "doc", "", body, 1, 5),
+		sectionChunk("zzzzz.md", "zzzzz.md", "h1", "doc", "", body, 1, 5),
+	}); err != nil {
+		t.Fatalf("UpsertSectionChunks: %v", err)
+	}
+
+	// Corrupt ONE twin with negative counts. The schema does not constrain >=0 and
+	// neither UpsertFileHistory nor GetFileHistory clamps, so these negatives reach
+	// applyHistoryReranking — the guard there is the sole thing preventing a NaN.
+	if err := st.UpsertFileHistory(FileHistory{
+		Path: "zzzzz.md", CommitCount: -5, AuthorCount: -3, LastCommitAt: 1,
+	}); err != nil {
+		t.Fatalf("UpsertFileHistory malformed: %v", err)
+	}
+
+	results, err := st.Search("telemetry", "", 10)
+	if err != nil {
+		t.Fatalf("Search: %v", err)
+	}
+	ia, iz := indexOfDoc(results, "aaaaa.md"), indexOfDoc(results, "zzzzz.md")
+	if ia < 0 || iz < 0 {
+		t.Fatalf("both docs must be present, got a=%d z=%d", ia, iz)
+	}
+
+	// Core guard proof: a NaN Rank would mean math.Log1p saw the negative count.
+	if math.IsNaN(results[ia].Rank) || math.IsNaN(results[iz].Rank) {
+		t.Fatalf("malformed history produced a NaN Rank: aaaaa=%v zzzzz=%v — the negative "+
+			"count reached math.Log1p and poisoned the score, corrupting sort order",
+			results[ia].Rank, results[iz].Rank)
+	}
+
+	// The malformed row must contribute zero, so the twins behave exactly like the
+	// no-history baseline: equal Rank, FilePath-ascending order (aaaaa.md first).
+	if results[ia].Rank != results[iz].Rank {
+		t.Fatalf("malformed history must contribute zero (no phantom boost), but twins diverged: "+
+			"aaaaa=%.6f zzzzz=%.6f", results[ia].Rank, results[iz].Rank)
+	}
+	if !(ia < iz) {
+		t.Fatalf("expected aaaaa.md before zzzzz.md on the ignored-malformed tie (a=%d, z=%d)", ia, iz)
+	}
+	t.Logf("malformed-row guard held: negative counts ignored, twins tied (a=#%d z=#%d), no NaN", ia, iz)
 }

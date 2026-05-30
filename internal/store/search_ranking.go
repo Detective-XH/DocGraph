@@ -66,19 +66,28 @@ func (s *Store) applyMetadataReranking(req searchRequest, c *searchCandidate) {
 // freshness stays in the doc.stale_by_git drift finder, not in ranking.
 //
 // Inert when absent: file_history rows exist only for git-tracked corpora with
-// collection on, so c.History is nil (and CommitCount==0 guards a degenerate row)
+// collection on, so c.History is nil (and CommitCount<=0 guards a degenerate row)
 // for non-git / --no-history / never-committed files — those contribute exactly
 // zero, never a penalty. The terms are log-compressed and capped (commit ≤7,
 // author ≤3, combined ≤10) so the signal nudges but never dominates the text
 // score — same calibration discipline as applyGraphReranking and ftsRankBoost,
 // and below the name-field weight (12) and fts boost cap (12).
+//
+// Defense-in-depth against a malformed/corrupt row: a real git row always has
+// commit_count≥1 and author_count≥1, but the schema does not CHECK >=0, so a
+// hand-corrupted row could carry a negative count. math.Log1p of any value < -1
+// returns NaN, which would poison c.Score and leave the search sort comparator
+// (Rank < Rank) undefined for NaN — corrupting result order. The CommitCount<=0
+// guard drops such a row, and math.Max(0,...) clamps the author term so a
+// negative author_count can never reach Log1p. Cheap, removes the NaN class
+// entirely; not a reachable exploit on real git data.
 func (s *Store) applyHistoryReranking(req searchRequest, c *searchCandidate) {
 	h := c.History
-	if h == nil || h.CommitCount == 0 {
+	if h == nil || h.CommitCount <= 0 {
 		return
 	}
 	c.Score += math.Min(math.Log1p(float64(h.CommitCount))*2.5, 7)
-	c.Score += math.Min(math.Log1p(float64(h.AuthorCount))*1.5, 3)
+	c.Score += math.Min(math.Log1p(math.Max(0, float64(h.AuthorCount)))*1.5, 3)
 }
 
 func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tagMatches int, err error) {
