@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,13 +34,32 @@ type FileHistory struct {
 	LastSubject   string
 }
 
+// forkSem is a process-wide budget that bounds the number of concurrent
+// `git log --follow` child processes to NumCPU across ALL callers and
+// goroutines. CollectHistories fans the per-file forks across its `workers`
+// goroutines, and the multi-project workspace IndexAll fans CollectHistories
+// across NumCPU projects at once; without a shared cap those two layers would
+// multiply to NumCPU² concurrent git children (196 on a 14-core box, 4096 on
+// 64). Under that fork/fd pressure `cmd.Output()` can fail with EAGAIN/ENOMEM,
+// which CollectHistory swallows into a silently-wrong zero-value FileHistory —
+// a correctness hazard, not just a slowdown. Acquiring here, around the fork
+// itself, caps the global concurrent-git-child count by construction no matter
+// how many layers fan out. A caller that fans a single layer (the per-store
+// index flush passes NumCPU workers) fills the budget exactly and is unchanged.
+var forkSem = make(chan struct{}, runtime.NumCPU())
+
 // CollectHistory runs git log to gather change history for relPath within gitRoot.
 // Returns a zero-value FileHistory (CommitCount == 0) on any error: git not installed,
 // directory not a git repo, or file untracked.
 func CollectHistory(gitRoot, relPath string) FileHistory {
 	cmd := exec.Command("git", "-C", gitRoot, "log", "--follow",
 		"--format=%at|%ae|%s", "--", relPath)
+	// Bound concurrent git children to NumCPU process-wide (see forkSem). Held
+	// only around the fork: the in-process parsing below runs off-budget so the
+	// freed slot is reused immediately by another waiting collector.
+	forkSem <- struct{}{}
 	out, err := cmd.Output()
+	<-forkSem
 	if err != nil || len(bytes.TrimSpace(out)) == 0 {
 		return FileHistory{Path: relPath}
 	}
@@ -103,12 +123,16 @@ func CollectHistory(gitRoot, relPath string) FileHistory {
 // can keep their serial UpsertFileHistory loop unchanged. workers <= 1, an
 // empty list, or a single path runs serially; workers is clamped to len.
 //
-// No global cap: each call spawns up to `workers` concurrent git children, so a
-// caller that invokes CollectHistories from multiple goroutines must divide the
-// budget — passing NumCPU from N concurrent callers oversubscribes to N×NumCPU
-// forks. The only caller today is the serial per-store index flush, which passes
-// NumCPU safely; the multi-project workspace path deliberately stays serial (it
-// already parallelizes across projects, so a per-project fan-out would multiply).
+// Globally fork-bounded: every git child this spawns is gated by the
+// package-level forkSem (cap NumCPU), so total concurrent `git log` children
+// stay ≤ NumCPU even when multiple callers fan out at once. Both call sites
+// rely on this — the single-store index flush (one CollectHistories at
+// workers=NumCPU) and the multi-project workspace IndexAll (one CollectHistories
+// per project, with NumCPU projects in flight). The per-project `workers` here
+// can therefore be NumCPU regardless of how many projects run concurrently: it
+// only sets how wide each project *requests*, never how many forks actually run
+// (forkSem decides that). Blocked goroutines waiting on the budget are cheap;
+// only ≤ NumCPU forks are ever live.
 func CollectHistories(gitRoot string, relPaths []string, workers int) []FileHistory {
 	results := make([]FileHistory, len(relPaths))
 	if workers > len(relPaths) {
