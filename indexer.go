@@ -122,6 +122,32 @@ func indexStore(root string, st *store.Store) error {
 	// per-file CollectHistory fork entirely — on a non-repo tree every call is
 	// a guaranteed fast-fail, thousands of wasted forks on a --force rebuild.
 	gitEnabled := git.IsRepo(root)
+
+	// FTS bulk-rebuild fast path. The AFTER INSERT trigger that tokenizes section
+	// text into section_chunks_fts is the #1 index cost (~42% of wall): incremental
+	// hash-flush+automerge per batch. On a from-scratch build (FTS empty) it is
+	// ~2.4x cheaper to drop the trigger, bulk-load the base rows, then 'rebuild' the
+	// FTS in one optimal pass. Incremental runs (FTS already populated) keep the
+	// trigger. The probe runs under IndexMu (held above) so a watcher pass can't
+	// observe a transient empty FTS mid-build. Self-healing: a crash after bulk load
+	// but before rebuild leaves the FTS empty → the next run re-enters this path
+	// (every file hash-skips, then rebuild repopulates from the intact base table),
+	// which is why the rebuild below is gated on fullBuild, NOT on nNew.
+	// Scope: section_chunks_fts only — nodes_fts cannot 'rebuild' (its metadata_text
+	// column is renamed from nodes.metadata, so content reconstruction by name fails).
+	// Drop ALL three sync triggers: a fresh build still fires _update via
+	// UpsertSectionChunks' ON CONFLICT DO UPDATE on duplicate section node_ids.
+	fullBuild, ftsErr := st.SectionFTSIsEmpty()
+	if ftsErr != nil {
+		fmt.Fprintf(os.Stderr, "section FTS probe: %v\n", ftsErr)
+		fullBuild = false // safe fallback: keep the trigger-driven path
+	}
+	if fullBuild {
+		if err := st.DropSectionFTSTriggers(); err != nil {
+			return err
+		}
+	}
+
 	var nNew, nSkip int
 	var changedDocIDs []string
 
@@ -267,6 +293,24 @@ func indexStore(root string, st *store.Store) error {
 	}
 	if err := flush(); err != nil {
 		return err
+	}
+	// Build section_chunks_fts in one bulk pass and restore the insert trigger.
+	// Gated on fullBuild (not nNew): a crash-recovery run hash-skips every file
+	// (nNew==0) yet still needs the FTS repopulated from the intact base table.
+	// Runs before resolver/similarity — those write only edges, never section_chunks.
+	if fullBuild {
+		// Order matters for crash-safety: recreate the triggers FIRST (FTS still
+		// empty), then rebuild as the strict LAST write. That way "FTS non-empty"
+		// implies "triggers restored", so any crash lands on an empty FTS and the
+		// fullBuild gate self-heals on the next run. 'rebuild' is an FTS-only
+		// command (no INSERT into section_chunks), so the live trigger can't
+		// double-index during it.
+		if err := st.CreateSectionFTSTriggers(); err != nil {
+			return err
+		}
+		if err := st.RebuildSectionFTS(); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", len(entries), nNew, nSkip)
 	if err := st.Entity.PruneOrphanEntities(); err != nil {
