@@ -95,7 +95,10 @@ func cmdServe(args []string) {
 		setIndexing := tools.RegisterWithOpts(srv, st, absRoot, regOpts)
 		doSync := func() {
 			defer setIndexing(false)
-			if err := indexStore(absRoot, st); err != nil {
+			// force=false: incremental — the per-file stale-row deletes are
+			// load-bearing here (the DB is not freshly wiped). Only `index --force`
+			// (removeIndexDB) skips them.
+			if err := indexStore(absRoot, st, false); err != nil {
 				fmt.Fprintf(os.Stderr, "[sync] %v\n", err)
 			}
 		}
@@ -106,7 +109,8 @@ func cmdServe(args []string) {
 		go func() {
 			err := watcher.Watch([]string{absRoot}, func(projectPath string, _ []string) {
 				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
-				if err := indexStore(projectPath, st); err != nil {
+				// force=false: incremental re-index of changed files; deletes stay.
+				if err := indexStore(projectPath, st, false); err != nil {
 					fmt.Fprintf(os.Stderr, "[watcher] re-index %s: %v\n", projectPath, err)
 				}
 			})

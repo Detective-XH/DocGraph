@@ -93,7 +93,7 @@ func indexPathOpts(dir string, force bool) *store.Store {
 		}
 	}
 
-	if err := indexStore(root, st); err != nil {
+	if err := indexStore(root, st, force); err != nil {
 		log.Fatal(err)
 	}
 	return st
@@ -109,7 +109,17 @@ func removeIndexDB(dbDir string) error {
 	return nil
 }
 
-func indexStore(root string, st *store.Store) error {
+// indexStore scans root and writes nodes/edges/section chunks/FTS into st.
+//
+// force MUST mean "the DB was just wiped" (the --force path runs removeIndexDB
+// before reopening, so base tables are empty). It is the gate for the per-file
+// stale-row delete fast path: when force is true those deletes are skipped as
+// no-ops. Passing force=true over a POPULATED DB would silently skip the
+// load-bearing deletes and corrupt changed files (non-idempotent inserts). Do
+// NOT key this off fullBuild (FTS-emptiness): that is also true after a
+// crash-recovery over a populated base. Incremental callers (sync, serve
+// warm-start, fsnotify watcher) pass force=false.
+func indexStore(root string, st *store.Store, force bool) error {
 	st.IndexMu.Lock()
 	defer st.IndexMu.Unlock()
 
@@ -171,7 +181,7 @@ func indexStore(root string, st *store.Store) error {
 	// batch-N: accumulate parsed files, then flush nodes + section chunks across
 	// the batch in single InsertNodes/UpsertSectionChunks calls. Those are the two
 	// FTS5-backed tables; coalescing collapses ~one commit-per-file into ~one
-	// commit-per-batch. Profiling (full Code-Space, 10.5k files) showed the win is
+	// commit-per-batch. Profiling (full ~10.5k-file corpus) showed the win is
 	// transaction/fsync overhead, NOT segment-merge: fts5IndexMergeLevel stays flat
 	// (~9.5s) while sys time and commit count drop sharply — ~17% wall at N=500 vs
 	// the per-file baseline. The non-FTS dependent writes stay a per-file loop inside
@@ -287,10 +297,22 @@ func indexStore(root string, st *store.Store) error {
 		// before re-parsing so cascade-deleted IDs are still reachable. Idempotent.
 		// Eager (phase 1): InsertEdges/InsertUnresolvedRefs are plain INSERTs, so the
 		// stale rows must be gone before the batch flush re-inserts them.
-		st.DeleteSectionChunksByFile(e.RelPath)
-		st.DeleteDocumentMetadataByFile(e.RelPath)
-		st.Entity.DeleteEntityData(e.RelPath)
-		st.DeleteFileData(e.RelPath)
+		//
+		// Skip on a --force build: removeIndexDB already wiped the DB, so the base
+		// tables are empty and every one of these per-file deletes matches 0 rows —
+		// ~9 DELETEs across 7 txns per file (plus a full-table PruneOrphanEntities
+		// anti-join), pure no-op overhead across the whole corpus. Guard on `force`,
+		// NOT on `fullBuild`: `fullBuild` is FTS-emptiness, which is ALSO true on a
+		// crash-recovery incremental run (base rows intact, FTS lost) — there a
+		// changed file's stale rows MUST still be deleted or the non-idempotent
+		// inserts above duplicate edges / orphan chunks. force==true is the only
+		// signal meaning "removeIndexDB ran ⟹ DB empty ⟹ nothing to delete".
+		if !force {
+			st.DeleteSectionChunksByFile(e.RelPath)
+			st.DeleteDocumentMetadataByFile(e.RelPath)
+			st.Entity.DeleteEntityData(e.RelPath)
+			st.DeleteFileData(e.RelPath)
+		}
 		res, err := dispatchParse(e.Path, e.RelPath, src, hash)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
