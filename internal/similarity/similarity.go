@@ -642,10 +642,15 @@ func cosineSimilarity(a, b map[string]float64) float64 {
 	return dot / denom
 }
 
-// jaccard computes the Jaccard similarity of two sets.
+// jaccard computes the Jaccard similarity of two sets. It iterates the smaller
+// set to compute the intersection (symmetric, so the result is identical);
+// this mirrors the swap-to-smaller guard in cosineSimilarity.
 func jaccard(a, b map[string]bool) float64 {
 	if len(a) == 0 && len(b) == 0 {
 		return 0
+	}
+	if len(a) > len(b) {
+		a, b = b, a
 	}
 	inter := 0
 	for k := range a {
