@@ -198,7 +198,7 @@ CREATE TABLE IF NOT EXISTS entity_mentions (
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(
-    name, qualified_name, body_excerpt, metadata_text,
+    name, qualified_name, body_excerpt, metadata,
     content='nodes', content_rowid='rowid',
     tokenize='trigram'
 );
@@ -289,19 +289,19 @@ CREATE INDEX IF NOT EXISTS idx_agent_enrichment_runs_model ON agent_enrichment_r
 CREATE INDEX IF NOT EXISTS idx_agent_metadata_provenance_run ON agent_metadata_provenance(run_id);
 
 CREATE TRIGGER IF NOT EXISTS nodes_fts_insert AFTER INSERT ON nodes BEGIN
-    INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata_text)
+    INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata)
     VALUES (NEW.rowid, NEW.name, NEW.qualified_name, NEW.body_excerpt, NEW.metadata);
 END;
 
 CREATE TRIGGER IF NOT EXISTS nodes_fts_update AFTER UPDATE ON nodes BEGIN
-    INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, body_excerpt, metadata_text)
+    INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, body_excerpt, metadata)
     VALUES ('delete', OLD.rowid, OLD.name, OLD.qualified_name, OLD.body_excerpt, OLD.metadata);
-    INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata_text)
+    INSERT INTO nodes_fts(rowid, name, qualified_name, body_excerpt, metadata)
     VALUES (NEW.rowid, NEW.name, NEW.qualified_name, NEW.body_excerpt, NEW.metadata);
 END;
 
 CREATE TRIGGER IF NOT EXISTS nodes_fts_delete AFTER DELETE ON nodes BEGIN
-    INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, body_excerpt, metadata_text)
+    INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, body_excerpt, metadata)
     VALUES ('delete', OLD.rowid, OLD.name, OLD.qualified_name, OLD.body_excerpt, OLD.metadata);
 END;
 
