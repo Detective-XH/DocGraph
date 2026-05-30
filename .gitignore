@@ -12,3 +12,5 @@ docgraph
 *.db-wal
 *.db-shm
 serve.log
+*.test
+*.prof
