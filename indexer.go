@@ -124,6 +124,107 @@ func indexStore(root string, st *store.Store) error {
 	gitEnabled := git.IsRepo(root)
 	var nNew, nSkip int
 	var changedDocIDs []string
+
+	// batch-N: accumulate parsed files, then flush nodes + section chunks across
+	// the batch in single InsertNodes/UpsertSectionChunks calls. Those are the two
+	// FTS5-backed tables; coalescing collapses ~one commit-per-file into ~one
+	// commit-per-batch. Profiling (full Code-Space, 10.5k files) showed the win is
+	// transaction/fsync overhead, NOT segment-merge: fts5IndexMergeLevel stays flat
+	// (~9.5s) while sys time and commit count drop sharply — ~17% wall at N=500 vs
+	// the per-file baseline. The non-FTS dependent writes stay a per-file loop inside
+	// the flush — they only need to run AFTER the batch node insert so FK references
+	// (section_chunks/edges/entity_mentions → nodes) resolve.
+	//
+	// Dual bound: flush at batchN files OR batchBytes of accumulated section text,
+	// whichever comes first. The byte cap keeps peak heap bounded on large-document
+	// corpora where a pure file count could buffer far more than the ~90MB this
+	// corpus adds. Flushing on a file boundary preserves crash-atomicity — a lost
+	// batch re-indexes cleanly (file hashes are written in the flush via UpsertFile).
+	const batchN = 500
+	const batchBytes = 32 << 20 // 32 MiB of section text
+	batch := make([]*parser.ParseResult, 0, batchN)
+	var batchTextBytes int
+
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		// Phase A — nodes first (FK parents), then section chunks, batched.
+		var allNodes []store.Node
+		var allChunks []store.SectionChunk
+		for _, res := range batch {
+			allNodes = append(allNodes, res.DocNode)
+			allNodes = append(allNodes, res.Headings...)
+			allNodes = append(allNodes, res.Defs...)
+			allNodes = append(allNodes, res.Tags...)
+			allChunks = append(allChunks, res.SectionChunks...)
+		}
+		if err := st.InsertNodes(allNodes); err != nil {
+			return err
+		}
+		if len(allChunks) > 0 {
+			if err := st.UpsertSectionChunks(allChunks); err != nil {
+				return err
+			}
+		}
+		// Phase B — per-file dependent writes (nodes now exist, so FKs resolve).
+		for _, res := range batch {
+			relPath := res.FileInfo.Path
+			if len(res.MetadataTuples) > 0 {
+				if err := st.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+					return fmt.Errorf("metadata %s: %w", relPath, err)
+				} else if err := st.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+					return fmt.Errorf("governance %s: %w", relPath, err)
+				} else if err := st.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+					return fmt.Errorf("research %s: %w", relPath, err)
+				}
+			}
+			if err := entitygraph.IndexFile(st, relPath, res); err != nil {
+				fmt.Fprintf(os.Stderr, "entity index %s: %v\n", relPath, err)
+			}
+			if err := st.InsertEdges(res.Edges); err != nil {
+				return err
+			}
+			if len(res.RawLinks) > 0 {
+				refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
+				for _, rl := range res.RawLinks {
+					refs = append(refs, store.UnresolvedRef{
+						FromNodeID:    rl.FromNodeID,
+						ReferenceText: rl.Target,
+						ReferenceKind: rl.Kind,
+						Line:          rl.Line,
+						Col:           0,
+						FilePath:      relPath,
+					})
+				}
+				if err := st.InsertUnresolvedRefs(refs); err != nil {
+					return err
+				}
+			}
+			if err := st.UpsertFile(res.FileInfo); err != nil {
+				return err
+			}
+			if gitEnabled {
+				h := git.CollectHistory(root, relPath)
+				if err := st.UpsertFileHistory(store.FileHistory{
+					Path:          h.Path,
+					CommitCount:   h.CommitCount,
+					FirstCommitAt: h.FirstCommitAt,
+					LastCommitAt:  h.LastCommitAt,
+					AuthorCount:   h.AuthorCount,
+					LastAuthor:    h.LastAuthor,
+					LastSubject:   h.LastSubject,
+				}); err != nil {
+					fmt.Fprintf(os.Stderr, "history %s: %v\n", relPath, err)
+				}
+			}
+			changedDocIDs = append(changedDocIDs, res.DocNode.ID)
+		}
+		batch = batch[:0]
+		batchTextBytes = 0
+		return nil
+	}
+
 	for _, e := range entries {
 		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
 			continue
@@ -141,6 +242,8 @@ func indexStore(root string, st *store.Store) error {
 		}
 		// Delete stale section chunks, metadata, entity data, and node/edge data
 		// before re-parsing so cascade-deleted IDs are still reachable. Idempotent.
+		// Eager (phase 1): InsertEdges/InsertUnresolvedRefs are plain INSERTs, so the
+		// stale rows must be gone before the batch flush re-inserts them.
 		st.DeleteSectionChunksByFile(e.RelPath)
 		st.DeleteDocumentMetadataByFile(e.RelPath)
 		st.Entity.DeleteEntityData(e.RelPath)
@@ -150,68 +253,20 @@ func indexStore(root string, st *store.Store) error {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
 			continue
 		}
-		nodes := append([]store.Node{res.DocNode}, res.Headings...)
-		nodes = append(nodes, res.Defs...)
-		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
-		if err := st.InsertNodes(nodes); err != nil {
-			return err
-		}
-		if len(res.SectionChunks) > 0 {
-			if err := st.UpsertSectionChunks(res.SectionChunks); err != nil {
-				return err
-			}
-		}
-		if len(res.MetadataTuples) > 0 {
-			if err := st.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("metadata %s: %w", e.RelPath, err)
-			} else if err := st.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("governance %s: %w", e.RelPath, err)
-			} else if err := st.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("research %s: %w", e.RelPath, err)
-			}
-		}
-		if err := entitygraph.IndexFile(st, e.RelPath, res); err != nil {
-			fmt.Fprintf(os.Stderr, "entity index %s: %v\n", e.RelPath, err)
-		}
-		if err := st.InsertEdges(res.Edges); err != nil {
-			return err
-		}
-		if len(res.RawLinks) > 0 {
-			refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
-			for _, rl := range res.RawLinks {
-				refs = append(refs, store.UnresolvedRef{
-					FromNodeID:    rl.FromNodeID,
-					ReferenceText: rl.Target,
-					ReferenceKind: rl.Kind,
-					Line:          rl.Line,
-					Col:           0,
-					FilePath:      e.RelPath,
-				})
-			}
-			if err := st.InsertUnresolvedRefs(refs); err != nil {
-				return err
-			}
-		}
-		if err := st.UpsertFile(res.FileInfo); err != nil {
-			return err
-		}
-		if gitEnabled {
-			h := git.CollectHistory(root, e.RelPath)
-			if err := st.UpsertFileHistory(store.FileHistory{
-				Path:          h.Path,
-				CommitCount:   h.CommitCount,
-				FirstCommitAt: h.FirstCommitAt,
-				LastCommitAt:  h.LastCommitAt,
-				AuthorCount:   h.AuthorCount,
-				LastAuthor:    h.LastAuthor,
-				LastSubject:   h.LastSubject,
-			}); err != nil {
-				fmt.Fprintf(os.Stderr, "history %s: %v\n", e.RelPath, err)
-			}
+		batch = append(batch, res)
+		for _, c := range res.SectionChunks {
+			batchTextBytes += len(c.Text)
 		}
 		nNew++
-		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
+		if len(batch) >= batchN || batchTextBytes >= batchBytes {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := flush(); err != nil {
+		return err
 	}
 	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", len(entries), nNew, nSkip)
 	if err := st.Entity.PruneOrphanEntities(); err != nil {
