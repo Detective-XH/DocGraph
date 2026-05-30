@@ -79,9 +79,20 @@ type SearchResult struct {
 	Rank float64
 }
 
-type Store struct {
+// baseDB is the shared SQLite handle plus the store-wide reindex lock. Store and
+// every domain sub-store (e.g. *entityStore) embed the SAME *baseDB so they all
+// operate on one connection and one mutex — IndexMu MUST stay shared to serialise
+// whole-store reindexing. This is the foundation of the Step 2 sub-store split:
+// methods move from (s *Store) to their domain sub-store but keep reaching the DB
+// via the embedded baseDB, so sub-stores never need to reference one another.
+type baseDB struct {
 	db      *sql.DB
 	IndexMu sync.Mutex // serialises concurrent index/reindex calls on the same store
+}
+
+type Store struct {
+	*baseDB
+	Entity *entityStore // entity graph: entities + entity_mentions
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -109,7 +120,8 @@ func Open(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("bootstrap schema: %w", err)
 	}
 
-	st := &Store{db: db}
+	base := &baseDB{db: db}
+	st := &Store{baseDB: base, Entity: &entityStore{baseDB: base}}
 	if err := st.SyncDomainPacks(domainpacks.Packs()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("sync domain packs: %w", err)

@@ -136,7 +136,7 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		}
 	}
 	if req.Entity.EntityType != "" || req.Entity.EntityID != "" {
-		if err := s.collectEntityFilteredCandidates(req, candidates); err != nil {
+		if err := s.Entity.collectEntityFilteredCandidates(req, candidates); err != nil {
 			return nil, err
 		}
 	}

@@ -150,8 +150,8 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			if quality, err := st.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
 				sb.WriteString(appendMetadataQualitySection(quality))
 			}
-			if mentions, err := st.GetEntityMentions(node.ID); err == nil {
-				sb.WriteString(appendEntitySection(st, mentions))
+			if mentions, err := st.Entity.GetEntityMentions(node.ID); err == nil {
+				sb.WriteString(appendEntitySection(st.Entity, mentions))
 			}
 		}
 	}

@@ -11,7 +11,7 @@ type EntityStats struct {
 func (w *Workspace) GetEntityStats() (EntityStats, error) {
 	var agg EntityStats
 	for _, p := range w.Projects {
-		entities, mentions, err := p.Store.GetEntityStats()
+		entities, mentions, err := p.Store.Entity.GetEntityStats()
 		if err != nil {
 			continue
 		}

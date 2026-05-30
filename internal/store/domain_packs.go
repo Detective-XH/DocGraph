@@ -227,7 +227,7 @@ func (s *Store) DeleteFilesByNodeKind(kind string) (int, error) {
 		if err := s.DeleteDocumentMetadataByFile(path); err != nil {
 			return 0, fmt.Errorf("delete metadata for %s: %w", path, err)
 		}
-		if err := s.DeleteEntityData(path); err != nil {
+		if err := s.Entity.DeleteEntityData(path); err != nil {
 			return 0, fmt.Errorf("delete entity data for %s: %w", path, err)
 		}
 		if err := s.DeleteFileData(path); err != nil {
