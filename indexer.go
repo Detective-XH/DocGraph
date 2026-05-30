@@ -132,7 +132,10 @@ func indexStore(root string, st *store.Store, force bool) error {
 	// Probe once: if root is not a git work tree (or git is absent), skip the
 	// per-file CollectHistory fork entirely — on a non-repo tree every call is
 	// a guaranteed fast-fail, thousands of wasted forks on a --force rebuild.
-	gitEnabled := git.IsRepo(root)
+	// --no-history (noHistory) also opts out: git history is collected by default
+	// (an LLM-first provenance/staleness signal, surfaced inline by docgraph_node),
+	// but a user indexing a large git repo who doesn't want it skips the cost here.
+	gitEnabled := git.IsRepo(root) && !noHistory
 
 	// FTS bulk-rebuild fast path. The AFTER INSERT triggers that tokenize text into
 	// the two FTS5 indexes (section_chunks_fts over section bodies, nodes_fts over

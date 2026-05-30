@@ -37,6 +37,7 @@ func cmdServe(args []string) {
 	p := fset.String("path", "", "Project directory to index and serve")
 	ws := fset.String("workspace", "", "Workspace root (index all child dirs as projects)")
 	fset.BoolVar(&noGitignore, "no-gitignore", false, "Ignore .gitignore rules, index all .md files")
+	fset.BoolVar(&noHistory, "no-history", false, "Skip git commit-history collection (file_history; on by default)")
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	enableEmbeddings := fset.Bool("enable-embeddings", false, "Register docgraph_embeddings (sends content to external LLM provider)")
 	enableEnrichment := fset.Bool("enable-enrichment", false, "Register docgraph_enrichment (sends content to external LLM provider)")
@@ -57,6 +58,7 @@ func cmdServe(args []string) {
 		}
 		defer w.Close()
 		w.NoGitignore = noGitignore
+		w.NoHistory = noHistory
 		w.SimilarityThreshold = similarityThreshold
 		setIndexing := tools.RegisterWorkspaceWithOpts(srv, w, regOpts)
 		doSync := func() {

@@ -27,12 +27,14 @@ type Project struct {
 	Path                string
 	Store               *store.Store
 	NoGitignore         bool
+	NoHistory           bool
 	SimilarityThreshold float64
 }
 type Workspace struct {
 	Root                string
 	Projects            []*Project
 	NoGitignore         bool
+	NoHistory           bool
 	SimilarityThreshold float64
 }
 
@@ -111,6 +113,7 @@ func (w *Workspace) IndexAll() error {
 	var wg sync.WaitGroup
 	for _, p := range w.Projects {
 		p.NoGitignore = w.NoGitignore
+		p.NoHistory = w.NoHistory
 		p.SimilarityThreshold = w.SimilarityThreshold
 		wg.Add(1)
 		go func() {
@@ -241,7 +244,8 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	// Probe once: if the project root is not a git work tree (or git is
 	// absent), skip the per-file CollectHistory fork entirely — on a non-repo
 	// tree every call is a guaranteed fast-fail, thousands of wasted forks.
-	gitEnabled := git.IsRepo(p.Path)
+	// --no-history (p.NoHistory, default off) also opts out of the collection.
+	gitEnabled := git.IsRepo(p.Path) && !p.NoHistory
 	// Cold-start fast path: on a fresh/empty project DB every file hash-misses and
 	// the per-file deletes below match 0 rows. Skipping a 0-row DELETE is a true
 	// no-op (no rows → no FK cascade → no AFTER DELETE FTS trigger fires; triggers
