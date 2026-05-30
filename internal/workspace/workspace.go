@@ -258,6 +258,53 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	if emptyErr != nil {
 		baseEmpty = false // safe fallback: keep the deletes
 	}
+
+	// FTS bulk-rebuild fast path (mirrors indexStore in indexer.go). The two AFTER
+	// INSERT triggers that tokenize text into section_chunks_fts (section bodies) and
+	// nodes_fts (name/qname/body_excerpt/metadata) are the dominant cold-start cost on
+	// this path — a CPU profile put indexProjectOpts at ~52% with the delete block only
+	// ~4% of it, the rest trigger-driven FTS population. On a from-scratch build (FTS
+	// empty) it is cheaper to drop the triggers, bulk-load the base rows via the per-file
+	// inserts below, then 'rebuild' each FTS in one optimal pass. Incremental runs (FTS
+	// already populated → fullBuild=false) keep the triggers, so the watcher
+	// reindex (ReindexProject → indexProject) is byte-for-byte unchanged.
+	//
+	// Per-store + parallel-safe: IndexAll runs projects concurrently, each with its own
+	// p.Store (separate SQLite DB), so the trigger drop/recreate + probes here touch only
+	// this project's schema — no cross-project interference. The probes run under IndexMu
+	// (held above) so the watcher can't observe a transient empty FTS mid-build.
+	//
+	// Combined gate (sectionEmpty || nodesEmpty) + crash self-heal: the two rebuilds are
+	// independent, so a crash between them leaves one FTS empty; ORing the probes re-enters
+	// this path whenever EITHER is empty and re-runs BOTH idempotent rebuilds from the
+	// intact base tables. This also makes the path correct in the crash-recovery state
+	// unique to this path — base rows present but FTS empty: there baseEmpty=false (the
+	// per-file deletes RUN, load-bearing for changed files) AND fullBuild=true (FTS rebuilt
+	// from the settled base afterward). Drop ALL three triggers per table: UpsertSectionChunks
+	// fires _update via its ON CONFLICT DO UPDATE on duplicate section node_ids; nodes uses
+	// INSERT OR IGNORE (only _insert), but all three drop for symmetry with section_chunks.
+	// nodes_fts 'rebuild' requires the renamed `metadata` column (schema.go) for content
+	// reconstruction (workspace DBs were migrated; fresh DBs bootstrap the current schema).
+	sectionEmpty, sErr := p.Store.SectionFTSIsEmpty()
+	if sErr != nil {
+		fmt.Fprintf(os.Stderr, "[%s] section FTS probe: %v\n", p.Name, sErr)
+		sectionEmpty = false // safe fallback: keep the trigger-driven path
+	}
+	nodesEmpty, nErr := p.Store.NodesFTSIsEmpty()
+	if nErr != nil {
+		fmt.Fprintf(os.Stderr, "[%s] nodes FTS probe: %v\n", p.Name, nErr)
+		nodesEmpty = false // safe fallback: keep the trigger-driven path
+	}
+	fullBuild := sectionEmpty || nodesEmpty
+	if fullBuild {
+		if err := p.Store.DropSectionFTSTriggers(); err != nil {
+			return err
+		}
+		if err := p.Store.DropNodesFTSTriggers(); err != nil {
+			return err
+		}
+	}
+
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
@@ -342,6 +389,31 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		}
 		nNew++
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
+	}
+	// Build both FTS indexes in one bulk pass each and restore the sync triggers.
+	// Gated on fullBuild (not nNew): a crash-recovery run hash-skips every file
+	// (nNew==0) yet still needs the FTS repopulated from the intact base tables.
+	// Order matters for crash-safety: recreate ALL triggers FIRST (both FTS still
+	// empty), then run the rebuilds as the strict LAST FTS writes — so "FTS
+	// non-empty" implies "triggers restored" and any crash lands on an empty FTS
+	// that the combined gate self-heals next run. Runs before resolver/similarity:
+	// those write only edges (never nodes/section_chunks), so they neither need the
+	// rebuilt FTS nor invalidate it, and the live triggers would keep it current
+	// regardless. 'rebuild' is FTS-only (no base INSERT) so live triggers can't
+	// double-index during it.
+	if fullBuild {
+		if err := p.Store.CreateSectionFTSTriggers(); err != nil {
+			return err
+		}
+		if err := p.Store.CreateNodesFTSTriggers(); err != nil {
+			return err
+		}
+		if err := p.Store.RebuildSectionFTS(); err != nil {
+			return err
+		}
+		if err := p.Store.RebuildNodesFTS(); err != nil {
+			return err
+		}
 	}
 	fmt.Fprintf(os.Stderr, "[%s] Indexed %d files (%d new, %d unchanged)\n", p.Name, len(entries), nNew, nSkip)
 	if nNew > 0 {
