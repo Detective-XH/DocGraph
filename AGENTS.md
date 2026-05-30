@@ -89,7 +89,8 @@ through the opt-in `code_doc` pack. It stores nodes, reference edges, bounded
 section chunks, metadata, governance/research projections, entity mentions,
 optional embeddings, and git history (per-doc commit count, author count,
 last-changed date — an LLM-first staleness/provenance signal, surfaced inline by
-`docgraph_node` and via `docgraph_history`; **collected by default**, `--no-history`
+`docgraph_node`, via `docgraph_history`, and as the `doc.stale_by_git` drift
+finding; **collected by default**, `--no-history`
 opts out for large git repos where the per-file `git log` cost isn't wanted). It
 **never executes indexed content.**
 

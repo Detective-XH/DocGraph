@@ -34,6 +34,11 @@ type DriftAuditOpts struct {
 	// last_verified date is older than AsOf minus this many days is flagged.
 	// Default 180.
 	UnverifiedAfterDays int
+	// StaleByGitAfterDays is the age threshold in days for the doc.stale_by_git
+	// check. A document whose git last_commit_at is older than AsOf minus this
+	// many days is flagged. Default 365. Has no effect when file_history is
+	// empty (non-git corpus or --no-history).
+	StaleByGitAfterDays int
 }
 
 // Policy/process drift finding codes.
@@ -61,9 +66,14 @@ const (
 	CodeCodeUnanchoredFeature  = "code.unanchored_feature"
 )
 
+// Git-history drift finding codes.
+const (
+	CodeStaleByGit = "doc.stale_by_git"
+)
+
 // maxDriftLimit is the upper bound applied to DriftAuditOpts.Limit in
 // GetDriftFindings. opts.Limit flows into the LIMIT ? clause of every sibling
-// finder (conflict/codedoc/research/duplicate/stale), so clamping at this single
+// finder (conflict/codedoc/git/research/duplicate/stale), so clamping at this single
 // boundary structurally bounds all of them regardless of caller — same
 // structural-bound rationale as docformat.ReadFileCapped / getIntArgClamped /
 // similarity.maxTargetsPerDoc. Well above any realistic findings count.
@@ -95,6 +105,9 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 	}
 	if opts.UnverifiedAfterDays <= 0 {
 		opts.UnverifiedAfterDays = 180
+	}
+	if opts.StaleByGitAfterDays <= 0 {
+		opts.StaleByGitAfterDays = 365
 	}
 
 	var all []DriftFinding
@@ -164,6 +177,12 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 		return nil, err
 	}
 	all = append(all, docsCode...)
+
+	staleByGit, err := s.findStaleByGit(opts)
+	if err != nil {
+		return nil, err
+	}
+	all = append(all, staleByGit...)
 
 	if len(all) > opts.Limit {
 		all = all[:opts.Limit]

@@ -30,7 +30,7 @@
 docgraph_context format=drift_audit
 ```
 
-Surfaces 13 finding codes across the corpus. A few:
+Surfaces 14 finding codes across the corpus. A few:
 
 - `policy.stale_review` — SOPs past their `review_due` date
 - `policy.superseded_referenced` — docs citing a replaced policy
@@ -38,6 +38,7 @@ Surfaces 13 finding codes across the corpus. A few:
 - `research.competing_interpretations` — claims that contradict
 - `research.unverified_evidence` — assertions with no source
 - `research.superseded_claim` — research overruled by a newer claim
+- `doc.stale_by_git` — docs with no git commits in a long while
 - `code.undocumented_export` — code surfaces with no doc anchor
 - `code.unanchored_feature` — approved features with no code anchor
 
@@ -77,7 +78,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13 MB |
-| Codebase | ~19,540 lines of Go (+ ~20,350 lines of tests) |
+| Codebase | ~19,620 lines of Go (+ ~20,600 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -389,6 +390,7 @@ No code knowledge is needed — governance and research packs work on any docume
 | `research.competing_interpretations` | research_provenance + assessment_drift | Conflicting claims on the same topic |
 | `research.superseded_claim` | research_provenance + assessment_drift | Outdated claim still cited |
 | `research.impacted_deliverable` | research_provenance | Deliverable depends on a stale claim |
+| `doc.stale_by_git` | none (git history) | No git commits in over N days (default 365), independent of frontmatter dates |
 | `code.missing_symbol` | code_doc | Doc references a code symbol that no longer exists |
 | `code.undocumented_export` | code_doc | Exported symbol has no doc comment |
 | `code.unanchored_feature` | code_doc + governance | Feature mentioned in docs has no matching code |
