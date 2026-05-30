@@ -77,7 +77,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13 MB |
-| Codebase | ~19,530 lines of Go (+ ~20,280 lines of tests) |
+| Codebase | ~19,540 lines of Go (+ ~20,350 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -107,11 +107,11 @@ docgraph install [--dry-run] [--interactive] [--clients auto|all|LIST] [--worksp
 docgraph pack list [--workspace] <path>                         # List domain packs and enabled state
 docgraph pack enable [--workspace] [--no-sync] <pack-id> <path>  # Enable a domain pack; code_doc syncs by default
 docgraph pack disable [--workspace] <pack-id> <path>             # Disable a domain pack; code_doc rows are removed
-docgraph index [--force] [--threshold N] [--no-gitignore] <path>  # Index a project
-docgraph sync [--threshold N] [--no-gitignore] <path>             # Incremental hash-based update
+docgraph index [--force] [--threshold N] [--no-gitignore] [--no-history] <path>  # Index a project
+docgraph sync [--threshold N] [--no-gitignore] [--no-history] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--threshold N] [--no-gitignore] [--enable-embeddings] [--enable-enrichment] --path <path>     # MCP stdio server (single project)
-docgraph serve [--threshold N] [--no-gitignore] [--enable-embeddings] [--enable-enrichment] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 docgraph version                             # Print build version
 ```
 
@@ -178,7 +178,7 @@ Available skills bundled in the binary:
 | 7 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags; `engine=auto/tfidf/neural`) |
 | 8 | `docgraph_status` | Index health (files/nodes/edges/unresolved/DB size), per-project stats, neural embedding model totals, domain packs, metadata quality, enrichment coverage, LLM callout tool state (embeddings/enrichment enabled/disabled + required flags), and compact drift audit summary when policy/research findings exist |
 | 9 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
-| 10 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates |
+| 10 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates. Collected by default during indexing; `--no-history` opts out. |
 | 11 | `docgraph_enrichment` | **Opt-in** (`--enable-enrichment`). Pull or store inferred summaries and metadata for documents without frontmatter. Facade: `action=pending\|process` |
 | 12 | `docgraph_embeddings` | **Opt-in** (`--enable-embeddings`). Neural embedding workflow facade. `action=pending` lists docs needing embeddings; `action=store` saves a vector and recomputes neural similarity; `action=clear` deletes all embeddings for a model |
 

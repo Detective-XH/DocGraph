@@ -87,7 +87,11 @@ No single one is decisive; together they tip a "selective" project into a fit.
 `.md`, `.docx`, `.html`/`.htm`, `.pdf` by default; code-documentation surfaces
 through the opt-in `code_doc` pack. It stores nodes, reference edges, bounded
 section chunks, metadata, governance/research projections, entity mentions,
-optional embeddings, and git history. It **never executes indexed content.**
+optional embeddings, and git history (per-doc commit count, author count,
+last-changed date — an LLM-first staleness/provenance signal, surfaced inline by
+`docgraph_node` and via `docgraph_history`; **collected by default**, `--no-history`
+opts out for large git repos where the per-file `git log` cost isn't wanted). It
+**never executes indexed content.**
 
 Three domain packs are on by default (`governance`, `research_provenance`,
 `entity`); three are opt-in (`code_doc`, `policy_process`, `assessment_drift`)
