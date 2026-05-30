@@ -133,24 +133,6 @@ func (s *Store) GetAllDocumentIDs() ([]string, error) {
 	return ids, rows.Err()
 }
 
-func (s *Store) GetEdgesByTarget(targetID string) ([]Edge, error) {
-	rows, err := s.db.Query(`SELECT source, target, kind, metadata, line FROM edges
-		WHERE target = ? AND kind IN ('references','wikilinks_to','related_to','embeds')`, targetID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var edges []Edge
-	for rows.Next() {
-		var e Edge
-		if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line); err != nil {
-			return nil, err
-		}
-		edges = append(edges, e)
-	}
-	return edges, rows.Err()
-}
-
 func (s *Store) GetEdgesBySource(sourceID string) ([]Edge, error) {
 	rows, err := s.db.Query(`SELECT source, target, kind, metadata, line FROM edges
 		WHERE source = ? AND kind IN ('references','wikilinks_to','related_to','embeds')`, sourceID)

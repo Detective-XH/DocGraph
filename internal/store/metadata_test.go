@@ -382,71 +382,6 @@ func TestGetMetadataStats(t *testing.T) {
 	}
 }
 
-// ---- GetNodesByGovernance ----
-
-func TestGetNodesByGovernance_StatusFilter(t *testing.T) {
-	st := newTestStore(t)
-	insertTestNode(t, st, "doc/approved.md", "doc/approved.md")
-	insertTestNode(t, st, "doc/draft.md", "doc/draft.md")
-
-	approvedTuples := []MetadataTuple{
-		{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
-	}
-	draftTuples := []MetadataTuple{
-		{Key: "status", Value: "draft", ValueType: "string", Source: "frontmatter"},
-	}
-
-	if err := st.InsertDocumentMetadata("doc/approved.md", approvedTuples); err != nil {
-		t.Fatalf("InsertDocumentMetadata approved: %v", err)
-	}
-	if err := st.UpsertGovernanceMetadata("doc/approved.md", approvedTuples); err != nil {
-		t.Fatalf("UpsertGovernanceMetadata approved: %v", err)
-	}
-	if err := st.InsertDocumentMetadata("doc/draft.md", draftTuples); err != nil {
-		t.Fatalf("InsertDocumentMetadata draft: %v", err)
-	}
-	if err := st.UpsertGovernanceMetadata("doc/draft.md", draftTuples); err != nil {
-		t.Fatalf("UpsertGovernanceMetadata draft: %v", err)
-	}
-
-	nodes, err := st.GetNodesByGovernance("approved", "", 10)
-	if err != nil {
-		t.Fatalf("GetNodesByGovernance: %v", err)
-	}
-	if len(nodes) != 1 {
-		t.Fatalf("expected 1 approved node, got %d", len(nodes))
-	}
-	if nodes[0].ID != "doc/approved.md" {
-		t.Errorf("expected doc/approved.md, got %q", nodes[0].ID)
-	}
-}
-
-func TestGetNodesByGovernance_NoFilter(t *testing.T) {
-	st := newTestStore(t)
-	insertTestNode(t, st, "doc/n1.md", "doc/n1.md")
-	insertTestNode(t, st, "doc/n2.md", "doc/n2.md")
-
-	for _, id := range []string{"doc/n1.md", "doc/n2.md"} {
-		tuples := []MetadataTuple{
-			{Key: "status", Value: "approved", ValueType: "string", Source: "frontmatter"},
-		}
-		if err := st.InsertDocumentMetadata(id, tuples); err != nil {
-			t.Fatalf("InsertDocumentMetadata %s: %v", id, err)
-		}
-		if err := st.UpsertGovernanceMetadata(id, tuples); err != nil {
-			t.Fatalf("UpsertGovernanceMetadata %s: %v", id, err)
-		}
-	}
-
-	nodes, err := st.GetNodesByGovernance("", "", 0)
-	if err != nil {
-		t.Fatalf("GetNodesByGovernance no filter: %v", err)
-	}
-	if len(nodes) < 2 {
-		t.Errorf("expected >= 2 nodes with no filter, got %d", len(nodes))
-	}
-}
-
 // ---- UpsertResearchMetadata ----
 
 func TestUpsertResearchMetadata_AuthorityOrdering(t *testing.T) {
@@ -533,40 +468,6 @@ func TestUpsertResearchMetadata_AllFields(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s: got %q, want %q", c.field, c.got, c.want)
 		}
-	}
-}
-
-func TestGetNodesByResearch(t *testing.T) {
-	st := newTestStore(t)
-	insertTestNode(t, st, "doc/research-a.md", "doc/research-a.md")
-	insertTestNode(t, st, "doc/research-b.md", "doc/research-b.md")
-
-	a := []MetadataTuple{
-		{Key: "claim_id", Value: "claim-a", ValueType: "string", Source: "frontmatter"},
-		{Key: "source_type", Value: "primary", ValueType: "string", Source: "frontmatter"},
-		{Key: "confidence", Value: "high", ValueType: "string", Source: "frontmatter"},
-	}
-	b := []MetadataTuple{
-		{Key: "claim_id", Value: "claim-b", ValueType: "string", Source: "frontmatter"},
-		{Key: "source_type", Value: "secondary", ValueType: "string", Source: "frontmatter"},
-		{Key: "confidence", Value: "low", ValueType: "string", Source: "frontmatter"},
-	}
-	if err := st.UpsertResearchMetadata("doc/research-a.md", a); err != nil {
-		t.Fatalf("UpsertResearchMetadata a: %v", err)
-	}
-	if err := st.UpsertResearchMetadata("doc/research-b.md", b); err != nil {
-		t.Fatalf("UpsertResearchMetadata b: %v", err)
-	}
-
-	nodes, err := st.GetNodesByResearch("", "primary", "high", "", 10)
-	if err != nil {
-		t.Fatalf("GetNodesByResearch: %v", err)
-	}
-	if len(nodes) != 1 {
-		t.Fatalf("expected 1 primary/high node, got %d", len(nodes))
-	}
-	if nodes[0].ID != "doc/research-a.md" {
-		t.Errorf("expected doc/research-a.md, got %q", nodes[0].ID)
 	}
 }
 

@@ -418,17 +418,6 @@ func (s *Store) GetProjectMeta(key string) (string, bool, error) {
 	return v, true, nil
 }
 
-// DeleteProjectMeta removes one or more keys from project_metadata.
-// Missing keys are silently ignored.
-func (s *Store) DeleteProjectMeta(keys ...string) error {
-	for _, k := range keys {
-		if _, err := s.db.Exec(`DELETE FROM project_metadata WHERE key=?`, k); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // ReadSectionContent reads the content of a section from its source file.
 // filePath is relative to projectRoot. startLine and endLine are 1-based.
 // If the result exceeds maxBytes, it is truncated with a marker.
