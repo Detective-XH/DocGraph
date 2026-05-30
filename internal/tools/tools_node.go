@@ -109,7 +109,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 			sb.WriteString(appendMetadataQualitySection(quality))
 		}
 		if mentions, err := s.GetEntityMentions(node.ID); err == nil {
-			sb.WriteString(appendEntitySection(mentions))
+			sb.WriteString(appendEntitySection(s, mentions))
 		}
 	}
 
