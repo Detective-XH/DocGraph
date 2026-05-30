@@ -434,6 +434,7 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 		store.CodeResearchStaleAssessment,
 		store.CodeResearchUnverifiedEvidence,
 		store.CodeResearchImpactedDeliverable,
+		store.CodeStaleByGit,
 		store.CodeCodeMissingSymbol,
 		store.CodeCodeUndocumentedExport,
 		store.CodeCodeUnanchoredFeature,
@@ -442,7 +443,8 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 	for _, f := range findings {
 		byCode[f.Code] = append(byCode[f.Code], f)
 	}
-	// Also collect any unknown future research.* codes.
+	// Defensive: append any finding code not in the curated order above (a
+	// future pack code) so it still renders rather than being silently dropped.
 	seen := make(map[string]bool)
 	for _, c := range codeOrder {
 		seen[c] = true
