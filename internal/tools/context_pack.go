@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/Detective-XH/docgraph/internal/store"
 )
@@ -463,15 +464,33 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 		}
 		sb.WriteString(fmt.Sprintf("### `%s` (%d)\n\n", code, len(group)))
 		for _, f := range group {
-			sb.WriteString(fmt.Sprintf("- **%s**", f.FilePath))
+			sb.WriteString(fmt.Sprintf("- **%s**", sanitizeDriftField(f.FilePath)))
 			if f.RelatedPath != "" {
-				sb.WriteString(fmt.Sprintf(" ↔ %s", f.RelatedPath))
+				sb.WriteString(fmt.Sprintf(" ↔ %s", sanitizeDriftField(f.RelatedPath)))
 			}
-			sb.WriteString(fmt.Sprintf("\n  - %s\n", f.Message))
+			sb.WriteString(fmt.Sprintf("\n  - %s\n", sanitizeDriftField(f.Message)))
 			if f.Evidence != "" {
-				sb.WriteString(fmt.Sprintf("  - Evidence: %s\n", f.Evidence))
+				sb.WriteString(fmt.Sprintf("  - Evidence: %s\n", sanitizeDriftField(f.Evidence)))
 			}
 		}
 		sb.WriteString("\n")
 	}
+}
+
+// sanitizeDriftField neutralizes a drift-finding value before it is rendered into
+// the Markdown drift report an LLM consumes. Finding fields carry untrusted
+// document-derived content — a file path, or a Message/Evidence that interpolates
+// frontmatter (status, owner, claim_id, …). A newline or other control character
+// in such a value could otherwise break it out of its bullet line and inject a
+// fake "### finding" section, a fake bullet, or pseudo-instructions into the
+// report. Control runes (CR/LF/tab/…) and the Unicode line/paragraph separators
+// collapse to a single space; ordinary printable content is unchanged, so
+// legitimate paths and messages render identically.
+func sanitizeDriftField(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) || r == ' ' || r == ' ' {
+			return ' '
+		}
+		return r
+	}, s)
 }
