@@ -18,8 +18,18 @@ func (s *Store) loadRetrievalMetadata(c *searchCandidate) error {
 	if err != nil {
 		return err
 	}
+	// History keys on FilePath, the file_history.path column — for a document
+	// Node.ID equals FilePath, for a heading/definition FilePath is the owning
+	// doc's path; both are the right churn-importance scope. GetFileHistory
+	// returns (nil, nil) when absent, so a non-git / --no-history corpus leaves
+	// c.History nil and applyHistoryReranking contributes nothing.
+	history, err := s.GetFileHistory(c.Node.FilePath)
+	if err != nil {
+		return err
+	}
 	c.Governance = gov
 	c.Research = research
+	c.History = history
 	return nil
 }
 

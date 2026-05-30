@@ -78,7 +78,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13 MB |
-| Codebase | ~19,620 lines of Go (+ ~20,600 lines of tests) |
+| Codebase | ~19,660 lines of Go (+ ~20,820 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -170,7 +170,7 @@ Available skills bundled in the binary:
 
 | # | Tool | Description |
 |---|------|-------------|
-| 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) with section-level results, field-weighted ranking, graph-aware reranking, and governance/research/entity filters. Returns documentation only by default; pass `include_code=true` or `kind=code_file` to include `code_doc`-pack code files |
+| 1 | `docgraph_search` | FTS5 full-text search (CJK + Latin) with section-level results, field-weighted ranking, graph-aware and git-history-aware reranking, and governance/research/entity filters. Returns documentation only by default; pass `include_code=true` or `kind=code_file` to include `code_doc`-pack code files |
 | 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process, research, and (when `code_doc` is enabled) docs-code drift audit reports |
 | 3 | `docgraph_graph` | Graph traversal facade. `operation=incoming` (who references this doc), `operation=outgoing` (what this doc links to), `operation=impact` (blast radius, configurable depth), `operation=trace` (shortest path between two docs). Use `document=` for incoming/outgoing/impact; `from=` and `to=` for trace |
 | 4 | `docgraph_node` | Single document details with metadata, structure, and edges |
