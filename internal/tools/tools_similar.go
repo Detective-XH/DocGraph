@@ -55,78 +55,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 		}
 	}
 
-	// Filter by engine before dedup to avoid losing tfidf edges that share a
-	// pair with a neural edge (dedup would otherwise discard the tfidf edge).
-	if engine == "tfidf" || engine == "neural" {
-		filtered := edges[:0]
-		for _, e := range edges {
-			var m map[string]any
-			var eng string
-			if e.Metadata != "" {
-				if json.Unmarshal([]byte(e.Metadata), &m) == nil {
-					eng, _ = m["engine"].(string)
-				}
-			}
-			if engine == "neural" && eng == "neural" {
-				filtered = append(filtered, e)
-			} else if engine == "tfidf" && eng != "neural" {
-				filtered = append(filtered, e)
-			}
-		}
-		edges = filtered
-	}
-
-	// Deduplicate: same pair can have both TF-IDF and neural edges.
-	// Keep one edge per pair, preferring engine=neural over tfidf.
-	type pairKey struct{ a, b string }
-	best := make(map[pairKey]store.Edge)
-	for _, e := range edges {
-		src, tgt := e.Source, e.Target
-		if src > tgt {
-			src, tgt = tgt, src
-		}
-		k := pairKey{src, tgt}
-		existing, ok := best[k]
-		if !ok {
-			best[k] = e
-			continue
-		}
-		// Prefer neural engine.
-		var existingEng, newEng string
-		var m map[string]any
-		if json.Unmarshal([]byte(existing.Metadata), &m) == nil {
-			existingEng, _ = m["engine"].(string)
-		}
-		if json.Unmarshal([]byte(e.Metadata), &m) == nil {
-			newEng, _ = m["engine"].(string)
-		}
-		if newEng == "neural" && existingEng != "neural" {
-			best[k] = e
-		}
-	}
-
-	deduped := make([]store.Edge, 0, len(best))
-	for _, e := range best {
-		deduped = append(deduped, e)
-	}
-	// Order by similarity score (desc) so the most-similar docs come first and
-	// `limit` truncates the least-similar tail. The dedup map above iterates in
-	// random order, so without this both the displayed order AND which results
-	// survive `limit` would be nondeterministic. Canonical source/target is the
-	// stable tiebreak for equal scores.
-	sort.SliceStable(deduped, func(i, j int) bool {
-		si, sj := similarEdgeScore(deduped[i]), similarEdgeScore(deduped[j])
-		if si != sj {
-			return si > sj
-		}
-		if deduped[i].Source != deduped[j].Source {
-			return deduped[i].Source < deduped[j].Source
-		}
-		return deduped[i].Target < deduped[j].Target
-	})
-	if limit > 0 && len(deduped) > limit {
-		deduped = deduped[:limit]
-	}
+	deduped := rankSimilarEdges(edges, engine, limit)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Documents similar to %q\n\nFound %d similar documents.\n", node.Name, len(deduped))
@@ -165,6 +94,84 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// rankSimilarEdges turns raw similar_to edges into the display set:
+//   - filter by engine ("tfidf"/"neural"; "" or "auto" keeps all), BEFORE dedup
+//     so a tfidf edge sharing a pair with a neural edge is not lost;
+//   - deduplicate by canonical doc pair, preferring a neural edge over tfidf;
+//   - order by similarity score descending (canonical source/target tiebreak)
+//     so the most-similar come first and limit truncates the least-similar tail
+//     — the dedup map iterates randomly, so without this both order and which
+//     results survive limit would be nondeterministic;
+//   - truncate to limit (limit <= 0 keeps all).
+//
+// Pure (no store access) so the dedup/order/limit contract is unit-testable
+// directly on []store.Edge.
+func rankSimilarEdges(edges []store.Edge, engine string, limit int) []store.Edge {
+	if engine == "tfidf" || engine == "neural" {
+		filtered := edges[:0]
+		for _, e := range edges {
+			eng := edgeEngine(e)
+			if engine == "neural" && eng == "neural" {
+				filtered = append(filtered, e)
+			} else if engine == "tfidf" && eng != "neural" {
+				filtered = append(filtered, e)
+			}
+		}
+		edges = filtered
+	}
+
+	type pairKey struct{ a, b string }
+	best := make(map[pairKey]store.Edge)
+	for _, e := range edges {
+		src, tgt := e.Source, e.Target
+		if src > tgt {
+			src, tgt = tgt, src
+		}
+		k := pairKey{src, tgt}
+		existing, ok := best[k]
+		if !ok {
+			best[k] = e
+			continue
+		}
+		if edgeEngine(e) == "neural" && edgeEngine(existing) != "neural" {
+			best[k] = e
+		}
+	}
+
+	deduped := make([]store.Edge, 0, len(best))
+	for _, e := range best {
+		deduped = append(deduped, e)
+	}
+	sort.SliceStable(deduped, func(i, j int) bool {
+		si, sj := similarEdgeScore(deduped[i]), similarEdgeScore(deduped[j])
+		if si != sj {
+			return si > sj
+		}
+		if deduped[i].Source != deduped[j].Source {
+			return deduped[i].Source < deduped[j].Source
+		}
+		return deduped[i].Target < deduped[j].Target
+	})
+	if limit > 0 && len(deduped) > limit {
+		deduped = deduped[:limit]
+	}
+	return deduped
+}
+
+// edgeEngine reads $.engine from a similar_to edge's metadata JSON, returning
+// "" when the metadata is absent, unparseable, or has no engine field.
+func edgeEngine(e store.Edge) string {
+	if e.Metadata == "" {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(e.Metadata), &m) != nil {
+		return ""
+	}
+	eng, _ := m["engine"].(string)
+	return eng
 }
 
 // similarEdgeScore extracts the composite similarity score from a similar_to
