@@ -89,6 +89,7 @@ type searchCandidate struct {
 	SectionText string
 	Governance  *GovernanceRecord
 	Research    *ResearchRecord
+	History     *FileHistory
 }
 
 func (s *Store) Search(query string, kind string, limit int) ([]SearchResult, error) {
@@ -154,6 +155,7 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 			return nil, err
 		}
 		s.applyMetadataReranking(req, c)
+		s.applyHistoryReranking(req, c)
 		results = append(results, SearchResult{Node: c.Node, Rank: -c.Score})
 	}
 

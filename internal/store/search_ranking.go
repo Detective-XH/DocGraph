@@ -59,6 +59,28 @@ func (s *Store) applyMetadataReranking(req searchRequest, c *searchCandidate) {
 	}
 }
 
+// applyHistoryReranking nudges a candidate up by its git churn — commit count and
+// distinct-author count — as a proxy for importance/centrality: a doc edited many
+// times by many people is likely load-bearing. This is deliberately churn (not
+// recency): "recently committed" would bury authoritative-but-stable docs, so
+// freshness stays in the doc.stale_by_git drift finder, not in ranking.
+//
+// Inert when absent: file_history rows exist only for git-tracked corpora with
+// collection on, so c.History is nil (and CommitCount==0 guards a degenerate row)
+// for non-git / --no-history / never-committed files — those contribute exactly
+// zero, never a penalty. The terms are log-compressed and capped (commit ≤7,
+// author ≤3, combined ≤10) so the signal nudges but never dominates the text
+// score — same calibration discipline as applyGraphReranking and ftsRankBoost,
+// and below the name-field weight (12) and fts boost cap (12).
+func (s *Store) applyHistoryReranking(req searchRequest, c *searchCandidate) {
+	h := c.History
+	if h == nil || h.CommitCount == 0 {
+		return
+	}
+	c.Score += math.Min(math.Log1p(float64(h.CommitCount))*2.5, 7)
+	c.Score += math.Min(math.Log1p(float64(h.AuthorCount))*1.5, 3)
+}
+
 func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tagMatches int, err error) {
 	refKinds := "('references','wikilinks_to','related_to','embeds')"
 	if n.Kind == "document" {
