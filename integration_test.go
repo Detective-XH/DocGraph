@@ -1002,3 +1002,124 @@ func TestSectionContent(t *testing.T) {
 		t.Error("expected error for path traversal, got nil")
 	}
 }
+
+// ftsSearchFinds reports whether a Search for term returns a result in wantFile.
+func ftsSearchFinds(t *testing.T, st *store.Store, term, wantFile string) bool {
+	t.Helper()
+	res, err := st.Search(term, "", 20)
+	if err != nil {
+		t.Fatalf("search %q: %v", term, err)
+	}
+	for _, r := range res {
+		if r.Node.FilePath == wantFile {
+			return true
+		}
+	}
+	return false
+}
+
+// TestIndexFTSBulkRebuildAndIncrementalUpdate exercises the section_chunks_fts
+// bulk-rebuild fast path end-to-end: a full build must populate the FTS via
+// 'rebuild' (terms placed PAST the 500-char body_excerpt are only findable through
+// section_chunks_fts), and a subsequent single-file change must update the FTS via
+// the recreated triggers — with the final graph identical to a from-scratch build.
+func TestIndexFTSBulkRebuildAndIncrementalUpdate(t *testing.T) {
+	projectDir := t.TempDir()
+	// >500 chars of filler so the distinctive term lives beyond nodes.body_excerpt
+	// (capped at 500), making it reachable ONLY via section_chunks_fts.
+	filler := strings.Repeat("padding word ", 60) // ~780 chars
+	docA := filepath.Join(projectDir, "a.md")
+	docB := filepath.Join(projectDir, "b.md")
+	if err := os.WriteFile(docA, []byte("# Alpha\n\n"+filler+" zebracrossing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(docB, []byte("# Beta\n\n"+filler+" tangerine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full build → FTS empty at start → bulk-rebuild fast path.
+	st := indexPathOpts(projectDir, true)
+	if !ftsSearchFinds(t, st, "zebracrossing", "a.md") {
+		t.Error("full build: section_chunks_fts did not index 'zebracrossing' (rebuild path broken)")
+	}
+	if !ftsSearchFinds(t, st, "tangerine", "b.md") {
+		t.Error("full build: section_chunks_fts did not index 'tangerine'")
+	}
+	st.Close()
+
+	// Change one file → incremental reindex (FTS non-empty → recreated triggers).
+	if err := os.WriteFile(docA, []byte("# Alpha\n\n"+filler+" kumquat\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	st = indexPath(projectDir)
+	if !ftsSearchFinds(t, st, "kumquat", "a.md") {
+		t.Error("incremental: trigger did not index new term 'kumquat' (trigger not recreated)")
+	}
+	if ftsSearchFinds(t, st, "zebracrossing", "a.md") {
+		t.Error("incremental: stale term 'zebracrossing' still indexed")
+	}
+	if !ftsSearchFinds(t, st, "tangerine", "b.md") {
+		t.Error("incremental: untouched file b.md no longer found")
+	}
+	incr, err := st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	// Count-equivalence: a from-scratch rebuild of the final on-disk state must
+	// match the incremental result.
+	st = indexPathOpts(projectDir, true)
+	defer st.Close()
+	fresh, err := st.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incr.NodeCount != fresh.NodeCount || incr.EdgeCount != fresh.EdgeCount {
+		t.Errorf("incremental vs fresh-rebuild mismatch: nodes %d/%d edges %d/%d",
+			incr.NodeCount, fresh.NodeCount, incr.EdgeCount, fresh.EdgeCount)
+	}
+	if !ftsSearchFinds(t, st, "kumquat", "a.md") {
+		t.Error("fresh rebuild of final state: 'kumquat' not findable")
+	}
+}
+
+// TestIndexFTSSelfHealsEmptyFTS covers the crash-recovery path: if a build dies
+// after bulk-loading section_chunks but before the FTS rebuild, the DB has base
+// rows + an empty FTS + dropped triggers. The next indexStore must detect the
+// empty FTS (fullBuild) and rebuild even though every file hash-skips (nNew==0).
+func TestIndexFTSSelfHealsEmptyFTS(t *testing.T) {
+	projectDir := t.TempDir()
+	filler := strings.Repeat("padding word ", 60)
+	if err := os.WriteFile(filepath.Join(projectDir, "a.md"),
+		[]byte("# Alpha\n\n"+filler+" zebracrossing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	st := indexPathOpts(projectDir, true)
+	if !ftsSearchFinds(t, st, "zebracrossing", "a.md") {
+		t.Fatal("setup: term not indexed by full build")
+	}
+	// Simulate the crash window: base rows intact, FTS emptied, triggers dropped.
+	if err := st.DropSectionFTSTriggers(); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.DeleteAllSectionFTS(); err != nil {
+		t.Fatal(err)
+	}
+	if empty, _ := st.SectionFTSIsEmpty(); !empty {
+		t.Fatal("setup: FTS should be empty after delete-all")
+	}
+	if ftsSearchFinds(t, st, "zebracrossing", "a.md") {
+		t.Fatal("setup: term should be unfindable while FTS is empty")
+	}
+	st.Close()
+
+	// Incremental reindex (force=false): every file hash-skips (nNew==0), but the
+	// empty FTS must still trigger a rebuild that repopulates section search.
+	st = indexPath(projectDir)
+	defer st.Close()
+	if !ftsSearchFinds(t, st, "zebracrossing", "a.md") {
+		t.Error("self-heal failed: empty FTS was not rebuilt on a hash-skip-only run")
+	}
+}
