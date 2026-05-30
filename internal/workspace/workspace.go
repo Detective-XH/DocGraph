@@ -242,6 +242,22 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	// absent), skip the per-file CollectHistory fork entirely — on a non-repo
 	// tree every call is a guaranteed fast-fail, thousands of wasted forks.
 	gitEnabled := git.IsRepo(p.Path)
+	// Cold-start fast path: on a fresh/empty project DB every file hash-misses and
+	// the per-file deletes below match 0 rows. Skipping a 0-row DELETE is a true
+	// no-op (no rows → no FK cascade → no AFTER DELETE FTS trigger fires; triggers
+	// stay live on this path), so a cold-start skip is byte-identical to running
+	// them. Probe once (under IndexMu) and skip when nodes is empty: that implies
+	// the FK-cascade children (section_chunks, document_metadata, edges,
+	// unresolved_refs) are empty, and `files` too — InsertNodes (below) precedes
+	// UpsertFile per file, so no file row outlives its nodes even under a mid-loop
+	// crash. On an incremental run (populated DB) the deletes are load-bearing —
+	// InsertEdges/InsertUnresolvedRefs are plain INSERTs — so they must run for
+	// changed files. No force flag or FTS-rebuild gate here, so base-table
+	// emptiness is the direct, safe signal (cf. indexStore's force guard).
+	baseEmpty, emptyErr := p.Store.NodesIsEmpty()
+	if emptyErr != nil {
+		baseEmpty = false // safe fallback: keep the deletes
+	}
 	var nNew, nSkip int
 	var changedDocIDs []string
 	for _, e := range entries {
@@ -260,10 +276,13 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 			nSkip++
 			continue
 		}
-		// Delete derived rows before DeleteFileData so cascade-deleted node IDs are still reachable.
-		p.Store.DeleteSectionChunksByFile(e.RelPath)
-		p.Store.DeleteDocumentMetadataByFile(e.RelPath)
-		p.Store.DeleteFileData(e.RelPath)
+		// Delete derived rows before DeleteFileData so cascade-deleted node IDs are
+		// still reachable. Skipped on a cold-start (empty DB) where they are no-ops.
+		if !baseEmpty {
+			p.Store.DeleteSectionChunksByFile(e.RelPath)
+			p.Store.DeleteDocumentMetadataByFile(e.RelPath)
+			p.Store.DeleteFileData(e.RelPath)
+		}
 		res, err := parseIndexedFile(e.Path, e.RelPath, src, hash)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
