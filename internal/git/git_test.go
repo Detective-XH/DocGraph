@@ -5,6 +5,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -234,5 +236,90 @@ func TestCollectHistories_ParallelMatchesSerial(t *testing.T) {
 	}
 	if got := CollectHistories(tmp, []string{"a.md"}, 8); len(got) != 1 || got[0] != want[1] {
 		t.Errorf("single path: got %+v, want %+v", got, want[1])
+	}
+}
+
+// TestCollectHistories_GlobalForkBoundConcurrentCallers simulates the workspace
+// IndexAll scenario the package-level forkSem exists for: many goroutines each
+// fan CollectHistories(workers=NumCPU) at once, the way IndexAll runs NumCPU
+// projects concurrently. Without the global cap this is the NumCPU² git-child
+// oversubscription that can EAGAIN/ENOMEM and silently corrupt rows; the cap is
+// proven by construction (forkSem is a buffered channel of NumCPU, acquired
+// around every git fork), so this test guards the two things construction does
+// NOT prove: that the shared budget never deadlocks under oversubscription, and
+// that concurrent collectors never corrupt each other's disjoint result slots.
+// Run under -race it also flags any data race on the shared sem or slots.
+func TestCollectHistories_GlobalForkBoundConcurrentCallers(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	tmp := t.TempDir()
+
+	day := 0
+	commit := func(name, content string) {
+		t.Helper()
+		day++
+		date := fmt.Sprintf("2024-02-%02dT00:00:00Z", day)
+		env := []string{
+			"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp,
+			"GIT_AUTHOR_NAME=Alice", "GIT_AUTHOR_EMAIL=alice@example.com",
+			"GIT_COMMITTER_NAME=Alice", "GIT_COMMITTER_EMAIL=alice@example.com",
+			"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date,
+		}
+		run := func(args ...string) {
+			cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
+			cmd.Env = env
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		if err := os.WriteFile(filepath.Join(tmp, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		run("add", name)
+		run("commit", "-m", "edit "+name)
+	}
+
+	initEnv := []string{"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp}
+	for _, args := range [][]string{
+		{"init"}, {"config", "user.email", "alice@example.com"},
+		{"config", "user.name", "Alice"}, {"config", "commit.gpgsign", "false"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
+		cmd.Env = initEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	commit("a.md", "a1")
+	commit("b.md", "b1")
+	commit("b.md", "b2")
+
+	relPaths := []string{"b.md", "missing.md", "a.md"}
+	want := make([]FileHistory, len(relPaths))
+	for i, p := range relPaths {
+		want[i] = CollectHistory(tmp, p)
+	}
+
+	// Far more concurrent callers than NumCPU, each requesting NumCPU workers, so
+	// the requested-fork total dwarfs the budget and goroutines pile up on it.
+	callers := max(runtime.NumCPU()*4, 16)
+	var wg sync.WaitGroup
+	errs := make(chan string, callers)
+	for range callers {
+		wg.Go(func() {
+			got := CollectHistories(tmp, relPaths, runtime.NumCPU())
+			for i := range want {
+				if got[i] != want[i] {
+					errs <- fmt.Sprintf("slot %d: got %+v, want %+v", i, got[i], want[i])
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for e := range errs {
+		t.Error(e)
 	}
 }

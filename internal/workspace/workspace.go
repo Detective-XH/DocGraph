@@ -311,6 +311,97 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 
 	var nNew, nSkip int
 	var changedDocIDs []string
+
+	// writeOne persists one parsed file. Delete-then-insert stays tight per file
+	// (same window as the pre-change path), and the git history — when enabled — is
+	// written INLINE here from the pre-collected fh, never a separate post-loop
+	// pass: a mid-loop error returns with every already-written file carrying its
+	// history row, so no committed file is left without history to hash-skip
+	// forever (the error-path-completeness regression that reverted the prior
+	// attempt). Shared by the streaming non-git path and the git write loop so both
+	// keep byte-identical per-file write semantics.
+	writeOne := func(res *parser.ParseResult, fh git.FileHistory) error {
+		relPath := res.FileInfo.Path
+		// Delete derived rows before DeleteFileData so cascade-deleted node IDs are
+		// still reachable. Skipped on a cold-start (empty DB) where they are no-ops.
+		if !baseEmpty {
+			p.Store.DeleteSectionChunksByFile(relPath)
+			p.Store.DeleteDocumentMetadataByFile(relPath)
+			p.Store.DeleteFileData(relPath)
+		}
+		nodes := append([]store.Node{res.DocNode}, res.Headings...)
+		nodes = append(nodes, res.Defs...)
+		nodes = append(nodes, res.Tags...)
+		if err := p.Store.InsertNodes(nodes); err != nil {
+			return err
+		}
+		if len(res.SectionChunks) > 0 {
+			if err := p.Store.UpsertSectionChunks(res.SectionChunks); err != nil {
+				return err
+			}
+		}
+		if len(res.MetadataTuples) > 0 {
+			if err := p.Store.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("[%s] metadata %s: %w", p.Name, relPath, err)
+			} else if err := p.Store.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("[%s] governance %s: %w", p.Name, relPath, err)
+			} else if err := p.Store.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
+				return fmt.Errorf("[%s] research %s: %w", p.Name, relPath, err)
+			}
+		}
+		if err := p.Store.InsertEdges(res.Edges); err != nil {
+			return err
+		}
+		if len(res.RawLinks) > 0 {
+			refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
+			for _, rl := range res.RawLinks {
+				refs = append(refs, store.UnresolvedRef{
+					FromNodeID: rl.FromNodeID, ReferenceText: rl.Target,
+					ReferenceKind: rl.Kind, Line: rl.Line, FilePath: relPath})
+			}
+			if err := p.Store.InsertUnresolvedRefs(refs); err != nil {
+				return err
+			}
+		}
+		if err := p.Store.UpsertFile(res.FileInfo); err != nil {
+			return err
+		}
+		if gitEnabled {
+			if err := p.Store.UpsertFileHistory(store.FileHistory{
+				Path:          fh.Path,
+				CommitCount:   fh.CommitCount,
+				FirstCommitAt: fh.FirstCommitAt,
+				LastCommitAt:  fh.LastCommitAt,
+				AuthorCount:   fh.AuthorCount,
+				LastAuthor:    fh.LastAuthor,
+				LastSubject:   fh.LastSubject,
+			}); err != nil {
+				fmt.Fprintf(os.Stderr, "[%s] history %s: %v\n", p.Name, relPath, err)
+			}
+		}
+		nNew++
+		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
+		return nil
+	}
+
+	// Parallelizing the per-file `git log --follow` forks needs the changed-file
+	// set known before the writes, so the git path buffers parsed results and
+	// collects every fork at once (mirroring indexer.go's flush). This is the
+	// workspace half of the P1(a) lever: IndexAll already runs NumCPU projects at
+	// once, so a per-project NumCPU fan-out would once have oversubscribed to
+	// NumCPU² concurrent git children — but git.CollectHistory now acquires the
+	// package-level git.forkSem (cap NumCPU), bounding total concurrent git
+	// children process-wide regardless of how many projects fan out.
+	//
+	// gitEnabled=false — a non-repo child OR --no-history — gets NO benefit from
+	// buffering, so it STREAMS each file straight through writeOne, leaving that
+	// path byte-identical to the pre-change code: the P1(d) non-repo fast path the
+	// live serve --workspace tree relies on must stay unchanged, and gating on
+	// gitEnabled (not git.IsRepo) is what also keeps --no-history on the stream path.
+	var batch []*parser.ParseResult
+	if gitEnabled {
+		batch = make([]*parser.ParseResult, 0, len(entries))
+	}
 	for _, e := range entries {
 		ext := strings.ToLower(filepath.Ext(e.RelPath))
 		if !codeDocEnabled && codedoc.IsCodeExt(ext) {
@@ -327,72 +418,41 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 			nSkip++
 			continue
 		}
-		// Delete derived rows before DeleteFileData so cascade-deleted node IDs are
-		// still reachable. Skipped on a cold-start (empty DB) where they are no-ops.
-		if !baseEmpty {
-			p.Store.DeleteSectionChunksByFile(e.RelPath)
-			p.Store.DeleteDocumentMetadataByFile(e.RelPath)
-			p.Store.DeleteFileData(e.RelPath)
-		}
 		res, err := parseIndexedFile(e.Path, e.RelPath, src, hash)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
 			continue
 		}
-		nodes := append([]store.Node{res.DocNode}, res.Headings...)
-		nodes = append(nodes, res.Defs...)
-		nodes = append(nodes, res.Tags...)
 		res.FileInfo.ModifiedAt = e.ModifiedAt
-		if err := p.Store.InsertNodes(nodes); err != nil {
-			return err
-		}
-		if len(res.SectionChunks) > 0 {
-			if err := p.Store.UpsertSectionChunks(res.SectionChunks); err != nil {
-				return err
-			}
-		}
-		if len(res.MetadataTuples) > 0 {
-			if err := p.Store.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("[%s] metadata %s: %w", p.Name, e.RelPath, err)
-			} else if err := p.Store.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("[%s] governance %s: %w", p.Name, e.RelPath, err)
-			} else if err := p.Store.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("[%s] research %s: %w", p.Name, e.RelPath, err)
-			}
-		}
-		if err := p.Store.InsertEdges(res.Edges); err != nil {
-			return err
-		}
-		if len(res.RawLinks) > 0 {
-			refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
-			for _, rl := range res.RawLinks {
-				refs = append(refs, store.UnresolvedRef{
-					FromNodeID: rl.FromNodeID, ReferenceText: rl.Target,
-					ReferenceKind: rl.Kind, Line: rl.Line, FilePath: e.RelPath})
-			}
-			if err := p.Store.InsertUnresolvedRefs(refs); err != nil {
-				return err
-			}
-		}
-		if err := p.Store.UpsertFile(res.FileInfo); err != nil {
-			return err
-		}
 		if gitEnabled {
-			fh := git.CollectHistory(p.Path, e.RelPath)
-			if err := p.Store.UpsertFileHistory(store.FileHistory{
-				Path:          fh.Path,
-				CommitCount:   fh.CommitCount,
-				FirstCommitAt: fh.FirstCommitAt,
-				LastCommitAt:  fh.LastCommitAt,
-				AuthorCount:   fh.AuthorCount,
-				LastAuthor:    fh.LastAuthor,
-				LastSubject:   fh.LastSubject,
-			}); err != nil {
-				fmt.Fprintf(os.Stderr, "[%s] history %s: %v\n", p.Name, e.RelPath, err)
+			// Defer the write: only changed (hash-miss + parse-success) files enter
+			// the batch, so an incremental watcher reindex still forks git for just
+			// the files it touched, never the whole project. The held batch costs
+			// heap proportional to the changed-file set (only on the git path);
+			// measured tiny and transient, so no windowing (cf. indexer.go's batchN).
+			batch = append(batch, res)
+			continue
+		}
+		if err := writeOne(res, git.FileHistory{}); err != nil {
+			return err
+		}
+	}
+
+	// Git path: fan the forks across NumCPU (globally bounded by git.forkSem so
+	// concurrent git children stay ≤ NumCPU even with NumCPU projects in flight).
+	// Rows return in batch order, so histories[idx] aligns with batch[idx]; writeOne
+	// writes each inline.
+	if gitEnabled && len(batch) > 0 {
+		relPaths := make([]string, len(batch))
+		for i, res := range batch {
+			relPaths[i] = res.FileInfo.Path
+		}
+		histories := git.CollectHistories(p.Path, relPaths, runtime.NumCPU())
+		for idx, res := range batch {
+			if err := writeOne(res, histories[idx]); err != nil {
+				return err
 			}
 		}
-		nNew++
-		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
 	}
 	// Build both FTS indexes in one bulk pass each and restore the sync triggers.
 	// Gated on fullBuild (not nNew): a crash-recovery run hash-skips every file
