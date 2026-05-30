@@ -8,25 +8,25 @@ package store
 //  1. EntityID set  — direct lookup in entity_mentions WHERE entity_id = ?
 //  2. EntityType set — first resolve all entities of that type, then look up
 //     their mentions.
-func (s *Store) collectEntityFilteredCandidates(
+func (es *entityStore) collectEntityFilteredCandidates(
 	req searchRequest,
 	candidates map[string]*searchCandidate,
 ) error {
 	var nodeIDs []string
 
 	if req.Entity.EntityID != "" {
-		ids, err := s.nodeIDsByEntityID(req.Entity.EntityID)
+		ids, err := es.nodeIDsByEntityID(req.Entity.EntityID)
 		if err != nil {
 			return err
 		}
 		nodeIDs = ids
 	} else if req.Entity.EntityType != "" {
-		entityIDs, err := s.entityIDsByType(req.Entity.EntityType)
+		entityIDs, err := es.entityIDsByType(req.Entity.EntityType)
 		if err != nil {
 			return err
 		}
 		for _, eid := range entityIDs {
-			ids, err := s.nodeIDsByEntityID(eid)
+			ids, err := es.nodeIDsByEntityID(eid)
 			if err != nil {
 				return err
 			}
@@ -43,7 +43,7 @@ func (s *Store) collectEntityFilteredCandidates(
 			continue
 		}
 		// Fetch the node so we can add it.
-		n, err := s.getNodeByID(nodeID)
+		n, err := es.getNodeByID(nodeID)
 		if err != nil {
 			// Node not found (deleted race) — skip.
 			continue
@@ -56,8 +56,8 @@ func (s *Store) collectEntityFilteredCandidates(
 
 // nodeIDsByEntityID returns the distinct node_ids mentioned by a given entity.
 // Capped at 1000 rows to match the FTS5 query result cap.
-func (s *Store) nodeIDsByEntityID(entityID string) ([]string, error) {
-	rows, err := s.db.Query(
+func (es *entityStore) nodeIDsByEntityID(entityID string) ([]string, error) {
+	rows, err := es.db.Query(
 		`SELECT DISTINCT node_id FROM entity_mentions WHERE entity_id = ? LIMIT 1000`,
 		entityID,
 	)
@@ -78,8 +78,8 @@ func (s *Store) nodeIDsByEntityID(entityID string) ([]string, error) {
 
 // entityIDsByType returns entity UUIDs for a given entity_type.
 // Capped at 1000 rows to match the FTS5 query result cap.
-func (s *Store) entityIDsByType(entityType string) ([]string, error) {
-	rows, err := s.db.Query(
+func (es *entityStore) entityIDsByType(entityType string) ([]string, error) {
+	rows, err := es.db.Query(
 		`SELECT id FROM entities WHERE entity_type = ? LIMIT 1000`,
 		entityType,
 	)
@@ -99,8 +99,8 @@ func (s *Store) entityIDsByType(entityType string) ([]string, error) {
 }
 
 // getNodeByID fetches a single node row by primary key.
-func (s *Store) getNodeByID(nodeID string) (Node, error) {
-	row := s.db.QueryRow(`
+func (es *entityStore) getNodeByID(nodeID string) (Node, error) {
+	row := es.db.QueryRow(`
 		SELECT id, kind, name, qualified_name, file_path,
 		       start_line, end_line, level, metadata, body_excerpt, updated_at
 		FROM nodes WHERE id = ?`, nodeID)

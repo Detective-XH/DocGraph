@@ -116,7 +116,7 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 			}
 		}
 
-		if entities, mentions, err := h.store.GetEntityStats(); err == nil && (entities > 0 || mentions > 0) {
+		if entities, mentions, err := h.store.Entity.GetEntityStats(); err == nil && (entities > 0 || mentions > 0) {
 			sb.WriteString("\n### Entity Graph\n")
 			fmt.Fprintf(&sb, "Entities: %d | Mentions: %d\n", entities, mentions)
 		}

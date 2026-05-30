@@ -29,7 +29,7 @@ func TestInsertEntities_Upsert(t *testing.T) {
 			Properties:              map[string]string{"role": "admin"},
 		},
 	}
-	if err := st.InsertEntities(first); err != nil {
+	if err := st.Entity.InsertEntities(first); err != nil {
 		t.Fatalf("InsertEntities first: %v", err)
 	}
 	// The canonical ID should be reflected back into the slice.
@@ -49,7 +49,7 @@ func TestInsertEntities_Upsert(t *testing.T) {
 			Properties:              map[string]string{"role": "user"},
 		},
 	}
-	if err := st.InsertEntities(second); err != nil {
+	if err := st.Entity.InsertEntities(second); err != nil {
 		t.Fatalf("InsertEntities second: %v", err)
 	}
 
@@ -59,7 +59,7 @@ func TestInsertEntities_Upsert(t *testing.T) {
 	}
 
 	// Aliases should be updated to the new value.
-	got, err := st.GetEntityByID(originalID)
+	got, err := st.Entity.GetEntityByID(originalID)
 	if err != nil {
 		t.Fatalf("GetEntityByID: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestInsertEntities_Upsert(t *testing.T) {
 	}
 
 	// Only one row should exist in entities.
-	entities, _, err := st.GetEntityStats()
+	entities, _, err := st.Entity.GetEntityStats()
 	if err != nil {
 		t.Fatalf("GetEntityStats: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestInsertEntityMentions_IgnoreDuplicate(t *testing.T) {
 		CanonicalName:           "Acme",
 		CanonicalNameNormalized: "acme",
 	}}
-	if err := st.InsertEntities(ents); err != nil {
+	if err := st.Entity.InsertEntities(ents); err != nil {
 		t.Fatalf("InsertEntities: %v", err)
 	}
 	entityID := ents[0].ID
@@ -104,15 +104,15 @@ func TestInsertEntityMentions_IgnoreDuplicate(t *testing.T) {
 		MentionType: "reference",
 	}
 
-	if err := st.InsertEntityMentions([]Mention{m}); err != nil {
+	if err := st.Entity.InsertEntityMentions([]Mention{m}); err != nil {
 		t.Fatalf("InsertEntityMentions first: %v", err)
 	}
 	// Insert the identical row again — should be silently ignored.
-	if err := st.InsertEntityMentions([]Mention{m}); err != nil {
+	if err := st.Entity.InsertEntityMentions([]Mention{m}); err != nil {
 		t.Fatalf("InsertEntityMentions duplicate: %v", err)
 	}
 
-	mentions, err := st.GetEntityMentions("doc-dup")
+	mentions, err := st.Entity.GetEntityMentions("doc-dup")
 	if err != nil {
 		t.Fatalf("GetEntityMentions: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestDeleteEntityData_PrunesOrphans(t *testing.T) {
 		CanonicalName:           "Orphan",
 		CanonicalNameNormalized: "orphan",
 	}}
-	if err := st.InsertEntities(ents); err != nil {
+	if err := st.Entity.InsertEntities(ents); err != nil {
 		t.Fatalf("InsertEntities: %v", err)
 	}
 	entityID := ents[0].ID
@@ -143,12 +143,12 @@ func TestDeleteEntityData_PrunesOrphans(t *testing.T) {
 		EntityID: entityID, NodeID: "doc-prune",
 		FilePath: "doc-prune.md", Line: 1,
 	}
-	if err := st.InsertEntityMentions([]Mention{m}); err != nil {
+	if err := st.Entity.InsertEntityMentions([]Mention{m}); err != nil {
 		t.Fatalf("InsertEntityMentions: %v", err)
 	}
 
 	// Sanity check: entity and mention present.
-	e, m2, err := st.GetEntityStats()
+	e, m2, err := st.Entity.GetEntityStats()
 	if err != nil {
 		t.Fatalf("GetEntityStats before delete: %v", err)
 	}
@@ -157,11 +157,11 @@ func TestDeleteEntityData_PrunesOrphans(t *testing.T) {
 	}
 
 	// Delete mentions for the file — should prune the orphan entity too.
-	if err := st.DeleteEntityData("doc-prune.md"); err != nil {
+	if err := st.Entity.DeleteEntityData("doc-prune.md"); err != nil {
 		t.Fatalf("DeleteEntityData: %v", err)
 	}
 
-	e, m2, err = st.GetEntityStats()
+	e, m2, err = st.Entity.GetEntityStats()
 	if err != nil {
 		t.Fatalf("GetEntityStats after delete: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestDeleteEntityData_PrunesOrphans(t *testing.T) {
 // TestGetEntityStats_Empty verifies (0, 0, nil) on a fresh DB.
 func TestGetEntityStats_Empty(t *testing.T) {
 	st := tempStore(t)
-	entities, mentions, err := st.GetEntityStats()
+	entities, mentions, err := st.Entity.GetEntityStats()
 	if err != nil {
 		t.Fatalf("GetEntityStats on empty DB: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestGetEntityStats_WithData(t *testing.T) {
 			CanonicalName: "Carol", CanonicalNameNormalized: "carol",
 		},
 	}
-	if err := st.InsertEntities(ents); err != nil {
+	if err := st.Entity.InsertEntities(ents); err != nil {
 		t.Fatalf("InsertEntities: %v", err)
 	}
 
@@ -208,11 +208,11 @@ func TestGetEntityStats_WithData(t *testing.T) {
 		{EntityID: ents[0].ID, NodeID: "doc-stats", FilePath: "doc-stats.md", Line: 1},
 		{EntityID: ents[1].ID, NodeID: "doc-stats", FilePath: "doc-stats.md", Line: 2},
 	}
-	if err := st.InsertEntityMentions(mentions); err != nil {
+	if err := st.Entity.InsertEntityMentions(mentions); err != nil {
 		t.Fatalf("InsertEntityMentions: %v", err)
 	}
 
-	entities, ms, err := st.GetEntityStats()
+	entities, ms, err := st.Entity.GetEntityStats()
 	if err != nil {
 		t.Fatalf("GetEntityStats: %v", err)
 	}
@@ -239,12 +239,12 @@ func TestCollectEntityFilteredCandidates_ByID(t *testing.T) {
 		ID: "ent-search", EntityType: "concept",
 		CanonicalName: "TargetConcept", CanonicalNameNormalized: "targetconcept",
 	}}
-	if err := st.InsertEntities(ents); err != nil {
+	if err := st.Entity.InsertEntities(ents); err != nil {
 		t.Fatalf("InsertEntities: %v", err)
 	}
 	entityID := ents[0].ID
 
-	if err := st.InsertEntityMentions([]Mention{{
+	if err := st.Entity.InsertEntityMentions([]Mention{{
 		EntityID: entityID, NodeID: "search-doc.md",
 		FilePath: "search-doc.md", Line: 3,
 	}}); err != nil {
@@ -285,11 +285,11 @@ func TestCollectEntityFilteredCandidates_ByType(t *testing.T) {
 		ID: "ent-type", EntityType: "technology",
 		CanonicalName: "GoLang", CanonicalNameNormalized: "golang",
 	}}
-	if err := st.InsertEntities(ents); err != nil {
+	if err := st.Entity.InsertEntities(ents); err != nil {
 		t.Fatalf("InsertEntities: %v", err)
 	}
 
-	if err := st.InsertEntityMentions([]Mention{{
+	if err := st.Entity.InsertEntityMentions([]Mention{{
 		EntityID: ents[0].ID, NodeID: "type-doc.md",
 		FilePath: "type-doc.md", Line: 1,
 	}}); err != nil {

@@ -143,7 +143,7 @@ func indexStore(root string, st *store.Store) error {
 		// before re-parsing so cascade-deleted IDs are still reachable. Idempotent.
 		st.DeleteSectionChunksByFile(e.RelPath)
 		st.DeleteDocumentMetadataByFile(e.RelPath)
-		st.DeleteEntityData(e.RelPath)
+		st.Entity.DeleteEntityData(e.RelPath)
 		st.DeleteFileData(e.RelPath)
 		res, err := dispatchParse(e.Path, e.RelPath, src, hash)
 		if err != nil {
@@ -214,7 +214,7 @@ func indexStore(root string, st *store.Store) error {
 		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
 	}
 	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", len(entries), nNew, nSkip)
-	if err := st.PruneOrphanEntities(); err != nil {
+	if err := st.Entity.PruneOrphanEntities(); err != nil {
 		fmt.Fprintf(os.Stderr, "prune orphan entities: %v\n", err)
 	}
 	if nNew > 0 {

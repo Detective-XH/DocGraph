@@ -6,6 +6,13 @@ import (
 	"time"
 )
 
+// entityStore owns the entity graph domain (entities + entity_mentions tables).
+// It shares Store's *baseDB, so every method reaches the DB via es.db exactly as
+// the former (s *Store) receivers did. Reached through Store.Entity.
+type entityStore struct {
+	*baseDB
+}
+
 // Entity is a canonical entity or source node.
 // UUID PK is never changed on upsert so FK references in entity_mentions stay stable.
 type Entity struct {
@@ -39,11 +46,11 @@ const (
 
 // InsertEntities upserts entities by (entity_type, canonical_name_normalized).
 // PK is preserved on conflict; canonical ID is read back into entities[i].ID.
-func (s *Store) InsertEntities(entities []Entity) error {
+func (es *entityStore) InsertEntities(entities []Entity) error {
 	if len(entities) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := es.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -107,11 +114,11 @@ func (s *Store) InsertEntities(entities []Entity) error {
 }
 
 // InsertEntityMentions inserts mentions; duplicates on (entity_id, node_id, line) are ignored.
-func (s *Store) InsertEntityMentions(mentions []Mention) error {
+func (es *entityStore) InsertEntityMentions(mentions []Mention) error {
 	if len(mentions) == 0 {
 		return nil
 	}
-	tx, err := s.db.Begin()
+	tx, err := es.db.Begin()
 	if err != nil {
 		return err
 	}
@@ -150,26 +157,26 @@ func (s *Store) InsertEntityMentions(mentions []Mention) error {
 }
 
 // DeleteEntityData removes all entity_mentions for filePath, then prunes orphan entities.
-func (s *Store) DeleteEntityData(filePath string) error {
-	if _, err := s.db.Exec(
+func (es *entityStore) DeleteEntityData(filePath string) error {
+	if _, err := es.db.Exec(
 		`DELETE FROM entity_mentions WHERE file_path = ?`, filePath,
 	); err != nil {
 		return err
 	}
-	return s.PruneOrphanEntities()
+	return es.PruneOrphanEntities()
 }
 
 // PruneOrphanEntities deletes entities with no remaining entity_mentions rows.
-func (s *Store) PruneOrphanEntities() error {
-	_, err := s.db.Exec(
+func (es *entityStore) PruneOrphanEntities() error {
+	_, err := es.db.Exec(
 		`DELETE FROM entities
 		 WHERE id NOT IN (SELECT DISTINCT entity_id FROM entity_mentions)`)
 	return err
 }
 
 // GetEntityMentions returns mentions for a node_id, ordered by line.
-func (s *Store) GetEntityMentions(nodeID string) ([]Mention, error) {
-	rows, err := s.db.Query(`SELECT entity_id,node_id,file_path,line,context,mention_type,updated_at FROM entity_mentions WHERE node_id=? ORDER BY line`, nodeID)
+func (es *entityStore) GetEntityMentions(nodeID string) ([]Mention, error) {
+	rows, err := es.db.Query(`SELECT entity_id,node_id,file_path,line,context,mention_type,updated_at FROM entity_mentions WHERE node_id=? ORDER BY line`, nodeID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,8 +197,8 @@ func (s *Store) GetEntityMentions(nodeID string) ([]Mention, error) {
 }
 
 // GetEntityByID returns the entity with the given UUID, or nil if not found.
-func (s *Store) GetEntityByID(entityID string) (*Entity, error) {
-	row := s.db.QueryRow(`SELECT id,entity_type,canonical_name,canonical_name_normalized,aliases,properties,pack_id,updated_at FROM entities WHERE id=?`, entityID)
+func (es *entityStore) GetEntityByID(entityID string) (*Entity, error) {
+	row := es.db.QueryRow(`SELECT id,entity_type,canonical_name,canonical_name_normalized,aliases,properties,pack_id,updated_at FROM entities WHERE id=?`, entityID)
 
 	var e Entity
 	var aliasesJSON, propsJSON string
@@ -218,11 +225,11 @@ func (s *Store) GetEntityByID(entityID string) (*Entity, error) {
 }
 
 // GetEntityStats returns total entity and mention counts.
-func (s *Store) GetEntityStats() (entities int, mentions int, err error) {
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM entities`).Scan(&entities); err != nil {
+func (es *entityStore) GetEntityStats() (entities int, mentions int, err error) {
+	if err = es.db.QueryRow(`SELECT COUNT(*) FROM entities`).Scan(&entities); err != nil {
 		return 0, 0, err
 	}
-	if err = s.db.QueryRow(`SELECT COUNT(*) FROM entity_mentions`).Scan(&mentions); err != nil {
+	if err = es.db.QueryRow(`SELECT COUNT(*) FROM entity_mentions`).Scan(&mentions); err != nil {
 		return 0, 0, err
 	}
 	return entities, mentions, nil

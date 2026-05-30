@@ -108,8 +108,8 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		if quality, err := s.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
 			sb.WriteString(appendMetadataQualitySection(quality))
 		}
-		if mentions, err := s.GetEntityMentions(node.ID); err == nil {
-			sb.WriteString(appendEntitySection(s, mentions))
+		if mentions, err := s.Entity.GetEntityMentions(node.ID); err == nil {
+			sb.WriteString(appendEntitySection(s.Entity, mentions))
 		}
 	}
 

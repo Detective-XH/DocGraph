@@ -9,12 +9,13 @@ import (
 
 // EntityReader resolves an entity UUID to its full record. appendEntitySection
 // uses it to render human-readable canonical names + aliases instead of the bare
-// entity UUIDs stored on mentions. *store.Store satisfies it.
+// entity UUIDs stored on mentions. Satisfied by the entity sub-store reached via
+// store.Store.Entity (passed at the call sites in handleNode/handleContext); the
+// sub-store type is unexported, so the satisfaction is enforced there rather than
+// by a package-level var assertion.
 type EntityReader interface {
 	GetEntityByID(entityID string) (*store.Entity, error)
 }
-
-var _ EntityReader = (*store.Store)(nil)
 
 // appendEntitySection formats entity mention data as a Markdown section string.
 // Each mention's entity UUID is resolved (via r) to its canonical name and

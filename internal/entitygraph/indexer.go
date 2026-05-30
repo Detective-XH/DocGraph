@@ -25,7 +25,7 @@ func IndexFile(st *store.Store, relPath string, res *parser.ParseResult) error {
 		preIDs[i] = e.ID
 	}
 
-	if err := st.InsertEntities(result.Entities); err != nil {
+	if err := st.Entity.InsertEntities(result.Entities); err != nil {
 		return err
 	}
 
@@ -40,7 +40,7 @@ func IndexFile(st *store.Store, relPath string, res *parser.ParseResult) error {
 				result.Mentions[i].EntityID = canonical
 			}
 		}
-		return st.InsertEntityMentions(result.Mentions)
+		return st.Entity.InsertEntityMentions(result.Mentions)
 	}
 	return nil
 }

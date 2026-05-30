@@ -40,10 +40,10 @@ func seedStatusStore(t *testing.T, docID string, entityCount int) *store.Store {
 			EntityID: id, NodeID: docID, FilePath: docID, Line: i + 1,
 		})
 	}
-	if err := st.InsertEntities(ents); err != nil {
+	if err := st.Entity.InsertEntities(ents); err != nil {
 		t.Fatalf("InsertEntities(%s): %v", docID, err)
 	}
-	if err := st.InsertEntityMentions(mentions); err != nil {
+	if err := st.Entity.InsertEntityMentions(mentions); err != nil {
 		t.Fatalf("InsertEntityMentions(%s): %v", docID, err)
 	}
 	return st
