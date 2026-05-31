@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"strings"
 	"time"
 	"unicode"
@@ -142,7 +143,9 @@ func normalizeSearchTerm(term string) string {
 	return term
 }
 
-func (s *Store) expandQueryTerms(req searchRequest) []string {
+// expandQueryTermsLike is the reference LIKE-based implementation kept for
+// differential calibration testing. Not used in production; called only by tests.
+func (s *Store) expandQueryTermsLike(req searchRequest) []string {
 	if len(req.Terms) == 0 {
 		return nil
 	}
@@ -186,8 +189,88 @@ func (s *Store) expandQueryTerms(req searchRequest) []string {
 					break
 				}
 			}
+			if len(out) >= 32 {
+				break
+			}
 		}
 		rows.Close()
+		if err := rows.Err(); err != nil {
+			continue
+		}
+	}
+	return out
+}
+
+func (s *Store) expandQueryTerms(req searchRequest) []string {
+	if len(req.Terms) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool, len(req.Terms))
+	for _, t := range req.Terms {
+		seen[t] = true
+	}
+	var out []string
+	addTerm := func(term string) {
+		term = normalizeSearchTerm(term)
+		if term == "" || seen[term] {
+			return
+		}
+		seen[term] = true
+		out = append(out, term)
+	}
+
+	for _, term := range req.Terms {
+		if len(out) >= 32 {
+			break
+		}
+		var rows *sql.Rows
+		var err error
+		if len([]rune(term)) < 3 {
+			// FTS5 trigram requires ≥3 runes; fall back to LIKE for sub-trigram terms.
+			pattern := "%" + escapeLike(term) + "%"
+			rows, err = s.db.Query(`
+				SELECT DISTINCT name
+				FROM nodes
+				WHERE kind IN ('heading','definition','tag')
+				  AND lower(name) LIKE ? ESCAPE '\'
+				ORDER BY length(name), name
+				LIMIT 12`, pattern)
+		} else {
+			ftsArg := buildExpansionFTSQuery(term)
+			if ftsArg == "" {
+				continue
+			}
+			rows, err = s.db.Query(`
+				SELECT DISTINCT n.name
+				FROM nodes_fts
+				JOIN nodes n ON n.rowid = nodes_fts.rowid
+				WHERE nodes_fts MATCH ?
+				  AND n.kind IN ('heading','definition','tag')
+				ORDER BY length(n.name), n.name
+				LIMIT 12`, ftsArg)
+		}
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var name string
+			if err := rows.Scan(&name); err != nil {
+				continue
+			}
+			for _, t := range queryTerms(name) {
+				addTerm(t)
+				if len(out) >= 32 {
+					break
+				}
+			}
+			if len(out) >= 32 {
+				break
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			continue
+		}
 	}
 	return out
 }
