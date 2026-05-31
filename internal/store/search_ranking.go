@@ -39,15 +39,16 @@ func (s *Store) applyFieldRanking(req searchRequest, c *searchCandidate) {
 	}
 }
 
-func (s *Store) applyGraphReranking(req searchRequest, c *searchCandidate) error {
-	incoming, outgoing, tagMatches, err := s.graphSignals(req, c.Node)
-	if err != nil {
-		return err
-	}
+// applyGraphScore adds the graph-centrality rerank to a candidate from
+// precomputed signal counts. The count fetch is split out (graphSignalsBatch in
+// the SearchWithOptions hot path; graphSignals per-candidate as the equivalence
+// reference) so both share this single scoring formula. Caps mirror the
+// calibration discipline elsewhere: incoming ≤12 (= name-field weight),
+// outgoing ≤5, tag matches at weight 8.
+func applyGraphScore(c *searchCandidate, incoming, outgoing, tagMatches int) {
 	c.Score += math.Min(math.Log1p(float64(incoming))*3, 12)
 	c.Score += math.Min(math.Log1p(float64(outgoing))*1.25, 5)
 	c.Score += float64(tagMatches) * 8
-	return nil
 }
 
 func (s *Store) applyMetadataReranking(req searchRequest, c *searchCandidate) {
@@ -90,6 +91,11 @@ func (s *Store) applyHistoryReranking(req searchRequest, c *searchCandidate) {
 	c.Score += math.Min(math.Log1p(math.Max(0, float64(h.AuthorCount)))*1.5, 3)
 }
 
+// graphSignals computes one node's reference/tag counts with a query per signal
+// (and per term for tags). SearchWithOptions no longer calls it on the hot path —
+// graphSignalsBatch does the whole candidate set in a few set-based queries — but
+// it is retained as the readable per-candidate definition and as the oracle that
+// TestSearchBatchEquivalence asserts graphSignalsBatch against.
 func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tagMatches int, err error) {
 	refKinds := "('references','wikilinks_to','related_to','embeds')"
 	if n.Kind == "document" {
