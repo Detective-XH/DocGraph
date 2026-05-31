@@ -90,6 +90,9 @@ type searchCandidate struct {
 	Governance  *GovernanceRecord
 	Research    *ResearchRecord
 	History     *FileHistory
+	// Filename marks an exact find-this-doc-by-name basename match
+	// (collectFilenameCandidates) — a separate, dominant sort tier, not a score.
+	Filename bool
 }
 
 func (s *Store) Search(query string, kind string, limit int) ([]SearchResult, error) {
@@ -117,6 +120,9 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 
 	candidates := make(map[string]*searchCandidate)
 	if err := s.collectExactCandidates(req, candidates); err != nil {
+		return nil, err
+	}
+	if err := s.collectFilenameCandidates(req, candidates); err != nil {
 		return nil, err
 	}
 	if err := s.collectNodeCandidates(req, candidates); err != nil {
@@ -176,7 +182,7 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		return nil, err
 	}
 
-	results := make([]SearchResult, 0, len(candidates))
+	scored := make([]*searchCandidate, 0, len(cands))
 	for _, c := range cands {
 		docID := retrievalDocID(c.Node)
 		c.Governance = govByID[docID]
@@ -190,18 +196,32 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		applyGraphScore(c, sig.incoming, sig.outgoing, sig.tagMatches)
 		s.applyMetadataReranking(req, c)
 		s.applyHistoryReranking(req, c)
-		results = append(results, SearchResult{Node: c.Node, Rank: -c.Score})
+		scored = append(scored, c)
 	}
 
-	sort.Slice(results, func(i, j int) bool {
-		if results[i].Rank == results[j].Rank {
-			if results[i].Node.FilePath == results[j].Node.FilePath {
-				return results[i].Node.StartLine < results[j].Node.StartLine
-			}
-			return results[i].Node.FilePath < results[j].Node.FilePath
+	// An exact filename match sorts ahead of every text/graph-ranked result — a
+	// separate find-this-doc-by-name tier, not a score that competes with (and can
+	// lose to) a heading that merely mentions the token. Inert for non-filename
+	// queries: no candidate sets Filename, so the tier is a no-op and the prior
+	// Score(=-Rank)/FilePath/StartLine order is preserved exactly.
+	sort.Slice(scored, func(i, j int) bool {
+		a, b := scored[i], scored[j]
+		if a.Filename != b.Filename {
+			return a.Filename
 		}
-		return results[i].Rank < results[j].Rank
+		if a.Score != b.Score {
+			return a.Score > b.Score
+		}
+		if a.Node.FilePath != b.Node.FilePath {
+			return a.Node.FilePath < b.Node.FilePath
+		}
+		return a.Node.StartLine < b.Node.StartLine
 	})
+
+	results := make([]SearchResult, 0, len(scored))
+	for _, c := range scored {
+		results = append(results, SearchResult{Node: c.Node, Rank: -c.Score})
+	}
 	if len(results) > req.Limit {
 		results = results[:req.Limit]
 	}
