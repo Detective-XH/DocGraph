@@ -103,7 +103,7 @@ func (s *Store) GetMetadataQuality(nodeID string, asOf time.Time) (*MetadataQual
 	}
 
 	if gov == nil || strings.TrimSpace(gov.Status) == "" {
-		addIssue("missing_status", "warning", "Governance status is missing.", 12)
+		addIssue("missing_status", "warning", "Governance status is missing. (Narrative body 'Status:' prose does not satisfy the frontmatter governance status field — set frontmatter status: to clear this.)", 12)
 	}
 	if gov == nil || strings.TrimSpace(gov.Owner) == "" {
 		addIssue("missing_owner", "warning", "Document owner is missing.", 10)
