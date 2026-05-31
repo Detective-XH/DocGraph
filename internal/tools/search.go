@@ -100,9 +100,11 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 		fmt.Fprintf(&sb, "## Search Results for %q\n\nFound %d results.\n", query, len(results))
 	}
 
+	seenFiles := make(map[string]struct{}, len(results))
 	for i, sr := range results {
 		n := sr.Node
 		barePath := formatNodePath(n)
+		seenFiles[barePath] = struct{}{}
 		path := barePath
 		if n.Kind == "heading" && n.QualifiedName != "" {
 			path = n.QualifiedName
@@ -129,6 +131,12 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 					quality.Score, quality.Level, formatQualityIssueCodes(quality.Issues, 3))
 			}
 		}
+	}
+
+	if len(results) > 0 {
+		distinctFiles := len(seenFiles)
+		fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows.)\n",
+			len(results), distinctFiles)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
