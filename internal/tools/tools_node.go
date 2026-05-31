@@ -43,10 +43,11 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 
 	headings := h.getHeadings(node)
 
+	st := h.getStoreForResolvedNode(node)
 	var inEdges, outEdges []store.Edge
-	if s := h.getStoreForResolvedNode(node); s != nil {
-		inEdges, _ = s.GetIncomingEdges(node.ID)
-		outEdges, _ = s.GetOutgoingEdges(node.ID)
+	if st != nil {
+		inEdges, _ = st.GetIncomingEdges(node.ID)
+		outEdges, _ = st.GetOutgoingEdges(node.ID)
 	}
 
 	var sb strings.Builder
@@ -65,6 +66,10 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 
 	if len(inEdges) > 0 {
 		fmt.Fprintf(&sb, "\n### Incoming References (%d)\n", len(inEdges))
+		// Emit the same derived-count summary as docgraph_graph operation=incoming.
+		// handleNode never truncates inEdges, so the counts are honest over the full set.
+		inTotal, inDistinctOther, inSameDoc := h.incomingEdgeSummary(node, st, inEdges)
+		fmt.Fprintf(&sb, incomingSummaryFmt, inTotal, inDistinctOther, inSameDoc)
 		for _, e := range inEdges {
 			// Show the source's path (and flag same-document references) so a
 			// self-reference can be told apart from a cross-document citation
@@ -82,6 +87,10 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	}
 	if len(outEdges) > 0 {
 		fmt.Fprintf(&sb, "\n### Outgoing Links (%d)\n", len(outEdges))
+		// Emit the same derived-count summary as docgraph_graph operation=outgoing.
+		// handleNode never truncates outEdges, so the counts are honest over the full set.
+		outTotal, outDistinctOther, outSameDoc, outExternal := h.outgoingEdgeSummary(node, st, outEdges)
+		fmt.Fprintf(&sb, outgoingSummaryFmt, outTotal, outDistinctOther, outSameDoc, outExternal)
 		for _, e := range outEdges {
 			if e.Kind == "links_external" {
 				fmt.Fprintf(&sb, "- %s -> (%s)\n", extractURL(e.Metadata), e.Kind)

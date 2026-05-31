@@ -16,6 +16,8 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | List or filter by tag | docgraph_tags |
 | Git commit history | docgraph_history |
 
+When the goal is to gather everything about a topic and you have no seed document, prefer docgraph_context (and docgraph_explore for breadth) over search-then-node drilling — piecemeal node lookups return only matched fragments and can silently miss a multi-section document's later sections.
+
 docgraph_context format= supports context_pack and drift_audit modes.
 docgraph_search adds governance filters (status=, sensitivity=, canonical_source=, allowed_audience=, as_of_date=), research filters (claim_id=, source_type=, confidence=, analyst_status=), and entity graph filters (entity_type=, entity_id=).
 

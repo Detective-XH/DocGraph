@@ -15,6 +15,129 @@ func simEdge(src, tgt, engine string, score float64) store.Edge {
 
 // TestRankSimilarEdges exercises the pure dedup/filter/order/limit contract that
 // handleSimilar delegates to — directly on []store.Edge, no store needed.
+// tfidfEdge builds a similar_to edge with the real scorePair metadata shape
+// (score + tfidf + refs + tags; no engine key).
+func tfidfEdge(src, tgt string, score, tfidf, refs, tags float64) store.Edge {
+	return store.Edge{Source: src, Target: tgt, Kind: "similar_to",
+		Metadata: fmt.Sprintf(`{"score":%.2f,"tfidf":%.2f,"refs":%.2f,"tags":%.2f}`, score, tfidf, refs, tags)}
+}
+
+// neuralEdge builds a similar_to edge with the neural similarity metadata shape
+// (engine + model_id + score; no tfidf/refs/tags keys).
+func neuralEdge(src, tgt, modelID string, score float64) store.Edge {
+	return store.Edge{Source: src, Target: tgt, Kind: "similar_to",
+		Metadata: fmt.Sprintf(`{"engine":"neural","model_id":%q,"score":%.4f}`, modelID, score)}
+}
+
+// TestHandleSimilar_TFIDFShowsBlendAndSignals verifies that a TF-IDF edge (which
+// carries tfidf/refs/tags in metadata) renders the blend marker and signal
+// components, while a neural edge (which carries engine/model_id/score only)
+// renders unchanged without the blend or component text.
+func TestHandleSimilar_TFIDFShowsBlendAndSignals(t *testing.T) {
+	t.Run("tfidf edge shows blend marker and signal components", func(t *testing.T) {
+		h, st := newTestHandler(t)
+		nodes := []store.Node{
+			{ID: "anchor.md", Kind: "document", Name: "Anchor", QualifiedName: "anchor.md", FilePath: "anchor.md", StartLine: 1, EndLine: 5, BodyExcerpt: "x", UpdatedAt: 1},
+			{ID: "peer.md", Kind: "document", Name: "Peer", QualifiedName: "peer.md", FilePath: "peer.md", StartLine: 1, EndLine: 5, BodyExcerpt: "y", UpdatedAt: 1},
+		}
+		edges := []store.Edge{tfidfEdge("anchor.md", "peer.md", 0.40, 0.50, 0.30, 0.20)}
+		if err := st.InsertNodes(nodes); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertEdges(edges); err != nil {
+			t.Fatal(err)
+		}
+
+		res, err := callTool(h, h.handleSimilar, map[string]any{"document": "anchor.md"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := extractText(res)
+
+		if !strings.Contains(text, "0-1 weighted blend") {
+			t.Errorf("expected '0-1 weighted blend' in TF-IDF result, got:\n%s", text)
+		}
+		if !strings.Contains(text, "tfidf-cosine 0.50") {
+			t.Errorf("expected 'tfidf-cosine 0.50' in TF-IDF result, got:\n%s", text)
+		}
+		if !strings.Contains(text, "shared-refs 0.30") {
+			t.Errorf("expected 'shared-refs 0.30' in TF-IDF result, got:\n%s", text)
+		}
+		if !strings.Contains(text, "shared-tags 0.20") {
+			t.Errorf("expected 'shared-tags 0.20' in TF-IDF result, got:\n%s", text)
+		}
+	})
+
+	t.Run("neural edge does not show blend marker or signal components", func(t *testing.T) {
+		h, st := newTestHandler(t)
+		nodes := []store.Node{
+			{ID: "anchor2.md", Kind: "document", Name: "Anchor2", QualifiedName: "anchor2.md", FilePath: "anchor2.md", StartLine: 1, EndLine: 5, BodyExcerpt: "x", UpdatedAt: 1},
+			{ID: "peer2.md", Kind: "document", Name: "Peer2", QualifiedName: "peer2.md", FilePath: "peer2.md", StartLine: 1, EndLine: 5, BodyExcerpt: "y", UpdatedAt: 1},
+		}
+		edges := []store.Edge{neuralEdge("anchor2.md", "peer2.md", "text-embedding-3-small", 0.90)}
+		if err := st.InsertNodes(nodes); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.InsertEdges(edges); err != nil {
+			t.Fatal(err)
+		}
+
+		// Neural similarity requires --enable-embeddings; bypass by querying
+		// with engine=auto (which returns all edges regardless of type) so
+		// handleSimilar can reach the neural edge render path.
+		res, err := callTool(h, h.handleSimilar, map[string]any{"document": "anchor2.md", "engine": "auto"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := extractText(res)
+
+		if strings.Contains(text, "0-1 weighted blend") {
+			t.Errorf("neural edge should NOT show '0-1 weighted blend', got:\n%s", text)
+		}
+		if strings.Contains(text, "tfidf-cosine") {
+			t.Errorf("neural edge should NOT show 'tfidf-cosine', got:\n%s", text)
+		}
+		if strings.Contains(text, "shared-refs") {
+			t.Errorf("neural edge should NOT show 'shared-refs', got:\n%s", text)
+		}
+		// Neural edge should show engine and score.
+		if !strings.Contains(text, "engine: neural") {
+			t.Errorf("neural edge should show 'engine: neural', got:\n%s", text)
+		}
+		if !strings.Contains(text, "score: 0.90") {
+			t.Errorf("neural edge should show 'score: 0.90', got:\n%s", text)
+		}
+	})
+}
+
+// TestHandleSimilar_ZeroResultContainsKeywordCaveat verifies the new sentence
+// in the 0-result branch that clarifies keyword-/link-based alternatives are
+// not similarity-ranked.
+func TestHandleSimilar_ZeroResultContainsKeywordCaveat(t *testing.T) {
+	h, st := newTestHandler(t)
+	if err := st.InsertNodes([]store.Node{
+		{ID: "solo.md", Kind: "document", Name: "Solo", QualifiedName: "solo.md", FilePath: "solo.md", BodyExcerpt: "x", UpdatedAt: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleSimilar, map[string]any{"document": "solo.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := extractText(res)
+
+	if !strings.Contains(text, "keyword- and link-based") {
+		t.Errorf("expected 'keyword- and link-based' in 0-result caveat, got:\n%s", text)
+	}
+	if !strings.Contains(text, "not a similarity score") {
+		t.Errorf("expected 'not a similarity score' in 0-result caveat, got:\n%s", text)
+	}
+	if !strings.Contains(text, "not ranked by topical overlap") {
+		t.Errorf("expected 'not ranked by topical overlap' in 0-result caveat, got:\n%s", text)
+	}
+}
+
 func TestRankSimilarEdges(t *testing.T) {
 	t.Run("orders by score desc and limit drops the tail", func(t *testing.T) {
 		edges := []store.Edge{

@@ -346,6 +346,31 @@ func (s *Store) GetFiles(pathFilter string) ([]FileInfo, error) {
 	return files, rows.Err()
 }
 
+// GetTopLevelDirs returns the deduplicated, sorted list of first path segments
+// found in the files table. Files stored at the repo root (no slash in the
+// path) yield an empty segment and are excluded. The result is suitable for
+// surfacing as "known indexed directories" when a path-filtered query returns
+// zero results.
+func (s *Store) GetTopLevelDirs() ([]string, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT SUBSTR(path, 1, INSTR(path||'/', '/') - 1) FROM files ORDER BY 1`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dirs []string
+	for rows.Next() {
+		var seg string
+		if err := rows.Scan(&seg); err != nil {
+			return nil, err
+		}
+		if seg != "" {
+			dirs = append(dirs, seg)
+		}
+	}
+	return dirs, rows.Err()
+}
+
 func (s *Store) GetNodeByID(id string) (*Node, error) {
 	var n Node
 	err := s.db.QueryRow(`SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at

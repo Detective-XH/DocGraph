@@ -42,6 +42,30 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 	}
 
 	total := len(files)
+
+	// Zero-result guard: explain WHY no results were returned before falling
+	// back to an empty table that leaves agents without actionable context.
+	if total == 0 {
+		if pathFilter != "" {
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "No indexed files found under path %q.\n", pathFilter)
+			var dirs []string
+			var dirsErr error
+			if h.workspace != nil {
+				dirs, dirsErr = h.workspace.GetAllTopLevelDirs()
+			} else {
+				dirs, dirsErr = h.store.GetTopLevelDirs()
+			}
+			if dirsErr == nil && len(dirs) > 0 {
+				fmt.Fprintf(&sb, "Known top-level indexed directories: %s", strings.Join(dirs, ", "))
+			} else {
+				sb.WriteString("The index appears to be empty.")
+			}
+			return mcp.NewToolResultText(sb.String()), nil
+		}
+		return mcp.NewToolResultText("No files have been indexed yet."), nil
+	}
+
 	if fileLimit > 0 && len(files) > fileLimit {
 		files = files[:fileLimit]
 	}

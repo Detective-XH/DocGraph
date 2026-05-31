@@ -37,6 +37,67 @@ func (h *handler) resolveDoc(document string) (*store.Node, error) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared format strings for derived-count summary lines.
+// Both the graph facade (renderIncomingLinks / renderOutgoingLinks) and
+// handleNode use these constants so the output never drifts between callers.
+// ---------------------------------------------------------------------------
+
+const incomingSummaryFmt = "%d incoming edges ← %d distinct other documents, %d same-document references.\n"
+const outgoingSummaryFmt = "%d outgoing edges → %d distinct other documents, %d same-document section anchors, %d external URLs.\n"
+
+// ---------------------------------------------------------------------------
+// Edge classification helpers — compute derived counts over the FULL edge set.
+// The facade AND handleNode both call these so the summary line is identical.
+// ---------------------------------------------------------------------------
+
+// incomingEdgeSummary counts, over the full incoming edge set for node, the
+// number of edges from other documents (distinct file paths) and from nodes
+// within the same file (same-document references). total == len(edges).
+func (h *handler) incomingEdgeSummary(node *store.Node, st *store.Store, edges []store.Edge) (total, distinctOther, sameDoc int) {
+	total = len(edges)
+	otherDocs := map[string]bool{}
+	for _, e := range edges {
+		src := h.getNodeByIDFromStore(st, e.Source)
+		if src == nil {
+			continue
+		}
+		if src.FilePath == node.FilePath {
+			sameDoc++
+			continue
+		}
+		otherDocs[src.FilePath] = true
+	}
+	distinctOther = len(otherDocs)
+	return
+}
+
+// outgoingEdgeSummary counts, over the full outgoing edge set for node, the
+// number of edges to other documents (distinct file paths), to nodes within
+// the same file (same-document section anchors), and to external URLs.
+// total == len(edges).
+func (h *handler) outgoingEdgeSummary(node *store.Node, st *store.Store, edges []store.Edge) (total, distinctOther, sameDoc, external int) {
+	total = len(edges)
+	otherDocs := map[string]bool{}
+	for _, e := range edges {
+		if e.Kind == "links_external" {
+			external++
+			continue
+		}
+		tgt := h.getNodeByIDFromStore(st, e.Target)
+		if tgt == nil {
+			continue
+		}
+		if tgt.FilePath == node.FilePath {
+			sameDoc++
+			continue
+		}
+		otherDocs[tgt.FilePath] = true
+	}
+	distinctOther = len(otherDocs)
+	return
+}
+
+// ---------------------------------------------------------------------------
 // Renderers used by docgraph_graph facade operations
 // ---------------------------------------------------------------------------
 
@@ -63,20 +124,7 @@ func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallTool
 	// Same-document references (the citing node lives in this same file — an
 	// intra-doc structural edge, not a citation from another document) are
 	// separated out so the agent never has to classify or dedup by hand.
-	total := len(allEdges)
-	var selfRefCount int
-	otherDocs := map[string]bool{}
-	for _, e := range allEdges {
-		src := h.getNodeByIDFromStore(st, e.Source)
-		if src == nil {
-			continue
-		}
-		if src.FilePath == node.FilePath {
-			selfRefCount++
-			continue
-		}
-		otherDocs[src.FilePath] = true
-	}
+	total, distinctOther, selfRefCount := h.incomingEdgeSummary(node, st, allEdges)
 
 	edges := allEdges
 	if limit > 0 && len(edges) > limit {
@@ -85,8 +133,7 @@ func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallTool
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## References to %q\n\n", node.Name)
-	fmt.Fprintf(&sb, "%d incoming edges ← %d distinct other documents, %d same-document references.\n",
-		total, len(otherDocs), selfRefCount)
+	fmt.Fprintf(&sb, incomingSummaryFmt, total, distinctOther, selfRefCount)
 	if total > len(edges) {
 		fmt.Fprintf(&sb, "Showing the first %d of %d edges (raise limit= for more); the counts above cover all %d.\n", len(edges), total, total)
 	}
@@ -136,24 +183,7 @@ func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallTool
 	// lives in this same file — a heading link, not a link to another document),
 	// and external URLs are reported separately so the agent never has to dedup
 	// or classify the raw rows by hand.
-	total := len(oedges)
-	var externalCount, selfRefCount int
-	otherDocs := map[string]bool{}
-	for _, e := range oedges {
-		if e.Kind == "links_external" {
-			externalCount++
-			continue
-		}
-		tgt := h.getNodeByIDFromStore(st, e.Target)
-		if tgt == nil {
-			continue
-		}
-		if tgt.FilePath == node.FilePath {
-			selfRefCount++
-			continue
-		}
-		otherDocs[tgt.FilePath] = true
-	}
+	total, distinctOther, selfRefCount, externalCount := h.outgoingEdgeSummary(node, st, oedges)
 
 	edges := oedges
 	if limit > 0 && len(edges) > limit {
@@ -162,8 +192,7 @@ func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallTool
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Links from %q\n\n", node.Name)
-	fmt.Fprintf(&sb, "%d outgoing edges → %d distinct other documents, %d same-document section anchors, %d external URLs.\n",
-		total, len(otherDocs), selfRefCount, externalCount)
+	fmt.Fprintf(&sb, outgoingSummaryFmt, total, distinctOther, selfRefCount, externalCount)
 	if total > len(edges) {
 		fmt.Fprintf(&sb, "Showing the first %d of %d edges (raise limit= for more); the counts above cover all %d.\n", len(edges), total, total)
 	}

@@ -184,6 +184,28 @@ func (w *Workspace) GetAllFiles(pathFilter string) (map[string][]store.FileInfo,
 	}
 	return m, nil
 }
+
+// GetAllTopLevelDirs fans out GetTopLevelDirs across all projects, deduplicates
+// the segments, and returns them sorted. Per-project errors are silently ignored,
+// mirroring GetAllFiles' error-handling policy.
+func (w *Workspace) GetAllTopLevelDirs() ([]string, error) {
+	seen := make(map[string]struct{})
+	for _, p := range w.Projects {
+		dirs, err := p.Store.GetTopLevelDirs()
+		if err != nil {
+			continue
+		}
+		for _, d := range dirs {
+			seen[d] = struct{}{}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for d := range seen {
+		result = append(result, d)
+	}
+	sort.Strings(result)
+	return result, nil
+}
 func (w *Workspace) FindProject(name string) *Project {
 	for _, p := range w.Projects {
 		if p.Name == name {
