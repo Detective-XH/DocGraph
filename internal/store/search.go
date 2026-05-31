@@ -142,18 +142,52 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		}
 	}
 
-	results := make([]SearchResult, 0, len(candidates))
+	// Batch-load every candidate's ranking inputs before scoring. The previous
+	// loop called loadRetrievalMetadata (3 QueryRows) + graphSignals (2 + one per
+	// query term) PER CANDIDATE — on a saturated ~320-candidate / ~34-term search
+	// that is ~12,500 SQLite round-trips, which a null-out A/B attributed to ~34%
+	// of search wall time and ~81% of its allocations. These helpers fetch the
+	// same rows in ~6 set-based IN(...) / GROUP BY queries; TestSearchBatchEquivalence
+	// asserts the loaded values are byte-identical to the per-candidate path, so
+	// ranking and result order are preserved.
+	cands := make([]*searchCandidate, 0, len(candidates))
+	metaIDSet := make(map[string]struct{}, len(candidates))
+	pathSet := make(map[string]struct{}, len(candidates))
 	for _, c := range candidates {
-		if err := s.loadRetrievalMetadata(c); err != nil {
-			return nil, err
-		}
+		cands = append(cands, c)
+		metaIDSet[retrievalDocID(c.Node)] = struct{}{}
+		pathSet[c.Node.FilePath] = struct{}{}
+	}
+	metaIDs := setKeys(metaIDSet)
+	govByID, err := s.getGovernanceMetadataBatch(metaIDs)
+	if err != nil {
+		return nil, err
+	}
+	researchByID, err := s.getResearchMetadataBatch(metaIDs)
+	if err != nil {
+		return nil, err
+	}
+	histByPath, err := s.getFileHistoryBatch(setKeys(pathSet))
+	if err != nil {
+		return nil, err
+	}
+	graphByID, err := s.graphSignalsBatch(req, cands)
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]SearchResult, 0, len(candidates))
+	for _, c := range cands {
+		docID := retrievalDocID(c.Node)
+		c.Governance = govByID[docID]
+		c.Research = researchByID[docID]
+		c.History = histByPath[c.Node.FilePath]
 		if !metadataMatchesRequest(req, c) {
 			continue
 		}
 		s.applyFieldRanking(req, c)
-		if err := s.applyGraphReranking(req, c); err != nil {
-			return nil, err
-		}
+		sig := graphByID[c.Node.ID]
+		applyGraphScore(c, sig.incoming, sig.outgoing, sig.tagMatches)
 		s.applyMetadataReranking(req, c)
 		s.applyHistoryReranking(req, c)
 		results = append(results, SearchResult{Node: c.Node, Rank: -c.Score})
