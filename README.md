@@ -78,7 +78,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~18 MB |
-| Codebase | ~20,830 lines of Go (+ ~24,040 lines of tests) |
+| Codebase | ~20,910 lines of Go (+ ~24,280 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -111,8 +111,8 @@ docgraph pack disable [--workspace] <pack-id> <path>             # Disable a dom
 docgraph index [--force] [--threshold N] [--no-gitignore] [--no-history] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] [--no-history] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --path <path>     # MCP stdio server (single project)
-docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--max-watches N] [--enable-embeddings] [--enable-enrichment] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--max-watches N] [--enable-embeddings] [--enable-enrichment] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 docgraph version                             # Print build version
 ```
 
@@ -420,6 +420,7 @@ docgraph serve --workspace /path/to/workspace
 - Each project gets its own `.docgraph/docgraph.db` (add `.docgraph/` to `.gitignore`)
 - Cross-project search fans out to all databases
 - File watcher (fsnotify, 2s debounce) monitors served projects for live re-indexing
+- Watch set is capped per process (`--max-watches`, default 8192; `0` = unlimited). Every watched directory/file is one descriptor on macOS, so an unbounded recursive watch of a very large tree can drive the OS file-descriptor table toward exhaustion (worse: one such process per connected client). The cap holds open descriptors to roughly the cap — plus the widest single watched directory, which fsnotify opens eagerly — instead of one per file in the whole tree. Beyond the cap, changes do not auto-reindex; run `docgraph sync` or restart. Override with the flag or `DOCGRAPH_MAX_WATCHES`.
 - No configuration file needed
 
 ## File Exclusion

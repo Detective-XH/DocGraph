@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"github.com/Detective-XH/docgraph/internal/tools"
 	"github.com/Detective-XH/docgraph/internal/watcher"
@@ -41,6 +42,20 @@ func cmdServe(args []string) {
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	enableEmbeddings := fset.Bool("enable-embeddings", false, "Register docgraph_embeddings (sends content to external LLM provider)")
 	enableEnrichment := fset.Bool("enable-enrichment", false, "Register docgraph_enrichment (sends content to external LLM provider)")
+	// Cap fsnotify watches per process to bound open fds: on macOS (kqueue) every
+	// watched dir/file is one fd, so recursively watching a large workspace —
+	// multiplied across every concurrent serve (one per MCP client) — can exhaust
+	// the system file table. DOCGRAPH_MAX_WATCHES overrides the default; --max-watches
+	// overrides both; 0 disables the cap.
+	defMaxWatches := watcher.DefaultMaxWatches
+	if v := os.Getenv("DOCGRAPH_MAX_WATCHES"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			defMaxWatches = n
+		} else {
+			fmt.Fprintf(os.Stderr, "[serve] ignoring invalid DOCGRAPH_MAX_WATCHES=%q\n", v)
+		}
+	}
+	maxWatches := fset.Int("max-watches", defMaxWatches, "Max directories+files to watch per process (0 = unlimited; bounds open file descriptors)")
 	fset.Parse(args)
 
 	regOpts := tools.RegisterOpts{
@@ -73,7 +88,7 @@ func cmdServe(args []string) {
 		for _, proj := range w.Projects {
 			paths = append(paths, proj.Path)
 		}
-		go watcher.Watch(paths, func(projectPath string, _ []string) {
+		go watcher.WatchWithLimit(paths, *maxWatches, func(projectPath string, _ []string) {
 			for _, proj := range w.Projects {
 				if proj.Path == projectPath {
 					fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
@@ -109,7 +124,7 @@ func cmdServe(args []string) {
 		}
 		go doSync()
 		go func() {
-			err := watcher.Watch([]string{absRoot}, func(projectPath string, _ []string) {
+			err := watcher.WatchWithLimit([]string{absRoot}, *maxWatches, func(projectPath string, _ []string) {
 				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
 				// force=false: incremental re-index of changed files; deletes stay.
 				if err := indexStore(projectPath, st, false); err != nil {

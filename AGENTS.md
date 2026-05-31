@@ -72,7 +72,7 @@ No single one is decisive; together they tip a "selective" project into a fit.
 - Flat, isolated notes; few cross-links; no metadata.
 - One known file to read, or one literal string to find.
 - Pure code-structure questions (callers, call graphs, symbol impact) → use **CodeGraph**, not DocGraph.
-- Content created seconds ago — the file watcher debounces; check `docgraph_status` or wait.
+- Content created seconds ago — the file watcher debounces; check `docgraph_status` or wait. On a very large workspace the watch set is capped (`--max-watches`), so a change outside the watched set won't auto-reindex — run `docgraph sync` if a known-recent edit is missing.
 
 ### Verdict
 
