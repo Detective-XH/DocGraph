@@ -80,8 +80,8 @@ func TestTraceNoPathMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := extractText(res)
-	if !strings.Contains(text, "No wikilink path found within 10 hops") {
-		t.Errorf("expected no-path message with wikilink caveat, got: %s", text)
+	if !strings.Contains(text, "No reference path found within 10 hops") {
+		t.Errorf("expected no-path message with reference-path caveat, got: %s", text)
 	}
 	if !strings.Contains(text, "does NOT mean the documents are unrelated") {
 		t.Errorf("expected 'not unrelated' caveat in no-path output, got: %s", text)

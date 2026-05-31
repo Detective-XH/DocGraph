@@ -256,6 +256,10 @@ func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, erro
 		var next []string
 		for _, id := range queue {
 			for _, edge := range h.edgesOf(id, false) {
+				// GetOutgoingEdges already restricts to the reference-edge family
+				// (references, wikilinks_to, related_to, embeds) plus links_external;
+				// links_external is the one non-navigational kind it returns, so
+				// skipping it leaves only forward reference/link edges to traverse.
 				if edge.Kind == "links_external" {
 					continue
 				}
@@ -278,7 +282,7 @@ func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, erro
 		queue = next
 	}
 	if !found {
-		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nNo wikilink path found within 10 hops. This does NOT mean the documents are unrelated — use operation=incoming or operation=outgoing to check citation connections.\n", fNode.Name, tNode.Name)), nil
+		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nNo reference path found within 10 hops (trace follows forward markdown links, wikilinks, and embeds). This does NOT mean the documents are unrelated — they may link in the reverse direction (try operation=incoming) or share tags or topical similarity (try docgraph_similar).\n", fNode.Name, tNode.Name)), nil
 	}
 	var path, kinds []string
 	for cur := tID; cur != fID; {
