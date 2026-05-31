@@ -74,6 +74,35 @@ func TestRankSimilarEdges(t *testing.T) {
 // least-similar tail — not a random subset. The dedup step in handleSimilar
 // iterates a map (random order), so before the Go-side sort both the displayed
 // order AND which results survived `limit` were nondeterministic.
+func TestHandleSimilar_ZeroResultCaveatNamesSearchAndDisclaimsEngineOff(t *testing.T) {
+	h, st := newTestHandler(t)
+	// A document with no similar_to edges — the topically-unique case.
+	if err := st.InsertNodes([]store.Node{
+		{ID: "lonely.md", Kind: "document", Name: "Lonely", QualifiedName: "lonely.md", FilePath: "lonely.md", BodyExcerpt: "x", UpdatedAt: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleSimilar, map[string]any{"document": "lonely.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := extractText(res)
+
+	if !strings.Contains(text, "Found 0 similar documents") {
+		t.Fatalf("expected a 0-result, got:\n%s", text)
+	}
+	// The caveat must name docgraph_search (the actual workhorse the probe runs
+	// found, which the old caveat omitted) and must disclaim the wrong causal
+	// model that 0 results means the engine/embeddings are off.
+	if !strings.Contains(text, "docgraph_search") {
+		t.Errorf("expected the 0-result caveat to name docgraph_search, got:\n%s", text)
+	}
+	if !strings.Contains(text, "does NOT mean the similarity engine is disabled") {
+		t.Errorf("expected the caveat to disclaim 'engine disabled', got:\n%s", text)
+	}
+}
+
 func TestHandleSimilar_OrderedByScore(t *testing.T) {
 	h, st := newTestHandler(t)
 	nodes := []store.Node{
