@@ -4,6 +4,7 @@
       "command": "docgraph",
       "args": [
         "serve",
+        "--no-gitignore",
         "--path",
         "."
       ]
