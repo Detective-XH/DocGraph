@@ -13,7 +13,7 @@ import (
 
 var nodeTool = mcp.NewTool("docgraph_node",
 	mcp.WithDescription("Get a single document or heading's full details: metadata, structure, and cross-references. Use 'section' to read the full content of a specific heading section from the source file. For multiple documents, use docgraph_explore instead."),
-	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading qualified name (e.g. 'docs/guide.md' or 'guide.md#Installation')")),
+	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading qualified name (e.g. 'docs/guide.md' or 'guide.md#Installation') When copying a path from docgraph_search results, strip the trailing '#heading:line' suffix (and any '[project/]' prefix in workspace mode) to the bare file path before passing it here.")),
 	mcp.WithBoolean("includeBody", mcp.Description("Include body excerpt (default true)")),
 	mcp.WithString("section", mcp.Description("Return full content of a specific heading section. Accepts the exact heading text OR the anchor slug shown in search results (e.g. 'Neural Embeddings (agent-driven)' or 'neural-embeddings-agent-driven').")),
 )
@@ -327,6 +327,12 @@ func appendMetadataQualitySection(q *store.MetadataQualityRecord) string {
 	}
 	if len(q.Issues) > limit {
 		fmt.Fprintf(&sb, "- ... %d more issues omitted\n", len(q.Issues)-limit)
+	}
+	for _, issue := range q.Issues {
+		if issue.Code == "stale_review_due" {
+			sb.WriteString("Note: a document's git amendment / last-changed date does NOT reset its governance review_due — re-approval requires an explicit review_due update.\n")
+			break
+		}
 	}
 	return sb.String()
 }
