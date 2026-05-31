@@ -15,7 +15,7 @@ import (
 // ---------------------------------------------------------------------------
 
 var searchTool = mcp.NewTool("docgraph_search",
-	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use governance and research filters to constrain retrieval without adding separate tools."),
+	mcp.WithDescription("Full-text search across all indexed Markdown documents. Returns matching documents and headings with snippets. For topic-level context, prefer docgraph_context which combines search with structure. Use governance and research filters to constrain retrieval without adding separate tools. Result paths carry a '#heading:line' suffix and (in workspace mode) a '[project/]' prefix — strip these to the bare file path before passing a path to docgraph_node / docgraph_graph / docgraph_context (a heading result also prints its bare 'parent document:' path for this)."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms")),
 	mcp.WithString("kind", mcp.Description("Filter by node kind: document, heading, definition, tag. Code files (code_doc pack) are excluded by default; pass kind=code_file or include_code=true to surface them.")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
@@ -102,11 +102,18 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 
 	for i, sr := range results {
 		n := sr.Node
-		path := formatNodePath(n)
+		barePath := formatNodePath(n)
+		path := barePath
 		if n.Kind == "heading" && n.QualifiedName != "" {
 			path = n.QualifiedName
 		}
 		fmt.Fprintf(&sb, "\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine)
+		// A heading hit's path carries a #heading:line suffix; surface the bare
+		// parent-document path so a weak agent can chain into node/graph/context
+		// without string-stripping (P-v3-3b).
+		if n.Kind == "heading" {
+			fmt.Fprintf(&sb, "   parent document: %s\n", barePath)
+		}
 
 		if n.BodyExcerpt != "" {
 			excerpt := strings.TrimRight(n.BodyExcerpt, "\n")

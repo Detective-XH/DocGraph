@@ -43,7 +43,7 @@ func (h *handler) resolveDoc(document string) (*store.Node, error) {
 // ---------------------------------------------------------------------------
 
 const incomingSummaryFmt = "%d incoming edges ← %d distinct other documents, %d same-document references.\n"
-const outgoingSummaryFmt = "%d outgoing edges → %d distinct other documents, %d same-document section anchors, %d external URLs.\n"
+const outgoingSummaryFmt = "%d outgoing edges → %d distinct other documents, %d same-document references, %d external URLs.\n"
 
 // ---------------------------------------------------------------------------
 // Edge classification helpers — compute derived counts over the FULL edge set.
@@ -73,7 +73,7 @@ func (h *handler) incomingEdgeSummary(node *store.Node, st *store.Store, edges [
 
 // outgoingEdgeSummary counts, over the full outgoing edge set for node, the
 // number of edges to other documents (distinct file paths), to nodes within
-// the same file (same-document section anchors), and to external URLs.
+// the same file (same-document references), and to external URLs.
 // total == len(edges).
 func (h *handler) outgoingEdgeSummary(node *store.Node, st *store.Store, edges []store.Edge) (total, distinctOther, sameDoc, external int) {
 	total = len(edges)
@@ -155,6 +155,12 @@ func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallTool
 			fmt.Fprintf(&sb, "- **Line:** %d\n", e.Line)
 		}
 	}
+	// When all edges are shown (no truncation) and the edge count exceeds the
+	// distinct-document count, surface the distinction so agents report the
+	// right number and do not re-count raw rows as documents.
+	if total == len(edges) && distinctOther != total {
+		fmt.Fprintf(&sb, "\n(All %d edges above resolve to %d distinct other documents — report the distinct-document count, not the edge-row count.)\n", total, distinctOther)
+	}
 
 	return mcp.NewToolResultText(sb.String()), nil
 }
@@ -179,7 +185,7 @@ func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallTool
 
 	// Summarize over the FULL edge set, BEFORE the limit truncation, so the
 	// derived counts are never silently computed over a truncated subset.
-	// Distinct other-document targets, same-document section anchors (the target
+	// Distinct other-document targets, same-document references (the target
 	// lives in this same file — a heading link, not a link to another document),
 	// and external URLs are reported separately so the agent never has to dedup
 	// or classify the raw rows by hand.
@@ -216,8 +222,14 @@ func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallTool
 		fmt.Fprintf(&sb, "- **Kind:** %s\n", e.Kind)
 		fmt.Fprintf(&sb, "- **Path:** %s\n", tgt.FilePath)
 		if tgt.FilePath == node.FilePath {
-			sb.WriteString("- **Note:** same-document section anchor (not a link to another document)\n")
+			sb.WriteString("- **Note:** same-document reference (not a link to another document)\n")
 		}
+	}
+	// When all edges are shown (no truncation) and the edge count exceeds the
+	// distinct-document count, surface the distinction so agents report the
+	// right number and do not re-count raw rows as documents.
+	if total == len(edges) && distinctOther != total {
+		fmt.Fprintf(&sb, "\n(All %d edges above resolve to %d distinct other documents — report the distinct-document count, not the edge-row count.)\n", total, distinctOther)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

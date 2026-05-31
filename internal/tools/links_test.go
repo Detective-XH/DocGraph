@@ -11,7 +11,7 @@ import (
 
 // newLinksTestHandler builds a fixture with a hub document that links to one
 // other document (twice — a duplicate target), to a heading within itself (a
-// same-document section anchor), and to an external URL. This is the shape that
+// same-document reference), and to an external URL. This is the shape that
 // confused the AX-probe runner agents: raw rows mixing duplicates, self-refs,
 // and external links with no derived count.
 func newLinksTestHandler(t *testing.T) *handler {
@@ -28,7 +28,7 @@ func newLinksTestHandler(t *testing.T) *handler {
 	edges := []store.Edge{
 		{Source: "hub.md", Target: "other.md", Kind: "references", Line: 1},
 		{Source: "hub.md", Target: "other.md", Kind: "references", Line: 2}, // duplicate target document
-		{Source: "hub.md", Target: "hub.md#sec", Kind: "wikilinks_to", Line: 3}, // same-document section anchor
+		{Source: "hub.md", Target: "hub.md#sec", Kind: "wikilinks_to", Line: 3}, // same-document reference
 		{Source: "hub.md", Target: "hub.md", Kind: "links_external", Metadata: `{"url":"https://x.test"}`, Line: 4},
 	}
 	if err := st.InsertEdges(edges); err != nil {
@@ -52,13 +52,13 @@ func TestOutgoingLinksSummaryClassifiesAndDedups(t *testing.T) {
 	if !strings.Contains(text, "1 distinct other documents") {
 		t.Errorf("expected distinct-other-document count of 1, got:\n%s", text)
 	}
-	if !strings.Contains(text, "1 same-document section anchors") {
-		t.Errorf("expected same-document anchor count of 1, got:\n%s", text)
+	if !strings.Contains(text, "1 same-document references") {
+		t.Errorf("expected same-document reference count of 1, got:\n%s", text)
 	}
 	if !strings.Contains(text, "1 external URLs") {
 		t.Errorf("expected external count of 1, got:\n%s", text)
 	}
-	if !strings.Contains(text, "same-document section anchor (not a link to another document)") {
+	if !strings.Contains(text, "same-document reference (not a link to another document)") {
 		t.Errorf("expected the self-reference annotation on the anchor edge, got:\n%s", text)
 	}
 }
@@ -128,7 +128,7 @@ func extractSummaryLine(text, needle string) string {
 // TestNodeOutgoingLinksSummaryParity asserts that handleNode (docgraph_node)
 // emits the identical outgoing summary line as the docgraph_graph facade
 // (renderOutgoingLinks) for the same document.
-// Fixture: hub.md has 4 edges → 1 distinct other doc, 1 same-doc anchor, 1 external URL.
+// Fixture: hub.md has 4 edges → 1 distinct other doc, 1 same-doc reference, 1 external URL.
 func TestNodeOutgoingLinksSummaryParity(t *testing.T) {
 	h := newLinksTestHandler(t)
 

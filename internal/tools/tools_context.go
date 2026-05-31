@@ -107,10 +107,44 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		return mcp.NewToolResultText(h.renderDriftAudit(task)), nil
 	}
 
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "## Context for %q\n\nFound %d relevant documents.\n", task, len(results))
+	// P-v3-1: docgraph_context frames results as "documents", but the ranked
+	// result set can hold several nodes (a document node plus heading hits) from
+	// the SAME source file — which a weak agent double-counts as separate
+	// documents (the v3 B-noise finding). Collapse to one entry per source file,
+	// keeping the best-ranked occurrence, and list any additional matched sections
+	// inline so no match is silently dropped. Render-only: store ranking + order
+	// are untouched (this de-duplicates by file, never reorders).
+	type ctxEntry struct {
+		sr       store.SearchResult
+		sections []string
+	}
+	var deduped []ctxEntry
+	seenFile := map[string]int{}
+	for _, sr := range results {
+		fp := sr.Node.FilePath
+		section := ""
+		if sr.Node.Kind == "heading" && sr.Node.Name != "" {
+			section = sr.Node.Name
+		}
+		if idx, ok := seenFile[fp]; ok {
+			if section != "" {
+				deduped[idx].sections = append(deduped[idx].sections, section)
+			}
+			continue
+		}
+		seenFile[fp] = len(deduped)
+		entry := ctxEntry{sr: sr}
+		if section != "" {
+			entry.sections = append(entry.sections, section)
+		}
+		deduped = append(deduped, entry)
+	}
 
-	for i, sr := range results {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## Context for %q\n\nFound %d relevant documents.\n", task, len(deduped))
+
+	for i, entry := range deduped {
+		sr := entry.sr
 		node := sr.Node
 		headings := h.getHeadings(&node)
 		inCount, outCount := h.getEdgeCounts(&node)
@@ -118,6 +152,10 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		fmt.Fprintf(&sb, "\n### %d. %s\n", i+1, node.Name)
 		fmt.Fprintf(&sb, "**Path:** %s | **Headings:** %d | **Refs in:** %d | **Refs out:** %d\n",
 			node.FilePath, len(headings), inCount, outCount)
+		if len(entry.sections) > 0 {
+			fmt.Fprintf(&sb, "Also matched %d section(s) in this same document: %s\n",
+				len(entry.sections), strings.Join(entry.sections, "; "))
+		}
 
 		if len(headings) > 0 {
 			sb.WriteString("\n#### Structure\n")

@@ -18,6 +18,8 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 
 When the goal is to gather everything about a topic and you have no seed document, prefer docgraph_context (and docgraph_explore for breadth) over search-then-node drilling — piecemeal node lookups return only matched fragments and can silently miss a multi-section document's later sections.
 
+When you already have a specific seed document and need everything related to it, also prefer docgraph_context: topical similarity (docgraph_similar) and citation links (docgraph_graph incoming/outgoing) return DISJOINT related reading, so relying on only one silently under-answers — use docgraph_context, or call both.
+
 docgraph_context format= supports context_pack and drift_audit modes.
 docgraph_search adds governance filters (status=, sensitivity=, canonical_source=, allowed_audience=, as_of_date=), research filters (claim_id=, source_type=, confidence=, analyst_status=), and entity graph filters (entity_type=, entity_id=).
 
