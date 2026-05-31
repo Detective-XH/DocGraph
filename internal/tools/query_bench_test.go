@@ -504,14 +504,15 @@ func BenchmarkQueryGraphHandler(b *testing.B) {
 // ---------------------------------------------------------------------------
 
 func TestQueryBenchCorpusIsSearchable(t *testing.T) {
-	gated := os.Getenv("DG_QUERY_BENCH") != ""
-	// Tiny corpus by default so this runs in the normal suite at near-zero cost;
-	// the gated branch uses the full bench corpus, the only size the benchmarks
-	// actually run on.
-	nDocs := 200
-	if gated {
-		nDocs = queryBenchDocCount(queryBenchDocs)
+	// Gated like the benchmarks (DG_QUERY_BENCH). Building the corpus + FTS index
+	// is too heavy for the normal `go test -race -timeout 120s ./...` suite, so it
+	// is compile-checked there but only RUN as the harness validity gate when the
+	// benches run — mirroring the DG_WS_BENCH / DG_WS_GIT_BENCH harnesses, which
+	// likewise carry no ungated smoke.
+	if os.Getenv("DG_QUERY_BENCH") == "" {
+		t.Skip("set DG_QUERY_BENCH=1 to run the query-bench corpus validation")
 	}
+	nDocs := queryBenchDocCount(queryBenchDocs)
 	h, st := newBenchHandler(t)
 	nNodes := genQueryCorpus(t, st, nDocs)
 	t.Logf("corpus: %d docs, %d nodes", nDocs, nNodes)
@@ -538,8 +539,8 @@ func TestQueryBenchCorpusIsSearchable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SearchWithOptions limit=200: %v", err)
 	}
-	t.Logf("SearchWithOptions(limit=200) returned %d results (saturation probe, gated assert=%v)", len(res200), gated)
-	if gated && len(res200) < 160 {
+	t.Logf("SearchWithOptions(limit=200) returned %d results (saturation probe)", len(res200))
+	if len(res200) < 160 {
 		t.Fatalf("expected >=160 results at limit=200 (rerank loop must run at full width), got %d", len(res200))
 	}
 
