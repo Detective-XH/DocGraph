@@ -255,6 +255,27 @@ func (h *handler) appendContextPackImpact(sb *strings.Builder, st *store.Store, 
 		return
 	}
 	levels := h.contextPackImpactLevels(st, docID, depth)
+
+	// Pattern 3: batch-load all render-phase node IDs in one query.
+	var renderIDs []string
+	renderSeen := make(map[string]bool)
+	for _, entries := range levels {
+		for _, entry := range entries {
+			if !renderSeen[entry.docID] {
+				renderSeen[entry.docID] = true
+				renderIDs = append(renderIDs, entry.docID)
+			}
+			if entry.via != "" && !renderSeen[entry.via] {
+				renderSeen[entry.via] = true
+				renderIDs = append(renderIDs, entry.via)
+			}
+		}
+	}
+	nodeCache, _ := st.GetNodesByIDs(renderIDs)
+	if nodeCache == nil {
+		nodeCache = make(map[string]*store.Node)
+	}
+
 	sb.WriteString("\n### Impacted Documents\n")
 	total := 0
 	for level := 1; level <= depth; level++ {
@@ -266,9 +287,9 @@ func (h *handler) appendContextPackImpact(sb *strings.Builder, st *store.Store, 
 			shown = shown[:limit]
 		}
 		for _, entry := range shown {
-			n := h.getNodeByIDFromStore(st, entry.docID)
+			n := nodeCache[entry.docID]
 			if entry.via != "" {
-				via := h.getNodeByIDFromStore(st, entry.via)
+				via := nodeCache[entry.via]
 				sb.WriteString(fmt.Sprintf("  - %s via %s through %s\n",
 					contextPackNodeLabel(n, entry.docID), entry.kind, contextPackNodeLabel(via, entry.via)))
 			} else {
@@ -287,14 +308,29 @@ func (h *handler) contextPackImpactLevels(st *store.Store, startID string, depth
 	queue := []string{startID}
 	levels := make(map[int][]impactEntry)
 	for level := 1; level <= depth && len(queue) > 0; level++ {
+		// Pattern 1: one batch call per level.
+		edgeMap, err := st.GetIncomingEdgesBatch(queue)
+		if err != nil {
+			break
+		}
+
+		// Pattern 2: batch-resolve edge sources for contextPackDocIDFromEdgeSource.
+		var sources []string
+		seenSrc := make(map[string]bool)
+		for _, edges := range edgeMap {
+			for _, edge := range edges {
+				if !seenSrc[edge.Source] {
+					seenSrc[edge.Source] = true
+					sources = append(sources, edge.Source)
+				}
+			}
+		}
+		srcNodes, _ := st.GetNodesByIDs(sources)
+
 		var next []string
 		for _, id := range queue {
-			edges, err := st.GetIncomingEdges(id)
-			if err != nil {
-				continue
-			}
-			for _, edge := range edges {
-				src := contextPackDocIDFromEdgeSource(st, edge.Source)
+			for _, edge := range edgeMap[id] {
+				src := contextPackDocIDFromNodeCache(edge.Source, srcNodes)
 				if visited[src] {
 					continue
 				}
@@ -322,16 +358,14 @@ func contextPackDocID(node store.Node) string {
 	return node.ID
 }
 
-func contextPackDocIDFromEdgeSource(st *store.Store, nodeID string) string {
-	if st == nil {
-		return nodeID
+// contextPackDocIDFromNodeCache replicates contextPackDocIDFromEdgeSource using a pre-loaded cache.
+func contextPackDocIDFromNodeCache(nodeID string, cache map[string]*store.Node) string {
+	if n, ok := cache[nodeID]; ok && n != nil {
+		return contextPackDocID(*n)
 	}
-	n, err := st.GetNodeByID(nodeID)
-	if err != nil || n == nil {
-		return nodeID
-	}
-	return contextPackDocID(*n)
+	return nodeID
 }
+
 
 func contextPackNodeLabel(node *store.Node, fallback string) string {
 	if node == nil {

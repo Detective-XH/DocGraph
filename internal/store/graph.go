@@ -15,11 +15,11 @@ func (s *Store) GetIncomingEdges(nodeID string) ([]Edge, error) {
 		rows, err = s.db.Query(`SELECT e.source, e.target, e.kind, e.metadata, e.line FROM edges e
 			JOIN nodes t ON t.id = e.target
 			WHERE t.file_path = ? AND e.kind IN ('references','wikilinks_to','related_to','embeds')
-			ORDER BY e.source`, n.FilePath)
+			ORDER BY e.source, e.kind, e.line, e.target`, n.FilePath)
 	} else {
 		rows, err = s.db.Query(`SELECT source, target, kind, metadata, line FROM edges
 			WHERE target = ? AND kind IN ('references','wikilinks_to','related_to','embeds')
-			ORDER BY source`, nodeID)
+			ORDER BY source, kind, line, target`, nodeID)
 	}
 	if err != nil {
 		return nil, err
@@ -35,6 +35,86 @@ func (s *Store) GetIncomingEdges(nodeID string) ([]Edge, error) {
 		edges = append(edges, e)
 	}
 	return edges, rows.Err()
+}
+
+// GetIncomingEdgesBatch returns incoming edges for many nodeIDs in one call.
+// Returns map[nodeID][]Edge where each slice is in SQL result-row order.
+// Invariant: the impact BFS queues only document-node IDs; each document
+// maps to exactly one file_path. If that invariant ever breaks, doc-branch
+// results would be silently merged for nodes sharing a file_path.
+func (s *Store) GetIncomingEdgesBatch(nodeIDs []string) (map[string][]Edge, error) {
+	result := make(map[string][]Edge, len(nodeIDs))
+	if len(nodeIDs) == 0 {
+		return result, nil
+	}
+	nodes, err := s.GetNodesByIDs(nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Partition into document nodes and non-document nodes.
+	var docFilePaths []string
+	filePathToNodeID := make(map[string]string) // file_path → original nodeID for map-back
+	var nonDocIDs []string
+	for _, nodeID := range nodeIDs {
+		n := nodes[nodeID]
+		if n != nil && n.Kind == "document" {
+			docFilePaths = append(docFilePaths, n.FilePath)
+			filePathToNodeID[n.FilePath] = nodeID
+		} else {
+			nonDocIDs = append(nonDocIDs, nodeID)
+		}
+	}
+
+	// Document-branch batch query.
+	// SELECT includes t.file_path so each row can be demuxed back to the frontier nodeID.
+	if len(docFilePaths) > 0 {
+		rows, err := s.db.Query(`SELECT e.source, e.target, e.kind, e.metadata, e.line, t.file_path
+			FROM edges e JOIN nodes t ON t.id = e.target
+			WHERE t.file_path IN (`+inPlaceholders(len(docFilePaths))+`)
+			  AND e.kind IN ('references','wikilinks_to','related_to','embeds')
+			ORDER BY e.source, e.kind, e.line, e.target`, toArgs(docFilePaths)...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var e Edge
+			var fp string
+			if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line, &fp); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			nid := filePathToNodeID[fp]
+			result[nid] = append(result[nid], e)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+
+	// Non-document-branch batch query.
+	if len(nonDocIDs) > 0 {
+		rows, err := s.db.Query(`SELECT source, target, kind, metadata, line
+			FROM edges WHERE target IN (`+inPlaceholders(len(nonDocIDs))+`)
+			  AND kind IN ('references','wikilinks_to','related_to','embeds')
+			ORDER BY source, kind, line, target`, toArgs(nonDocIDs)...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var e Edge
+			if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			result[e.Target] = append(result[e.Target], e)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
 }
 
 func (s *Store) GetOutgoingEdges(nodeID string) ([]Edge, error) {
