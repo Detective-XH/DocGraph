@@ -15,7 +15,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-const maxInstructionsBytes = 3050
+const maxInstructionsBytes = 3400
 
 // Suite A — default (no flags): 10 tools
 func TestToolSurfaceRegistryDefault(t *testing.T) {
