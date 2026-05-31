@@ -13,6 +13,7 @@ import (
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
 	"github.com/Detective-XH/docgraph/internal/docformat"
+	"github.com/Detective-XH/docgraph/internal/entitygraph"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
 	"github.com/Detective-XH/docgraph/internal/parser"
@@ -327,6 +328,7 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		if !baseEmpty {
 			p.Store.DeleteSectionChunksByFile(relPath)
 			p.Store.DeleteDocumentMetadataByFile(relPath)
+			p.Store.Entity.DeleteEntityData(relPath)
 			p.Store.DeleteFileData(relPath)
 		}
 		nodes := append([]store.Node{res.DocNode}, res.Headings...)
@@ -348,6 +350,16 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 			} else if err := p.Store.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
 				return fmt.Errorf("[%s] research %s: %w", p.Name, relPath, err)
 			}
+		}
+		// Entity graph: extract frontmatter + wikilink entities and persist them,
+		// mirroring indexStore (indexer.go) after the metadata upserts. Non-fatal —
+		// a failed entity pass must not abort indexing the document's nodes/edges.
+		// Without this the serve --workspace path never populates the entity graph,
+		// so entity_type=/entity_id= search filters silently return nothing (the
+		// drift that went unnoticed because entity extraction was wired only into
+		// indexStore, the CLI/serve --path pipeline).
+		if err := entitygraph.IndexFile(p.Store, relPath, res); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] entity index %s: %v\n", p.Name, relPath, err)
 		}
 		if err := p.Store.InsertEdges(res.Edges); err != nil {
 			return err
@@ -481,6 +493,17 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	}
 	fmt.Fprintf(os.Stderr, "[%s] Indexed %d files (%d new, %d unchanged)\n", p.Name, len(entries), nNew, nSkip)
 	if nNew > 0 {
+		// Redundant safety net mirroring indexStore's tail prune: DeleteEntityData
+		// already prunes inline after every per-file delete (store/entity.go), so on
+		// a changed-file run this rarely finds anything. Gated on nNew>0 (indexStore
+		// calls it unconditionally) — sound because entities are only ever inserted
+		// inside writeOne, which always bumps nNew, so any run that could create an
+		// orphan has nNew>0; a nNew==0 tick inserts and deletes nothing and cannot
+		// leave one. The gate keeps the hot watcher no-op tick off a full-table
+		// anti-join while preserving indexStore's belt-and-suspenders semantics.
+		if err := p.Store.Entity.PruneOrphanEntities(); err != nil {
+			fmt.Fprintf(os.Stderr, "[%s] prune orphan entities: %v\n", p.Name, err)
+		}
 		if err := resolver.Resolve(p.Store); err != nil {
 			fmt.Fprintf(os.Stderr, "[%s] resolver: %v\n", p.Name, err)
 		}
