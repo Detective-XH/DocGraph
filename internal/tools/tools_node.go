@@ -66,8 +66,15 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	if len(inEdges) > 0 {
 		fmt.Fprintf(&sb, "\n### Incoming References (%d)\n", len(inEdges))
 		for _, e := range inEdges {
+			// Show the source's path (and flag same-document references) so a
+			// self-reference can be told apart from a cross-document citation
+			// without a follow-up docgraph_graph call — parity with the facade.
 			if src := h.getNodeByIDForNode(node, e.Source); src != nil {
-				fmt.Fprintf(&sb, "- %s -> (%s)\n", src.Name, e.Kind)
+				if src.FilePath == node.FilePath {
+					fmt.Fprintf(&sb, "- %s -> (%s) [same-document]\n", src.Name, e.Kind)
+				} else {
+					fmt.Fprintf(&sb, "- %s -> (%s) [%s]\n", src.Name, e.Kind, src.FilePath)
+				}
 			} else {
 				fmt.Fprintf(&sb, "- %s -> (%s)\n", e.Source, e.Kind)
 			}
@@ -79,7 +86,11 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 			if e.Kind == "links_external" {
 				fmt.Fprintf(&sb, "- %s -> (%s)\n", extractURL(e.Metadata), e.Kind)
 			} else if tgt := h.getNodeByIDForNode(node, e.Target); tgt != nil {
-				fmt.Fprintf(&sb, "- %s -> (%s)\n", tgt.Name, e.Kind)
+				if tgt.FilePath == node.FilePath {
+					fmt.Fprintf(&sb, "- %s -> (%s) [same-document]\n", tgt.Name, e.Kind)
+				} else {
+					fmt.Fprintf(&sb, "- %s -> (%s) [%s]\n", tgt.Name, e.Kind, tgt.FilePath)
+				}
 			} else {
 				fmt.Fprintf(&sb, "- %s -> (%s)\n", e.Target, e.Kind)
 			}

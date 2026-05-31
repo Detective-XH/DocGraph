@@ -53,30 +53,59 @@ func (h *handler) renderIncomingLinks(document string, limit int) (*mcp.CallTool
 	if st == nil {
 		return mcp.NewToolResultError("store unavailable"), nil
 	}
-	edges, err := st.GetIncomingEdges(node.ID)
+	allEdges, err := st.GetIncomingEdges(node.ID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("get incoming edges failed: %v", err)), nil
 	}
 
+	// Summarize over the FULL edge set, BEFORE the limit truncation, so the
+	// derived counts are never silently computed over a truncated subset.
+	// Same-document references (the citing node lives in this same file — an
+	// intra-doc structural edge, not a citation from another document) are
+	// separated out so the agent never has to classify or dedup by hand.
+	total := len(allEdges)
+	var selfRefCount int
+	otherDocs := map[string]bool{}
+	for _, e := range allEdges {
+		src := h.getNodeByIDFromStore(st, e.Source)
+		if src == nil {
+			continue
+		}
+		if src.FilePath == node.FilePath {
+			selfRefCount++
+			continue
+		}
+		otherDocs[src.FilePath] = true
+	}
+
+	edges := allEdges
 	if limit > 0 && len(edges) > limit {
 		edges = edges[:limit]
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## References to %q\n\nFound %d incoming references.\n", node.Name, len(edges)))
+	fmt.Fprintf(&sb, "## References to %q\n\n", node.Name)
+	fmt.Fprintf(&sb, "%d incoming edges ← %d distinct other documents, %d same-document references.\n",
+		total, len(otherDocs), selfRefCount)
+	if total > len(edges) {
+		fmt.Fprintf(&sb, "Showing the first %d of %d edges (raise limit= for more); the counts above cover all %d.\n", len(edges), total, total)
+	}
 
 	for i, e := range edges {
 		src := h.getNodeByIDFromStore(st, e.Source)
 		if src == nil {
-			sb.WriteString(fmt.Sprintf("\n### %d. (unknown node %s)\n", i+1, e.Source))
-			sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
+			fmt.Fprintf(&sb, "\n### %d. (unknown node %s)\n", i+1, e.Source)
+			fmt.Fprintf(&sb, "- **Kind:** %s\n", e.Kind)
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("\n### %d. %s\n", i+1, src.Name))
-		sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
-		sb.WriteString(fmt.Sprintf("- **Path:** %s\n", src.FilePath))
+		fmt.Fprintf(&sb, "\n### %d. %s\n", i+1, src.Name)
+		fmt.Fprintf(&sb, "- **Kind:** %s\n", e.Kind)
+		fmt.Fprintf(&sb, "- **Path:** %s\n", src.FilePath)
+		if src.FilePath == node.FilePath {
+			sb.WriteString("- **Note:** same-document reference (not a citation from another document)\n")
+		}
 		if e.Line > 0 {
-			sb.WriteString(fmt.Sprintf("- **Line:** %d\n", e.Line))
+			fmt.Fprintf(&sb, "- **Line:** %d\n", e.Line)
 		}
 	}
 
@@ -100,33 +129,66 @@ func (h *handler) renderOutgoingLinks(document string, limit int) (*mcp.CallTool
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("get outgoing edges failed: %v", err)), nil
 	}
-	edges := oedges
 
+	// Summarize over the FULL edge set, BEFORE the limit truncation, so the
+	// derived counts are never silently computed over a truncated subset.
+	// Distinct other-document targets, same-document section anchors (the target
+	// lives in this same file — a heading link, not a link to another document),
+	// and external URLs are reported separately so the agent never has to dedup
+	// or classify the raw rows by hand.
+	total := len(oedges)
+	var externalCount, selfRefCount int
+	otherDocs := map[string]bool{}
+	for _, e := range oedges {
+		if e.Kind == "links_external" {
+			externalCount++
+			continue
+		}
+		tgt := h.getNodeByIDFromStore(st, e.Target)
+		if tgt == nil {
+			continue
+		}
+		if tgt.FilePath == node.FilePath {
+			selfRefCount++
+			continue
+		}
+		otherDocs[tgt.FilePath] = true
+	}
+
+	edges := oedges
 	if limit > 0 && len(edges) > limit {
 		edges = edges[:limit]
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Links from %q\n\nFound %d outgoing links.\n", node.Name, len(edges)))
+	fmt.Fprintf(&sb, "## Links from %q\n\n", node.Name)
+	fmt.Fprintf(&sb, "%d outgoing edges → %d distinct other documents, %d same-document section anchors, %d external URLs.\n",
+		total, len(otherDocs), selfRefCount, externalCount)
+	if total > len(edges) {
+		fmt.Fprintf(&sb, "Showing the first %d of %d edges (raise limit= for more); the counts above cover all %d.\n", len(edges), total, total)
+	}
 
 	for i, e := range edges {
 		if e.Kind == "links_external" {
 			url := extractURL(e.Metadata)
-			sb.WriteString(fmt.Sprintf("\n### %d. External Link\n", i+1))
-			sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
-			sb.WriteString(fmt.Sprintf("- **URL:** %s\n", url))
+			fmt.Fprintf(&sb, "\n### %d. External Link\n", i+1)
+			fmt.Fprintf(&sb, "- **Kind:** %s\n", e.Kind)
+			fmt.Fprintf(&sb, "- **URL:** %s\n", url)
 			continue
 		}
 
 		tgt := h.getNodeByIDFromStore(st, e.Target)
 		if tgt == nil {
-			sb.WriteString(fmt.Sprintf("\n### %d. (unknown node %s)\n", i+1, e.Target))
-			sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
+			fmt.Fprintf(&sb, "\n### %d. (unknown node %s)\n", i+1, e.Target)
+			fmt.Fprintf(&sb, "- **Kind:** %s\n", e.Kind)
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("\n### %d. %s\n", i+1, tgt.Name))
-		sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", e.Kind))
-		sb.WriteString(fmt.Sprintf("- **Path:** %s\n", tgt.FilePath))
+		fmt.Fprintf(&sb, "\n### %d. %s\n", i+1, tgt.Name)
+		fmt.Fprintf(&sb, "- **Kind:** %s\n", e.Kind)
+		fmt.Fprintf(&sb, "- **Path:** %s\n", tgt.FilePath)
+		if tgt.FilePath == node.FilePath {
+			sb.WriteString("- **Note:** same-document section anchor (not a link to another document)\n")
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

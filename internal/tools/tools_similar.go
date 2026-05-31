@@ -12,7 +12,7 @@ import (
 )
 
 var similarTool = mcp.NewTool("docgraph_similar",
-	mcp.WithDescription("Find documents that are topically similar to a given document, even without explicit links. Uses TF-IDF text similarity + shared references + tag overlap. If neural embeddings have been stored via docgraph_embeddings action=store, results also include neural similarity scores (engine: neural). For explicit link tracking, use docgraph_graph instead. Returns empty if no similarity edges have been computed for the document (check docgraph_status → edge count). Accepts document paths only — heading anchors (doc.md#heading) return empty."),
+	mcp.WithDescription("Find documents topically similar to a given document using TF-IDF term overlap + shared references + tag overlap (engine=auto/tfidf — the default, always on, no flags). Returns 0 results for a topically unique document (a broad README or changelog commonly has no similar_to edges even when the index is fully built and the engine is working): 0 does NOT mean the engine is off, embeddings are disabled, or the index is broken. Neural similarity is an OPTIONAL add-on layered on top — only if embeddings were stored via docgraph_embeddings action=store (engine=neural) are neural scores added; embeddings being disabled never causes a TF-IDF 0-result. For explicit link tracking use docgraph_graph. Accepts document paths only — heading anchors (doc.md#heading) return empty."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path (document paths only; heading anchors return empty)")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
 	mcp.WithString("engine", mcp.Description("Similarity engine: auto (default), tfidf, or neural. neural requires --enable-embeddings; returns an error if the server was not started with that flag.")),
@@ -61,7 +61,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	fmt.Fprintf(&sb, "## Documents similar to %q\n\nFound %d similar documents.\n", node.Name, len(deduped))
 
 	if len(deduped) == 0 {
-		sb.WriteString("\nNo similarity edges for this document. This is expected for topically unique documents (e.g. a README or changelog) — it does NOT mean the document is unconnected. To find explicit relationships, use docgraph_graph operation=incoming/outgoing for citation links, or docgraph_context for topic neighbours.\n")
+		sb.WriteString("\nNo similarity edges for this document. This is expected for topically unique documents (e.g. a README or changelog) — it does NOT mean the document is unconnected, and it does NOT mean the similarity engine is disabled (TF-IDF is always on; 0 edges is a real result, not a misconfiguration). To find related documents anyway, use docgraph_search for keyword-based discovery, docgraph_graph operation=incoming/outgoing for explicit citation links, or docgraph_context for topic neighbours.\n")
 		return mcp.NewToolResultText(sb.String()), nil
 	}
 
