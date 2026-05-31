@@ -26,6 +26,17 @@ func escapeLike(s string) string {
 	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
+// buildExpansionFTSQuery builds an FTS5 MATCH argument restricted to the
+// name column of nodes_fts for a single normalized term.
+// Returns "" if term is empty after normalization.
+func buildExpansionFTSQuery(term string) string {
+	term = normalizeSearchTerm(term)
+	if term == "" {
+		return ""
+	}
+	return `name : "` + strings.ReplaceAll(term, `"`, `""`) + `"`
+}
+
 // likeTermClauses builds a per-term AND of substring matches across cols, for
 // the sub-trigram LIKE fallback (FTS can't match short/CJK terms). Each term
 // must appear in at least one column → docs containing ALL terms, in any field
