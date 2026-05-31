@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // newLinksTestHandler builds a fixture with a hub document that links to one
@@ -18,7 +20,7 @@ func newLinksTestHandler(t *testing.T) *handler {
 	nodes := []store.Node{
 		{ID: "hub.md", Kind: "document", Name: "Hub", QualifiedName: "hub.md", FilePath: "hub.md", UpdatedAt: 1},
 		{ID: "other.md", Kind: "document", Name: "Other", QualifiedName: "other.md", FilePath: "other.md", UpdatedAt: 1},
-		{ID: "hub.md#sec", Kind: "heading", Name: "Section", QualifiedName: "hub.md#sec", FilePath: "hub.md", UpdatedAt: 1},
+		{ID: "hub.md#sec", Kind: "heading", Name: "Section", QualifiedName: "hub.md#sec", FilePath: "hub.md", Level: 1, UpdatedAt: 1},
 	}
 	if err := st.InsertNodes(nodes); err != nil {
 		t.Fatal(err)
@@ -97,5 +99,80 @@ func TestIncomingLinksCountsDistinctSourceDocs(t *testing.T) {
 	}
 	if !strings.Contains(text, "0 same-document references") {
 		t.Errorf("expected 0 same-document references for other.md, got:\n%s", text)
+	}
+}
+
+// callHandleNode is a helper that invokes handleNode with just a document= arg.
+func callHandleNode(t *testing.T, h *handler, document string) string {
+	t.Helper()
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"document": document}
+	res, err := h.handleNode(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return extractText(res)
+}
+
+// extractSummaryLine extracts the single line from text that contains needle.
+// Returns the trimmed line or "" if not found.
+func extractSummaryLine(text, needle string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, needle) {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+// TestNodeOutgoingLinksSummaryParity asserts that handleNode (docgraph_node)
+// emits the identical outgoing summary line as the docgraph_graph facade
+// (renderOutgoingLinks) for the same document.
+// Fixture: hub.md has 4 edges → 1 distinct other doc, 1 same-doc anchor, 1 external URL.
+func TestNodeOutgoingLinksSummaryParity(t *testing.T) {
+	h := newLinksTestHandler(t)
+
+	// Get the facade's summary line (the ground truth).
+	facadeRes, err := h.renderOutgoingLinks("hub.md", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facadeText := extractText(facadeRes)
+	// The outgoing summary line always contains "outgoing edges →".
+	facadeLine := extractSummaryLine(facadeText, "outgoing edges →")
+	if facadeLine == "" {
+		t.Fatalf("facade did not produce an outgoing summary line; got:\n%s", facadeText)
+	}
+
+	// Assert handleNode emits the identical summary line.
+	nodeText := callHandleNode(t, h, "hub.md")
+	if !strings.Contains(nodeText, facadeLine) {
+		t.Errorf("handleNode outgoing summary mismatch.\nexpected to contain: %q\ngot:\n%s", facadeLine, nodeText)
+	}
+}
+
+// TestNodeIncomingLinksSummaryParity asserts that handleNode (docgraph_node)
+// emits the identical incoming summary line as the docgraph_graph facade
+// (renderIncomingLinks) for the same document.
+// Fixture: other.md has 2 incoming edges from hub.md → 1 distinct other doc, 0 same-doc refs.
+func TestNodeIncomingLinksSummaryParity(t *testing.T) {
+	h := newLinksTestHandler(t)
+
+	// Get the facade's summary line (the ground truth).
+	facadeRes, err := h.renderIncomingLinks("other.md", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	facadeText := extractText(facadeRes)
+	// The incoming summary line always contains "incoming edges ←".
+	facadeLine := extractSummaryLine(facadeText, "incoming edges ←")
+	if facadeLine == "" {
+		t.Fatalf("facade did not produce an incoming summary line; got:\n%s", facadeText)
+	}
+
+	// Assert handleNode emits the identical summary line.
+	nodeText := callHandleNode(t, h, "other.md")
+	if !strings.Contains(nodeText, facadeLine) {
+		t.Errorf("handleNode incoming summary mismatch.\nexpected to contain: %q\ngot:\n%s", facadeLine, nodeText)
 	}
 }
