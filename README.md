@@ -77,8 +77,8 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 | Metric | Value |
 |--------|-------|
 | Language | Go 1.25+ |
-| Binary size | ~13 MB |
-| Codebase | ~19,770 lines of Go (+ ~21,500 lines of tests) |
+| Binary size | ~18 MB |
+| Codebase | ~20,100 lines of Go (+ ~22,580 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
