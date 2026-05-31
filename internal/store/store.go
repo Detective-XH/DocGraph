@@ -361,6 +361,29 @@ func (s *Store) GetNodeByID(id string) (*Node, error) {
 	return &n, nil
 }
 
+// GetNodesByIDs loads nodes for many IDs in one query. Missing IDs are absent from the map.
+func (s *Store) GetNodesByIDs(ids []string) (map[string]*Node, error) {
+	out := make(map[string]*Node, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Query(`SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
+		FROM nodes WHERE id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.ID, &n.Kind, &n.Name, &n.QualifiedName, &n.FilePath,
+			&n.StartLine, &n.EndLine, &n.Level, &n.Metadata, &n.BodyExcerpt, &n.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out[n.ID] = &n
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetNodesByFile(filePath string) ([]Node, error) {
 	rows, err := s.db.Query(`SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
 		FROM nodes WHERE file_path = ? ORDER BY start_line`, filePath)
