@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -24,16 +25,64 @@ var skipDirs = map[string]bool{
 	".cache": true, "vendor": true, "__pycache__": true, ".obsidian": true,
 }
 
-func Watch(paths []string, onChange OnChangeFunc) error {
-	return WatchWithContext(context.Background(), paths, 2*time.Second, onChange)
+// DefaultMaxWatches bounds how many filesystem entries (directories + files) a
+// single serve process registers with fsnotify. On macOS (kqueue) every watched
+// entry costs one open file descriptor, so recursively watching a large
+// workspace can push the process — and, multiplied across every concurrent serve
+// (one per connected MCP client), the whole machine — into file-table exhaustion
+// (ENFILE). Bounding the walk trades complete coverage of an oversized tree for a
+// bound on fd usage: roughly the cap, plus the widest single watched directory
+// (fsnotify opens an fd for every immediate entry the instant a directory is
+// added, before the budget is re-checked, so one very wide directory can overrun
+// the cap by its width). It is a soft ceiling, not a hard guarantee — a hard one
+// would need patching fsnotify. A stale tail re-syncs on the next `docgraph sync`
+// or restart. 0 disables the bound. See plans/serve-workspace-fd-exhaustion.
+const DefaultMaxWatches = 8192
+
+// watchBudget caps the number of fsnotify watches a serve process holds. It is
+// shared (by pointer) across the initial recursive walk and every later
+// Create-driven addRecursive, all of which run concurrently — hence the atomic
+// counter and the once-guarded warning. The counter is monotonic (it does not
+// decrement when fsnotify auto-releases watches on deletion), so once it fills —
+// e.g. after the initial walk of an oversized tree — later Create-driven
+// addRecursive calls are no-ops and newly-created directories are not watched
+// until a restart. That is the intended degradation for an oversized tree, but
+// it also means a long-lived serve on a near-cap tree with heavy churn can ratchet
+// to the cap and stop auto-reindexing; `docgraph sync` or a restart recovers it.
+type watchBudget struct {
+	max  int // 0 = unlimited
+	n    atomic.Int64
+	warn sync.Once
 }
 
-func WatchWithContext(ctx context.Context, paths []string, debounce time.Duration, onChange OnChangeFunc) error {
+func (b *watchBudget) full() bool { return b.max > 0 && b.n.Load() >= int64(b.max) }
+func (b *watchBudget) inc()       { b.n.Add(1) }
+func (b *watchBudget) count() int { return int(b.n.Load()) }
+func (b *watchBudget) warnOnce() {
+	b.warn.Do(func() {
+		log.Printf("watcher: reached watch limit %d (workspace too large to fully watch); "+
+			"changes outside watched directories will not auto-reindex — run `docgraph sync` or raise --max-watches", b.max)
+	})
+}
+
+func Watch(paths []string, onChange OnChangeFunc) error {
+	return WatchWithLimit(paths, DefaultMaxWatches, onChange)
+}
+
+// WatchWithLimit is Watch with an explicit per-process watch cap (see
+// watchBudget / DefaultMaxWatches). 0 disables the cap.
+func WatchWithLimit(paths []string, maxWatches int, onChange OnChangeFunc) error {
+	return WatchWithContext(context.Background(), paths, 2*time.Second, maxWatches, onChange)
+}
+
+func WatchWithContext(ctx context.Context, paths []string, debounce time.Duration, maxWatches int, onChange OnChangeFunc) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		return fmt.Errorf("create watcher: %w", err)
 	}
 	defer w.Close()
+
+	budget := &watchBudget{max: maxWatches}
 
 	roots := make([]string, 0, len(paths))
 	for _, p := range paths {
@@ -43,7 +92,9 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 		}
 		// Add only the root synchronously so the event loop can start immediately.
 		// Subdirectory expansion runs in the background; new dirs created after
-		// startup are handled by the Create-event handler below.
+		// startup are handled by the Create-event handler below. The root's own fd
+		// is counted by the addRecursive walk below (its first visit re-Adds the
+		// root idempotently), so it is not double-counted here.
 		if err := w.Add(abs); err != nil {
 			return fmt.Errorf("watch %s: %w", abs, err)
 		}
@@ -51,7 +102,7 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 	}
 	go func() {
 		for _, abs := range roots {
-			_ = addRecursive(w, abs)
+			_ = addRecursive(w, abs, budget)
 		}
 	}()
 
@@ -74,7 +125,7 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 			}
 			if event.Op&fsnotify.Create != 0 {
 				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					_ = addRecursive(w, event.Name)
+					_ = addRecursive(w, event.Name, budget)
 				}
 			}
 			if !docformat.SupportedExt(strings.ToLower(filepath.Ext(event.Name))) {
@@ -142,7 +193,7 @@ func findProjectRoot(filePath string, roots []string) string {
 	return ""
 }
 
-func addRecursive(w *fsnotify.Watcher, root string) error {
+func addRecursive(w *fsnotify.Watcher, root string, b *watchBudget) error {
 	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -151,8 +202,26 @@ func addRecursive(w *fsnotify.Watcher, root string) error {
 			if skipDirs[d.Name()] {
 				return filepath.SkipDir
 			}
-			return w.Add(path)
+			// Bound fd usage: on kqueue every watched directory and file is one
+			// open fd, so stop descending once the budget is spent rather than
+			// march the whole machine into file-table exhaustion. SkipDir leaves
+			// this directory and its subtree unwatched (its parent's watch already
+			// spent one fd discovering it); the stale tail re-syncs on the next
+			// `docgraph sync`/restart.
+			if b.full() {
+				b.warnOnce()
+				return filepath.SkipDir
+			}
+			if err := w.Add(path); err != nil {
+				return err
+			}
+			b.inc()
+			return nil
 		}
+		// A regular file: fsnotify auto-watches every entry of a watched directory,
+		// so this file already holds one fd. Count it so the budget tracks true fd
+		// cost (files dominate the tree), not just directory count.
+		b.inc()
 		return nil
 	})
 }
