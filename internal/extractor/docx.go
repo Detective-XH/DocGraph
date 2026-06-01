@@ -205,6 +205,7 @@ func headingLevel(styleVal string) int {
 // ── main extractor ────────────────────────────────────────────────────────────
 
 func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
+	_ = absPath
 	// Open ZIP from in-memory bytes.
 	zr, err := zip.NewReader(bytes.NewReader(src), int64(len(src)))
 	if err != nil {
@@ -336,10 +337,11 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 		// Hyperlinks.
 		for _, hl := range p.Hyperlinks {
 			if url, ok := rels[hl.RID]; ok {
-				hlText := ""
+				var hlBuilder strings.Builder
 				for _, r := range hl.Runs {
-					hlText += runText(r)
+					hlBuilder.WriteString(runText(r))
 				}
+				hlText := hlBuilder.String()
 				rawLinks = append(rawLinks, parser.RawLink{
 					Text:       hlText,
 					Target:     url,
@@ -388,7 +390,7 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 	addMeta("modified", core.Modified, "date")
 
 	// Build SectionChunks: document chunk + one per heading.
-	sectionChunks := buildDocxSectionChunks(docNode, headings, hash, bodyExcerpt, bodyParts)
+	sectionChunks := buildDocxSectionChunks(docNode, headings, hash, bodyParts)
 
 	fileInfo := store.FileInfo{
 		Path:           relPath,
@@ -440,7 +442,7 @@ func buildDocxContainmentEdges(docID string, headings []store.Node) []store.Edge
 // Since DOCX has no line numbers, we use 0/0 for start/end and represent text
 // as the concatenation of all body text for the document chunk, and heading name
 // for heading chunks.
-func buildDocxSectionChunks(docNode store.Node, headings []store.Node, contentHash string, bodyExcerpt string, bodyParts []string) []store.SectionChunk {
+func buildDocxSectionChunks(docNode store.Node, headings []store.Node, contentHash string, bodyParts []string) []store.SectionChunk {
 	// Document chunk: full body text (10 KB cap).
 	docText := capText(strings.Join(bodyParts, "\n"), docxSectionTextCap)
 	chunks := []store.SectionChunk{

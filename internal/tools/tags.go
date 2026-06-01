@@ -13,22 +13,28 @@ import (
 var tagsTool = mcp.NewTool("docgraph_tags",
 	mcp.WithDescription("List all tags across indexed documents with document counts, or find all documents with a specific tag."),
 	mcp.WithString("tag", mcp.Description("Tag name to filter by. If omitted, lists all tags with counts.")),
+	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
 func (h *handler) handleTags(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	tagFilter := sanitizeArg(getStringArg(req.GetArguments(), "tag", ""), maxArgLength)
+	args := req.GetArguments()
+	tagFilter := sanitizeArg(getStringArg(args, "tag", ""), maxArgLength)
+	projectFilter := sanitizeArg(getStringArg(args, "project", ""), maxArgLength)
 
 	if tagFilter != "" {
-		return h.handleTagFilter(tagFilter)
+		return h.handleTagFilter(tagFilter, projectFilter)
 	}
-	return h.handleTagList()
+	return h.handleTagList(projectFilter)
 }
 
-func (h *handler) handleTagList() (*mcp.CallToolResult, error) {
+func (h *handler) handleTagList(projectFilter string) (*mcp.CallToolResult, error) {
 	var allTags []store.TagCount
 	if h.workspace != nil {
 		seen := map[string]int{}
 		for _, p := range h.workspace.Projects {
+			if projectFilter != "" && p.Name != projectFilter {
+				continue
+			}
 			tags, err := p.Store.GetAllTags()
 			if err != nil {
 				continue
@@ -59,9 +65,9 @@ func (h *handler) handleTagList() (*mcp.CallToolResult, error) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Tags (%d total)\n\n", len(allTags)))
+	fmt.Fprintf(&sb, "## Tags (%d total)\n\n", len(allTags))
 	for _, t := range allTags {
-		sb.WriteString(fmt.Sprintf("- **%s** (%d doc", t.Name, t.Count))
+		fmt.Fprintf(&sb, "- **%s** (%d doc", t.Name, t.Count)
 		if t.Count != 1 {
 			sb.WriteString("s")
 		}
@@ -70,10 +76,13 @@ func (h *handler) handleTagList() (*mcp.CallToolResult, error) {
 	return mcp.NewToolResultText(sb.String()), nil
 }
 
-func (h *handler) handleTagFilter(tagName string) (*mcp.CallToolResult, error) {
+func (h *handler) handleTagFilter(tagName string, projectFilter string) (*mcp.CallToolResult, error) {
 	var nodes []store.Node
 	if h.workspace != nil {
 		for _, p := range h.workspace.Projects {
+			if projectFilter != "" && p.Name != projectFilter {
+				continue
+			}
 			ns, err := p.Store.GetDocumentsByTag(tagName)
 			if err != nil {
 				continue
@@ -93,13 +102,13 @@ func (h *handler) handleTagFilter(tagName string) (*mcp.CallToolResult, error) {
 	}
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("## Tag: %q (%d document", tagName, len(nodes)))
+	fmt.Fprintf(&sb, "## Tag: %q (%d document", tagName, len(nodes))
 	if len(nodes) != 1 {
 		sb.WriteString("s")
 	}
 	sb.WriteString(")\n\n")
 	for _, n := range nodes {
-		sb.WriteString(fmt.Sprintf("- **%s** — `%s`\n", n.Name, n.FilePath))
+		fmt.Fprintf(&sb, "- **%s** — `%s`\n", n.Name, n.FilePath)
 	}
 	return mcp.NewToolResultText(sb.String()), nil
 }

@@ -42,11 +42,11 @@ func (h *handler) renderContextPack(task string, results []store.SearchResult, o
 	opts = opts.normalized()
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("# Context Pack: %s\n\n", task))
+	fmt.Fprintf(&sb, "# Context Pack: %s\n\n", task)
 	sb.WriteString("## Manifest\n")
 	sb.WriteString("- **Format:** docgraph.context_pack.v1\n")
-	sb.WriteString(fmt.Sprintf("- **Query:** %s\n", task))
-	sb.WriteString(fmt.Sprintf("- **Items:** %d\n", len(results)))
+	fmt.Fprintf(&sb, "- **Query:** %s\n", task)
+	fmt.Fprintf(&sb, "- **Items:** %d\n", len(results))
 	sb.WriteString("- **Snapshot source:** indexed `section_chunks` when available; live file reads are not used in context packs.\n")
 	sb.WriteString("- **Compatibility:** pack fields are additive; consumers should ignore unknown future fields.\n")
 
@@ -68,17 +68,17 @@ func (h *handler) appendContextPackItem(sb *strings.Builder, index int, node sto
 		docNode = &node
 	}
 
-	sb.WriteString(fmt.Sprintf("\n## Evidence %d: %s\n", index, node.Name))
+	fmt.Fprintf(sb, "\n## Evidence %d: %s\n", index, node.Name)
 	sb.WriteString("### Identity\n")
-	sb.WriteString(fmt.Sprintf("- **Node ID:** %s\n", node.ID))
-	sb.WriteString(fmt.Sprintf("- **Document ID:** %s\n", docID))
-	sb.WriteString(fmt.Sprintf("- **Kind:** %s\n", node.Kind))
-	sb.WriteString(fmt.Sprintf("- **Path:** %s\n", formatNodePath(node)))
+	fmt.Fprintf(sb, "- **Node ID:** %s\n", node.ID)
+	fmt.Fprintf(sb, "- **Document ID:** %s\n", docID)
+	fmt.Fprintf(sb, "- **Kind:** %s\n", node.Kind)
+	fmt.Fprintf(sb, "- **Path:** %s\n", formatNodePath(node))
 	if node.QualifiedName != "" {
-		sb.WriteString(fmt.Sprintf("- **Qualified name:** %s\n", node.QualifiedName))
+		fmt.Fprintf(sb, "- **Qualified name:** %s\n", node.QualifiedName)
 	}
 	if node.StartLine > 0 {
-		sb.WriteString(fmt.Sprintf("- **Lines:** %d-%d\n", node.StartLine, node.EndLine))
+		fmt.Fprintf(sb, "- **Lines:** %d-%d\n", node.StartLine, node.EndLine)
 	}
 
 	h.appendContextPackSnapshot(sb, st, &node, opts)
@@ -96,27 +96,27 @@ func (h *handler) appendContextPackSnapshot(sb *strings.Builder, st *store.Store
 	}
 	chunk, ok, err := st.GetSectionChunk(node.ID)
 	if err != nil {
-		sb.WriteString(fmt.Sprintf("- **Status:** unavailable; %v.\n", err))
+		fmt.Fprintf(sb, "- **Status:** unavailable; %v.\n", err)
 		return
 	}
 	if !ok {
 		if fileHash, err := st.GetFileHash(node.FilePath); err == nil && fileHash != "" {
-			sb.WriteString(fmt.Sprintf("- **Content hash:** %s\n", fileHash))
+			fmt.Fprintf(sb, "- **Content hash:** %s\n", fileHash)
 		}
 		sb.WriteString("- **Section hash:** unavailable; indexed section snapshot missing.\n")
 		sb.WriteString("- **Snapshot note:** run `docgraph index --force` to rebuild section chunks.\n")
 		return
 	}
 
-	sb.WriteString(fmt.Sprintf("- **Source path:** %s\n", chunk.FilePath))
+	fmt.Fprintf(sb, "- **Source path:** %s\n", chunk.FilePath)
 	if chunk.StartLine > 0 {
-		sb.WriteString(fmt.Sprintf("- **Indexed lines:** %d-%d\n", chunk.StartLine, chunk.EndLine))
+		fmt.Fprintf(sb, "- **Indexed lines:** %d-%d\n", chunk.StartLine, chunk.EndLine)
 	}
 	if chunk.HeadingPath != "" {
-		sb.WriteString(fmt.Sprintf("- **Heading path:** %s\n", chunk.HeadingPath))
+		fmt.Fprintf(sb, "- **Heading path:** %s\n", chunk.HeadingPath)
 	}
-	sb.WriteString(fmt.Sprintf("- **Content hash:** %s\n", chunk.ContentHash))
-	sb.WriteString(fmt.Sprintf("- **Section hash:** %s\n", chunk.SectionHash))
+	fmt.Fprintf(sb, "- **Content hash:** %s\n", chunk.ContentHash)
+	fmt.Fprintf(sb, "- **Section hash:** %s\n", chunk.SectionHash)
 
 	if !opts.IncludeContent {
 		return
@@ -194,11 +194,11 @@ func (h *handler) appendContextPackQuality(sb *strings.Builder, st *store.Store,
 		return
 	}
 	sb.WriteString("\n### Metadata Quality\n")
-	sb.WriteString(fmt.Sprintf("- **Score:** %d/100\n", quality.Score))
-	sb.WriteString(fmt.Sprintf("- **Level:** %s\n", quality.Level))
-	sb.WriteString(fmt.Sprintf("- **As of:** %s\n", quality.AsOf))
-	sb.WriteString(fmt.Sprintf("- **Incoming references:** %d\n", quality.IncomingReferences))
-	sb.WriteString(fmt.Sprintf("- **Outgoing references:** %d\n", quality.OutgoingReferences))
+	fmt.Fprintf(sb, "- **Score:** %d/100\n", quality.Score)
+	fmt.Fprintf(sb, "- **Level:** %s\n", quality.Level)
+	fmt.Fprintf(sb, "- **As of:** %s\n", quality.AsOf)
+	fmt.Fprintf(sb, "- **Incoming references:** %d\n", quality.IncomingReferences)
+	fmt.Fprintf(sb, "- **Outgoing references:** %d\n", quality.OutgoingReferences)
 	if len(quality.Issues) == 0 {
 		sb.WriteString("- **Issues:** none\n")
 		return
@@ -209,10 +209,10 @@ func (h *handler) appendContextPackQuality(sb *strings.Builder, st *store.Store,
 		limit = 8
 	}
 	for _, issue := range quality.Issues[:limit] {
-		sb.WriteString(fmt.Sprintf("  - `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message))
+		fmt.Fprintf(sb, "  - `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message)
 	}
 	if len(quality.Issues) > limit {
-		sb.WriteString(fmt.Sprintf("  - ... %d more quality issues omitted\n", len(quality.Issues)-limit))
+		fmt.Fprintf(sb, "  - ... %d more quality issues omitted\n", len(quality.Issues)-limit)
 	}
 }
 
@@ -224,29 +224,29 @@ func (h *handler) appendContextPackReferences(sb *strings.Builder, st *store.Sto
 	outgoing, _ := st.GetOutgoingEdges(docNode.ID)
 
 	sb.WriteString("\n### Citation Paths\n")
-	sb.WriteString(fmt.Sprintf("- **Incoming references:** %d\n", len(incoming)))
+	fmt.Fprintf(sb, "- **Incoming references:** %d\n", len(incoming))
 	for _, edge := range limitEdges(incoming, limit) {
 		src := h.getNodeByIDFromStore(st, edge.Source)
-		sb.WriteString(fmt.Sprintf("  - %s --%s--> %s%s\n",
-			contextPackNodeLabel(src, edge.Source), edge.Kind, contextPackNodeLabel(docNode, docNode.ID), contextPackLineSuffix(edge.Line)))
+		fmt.Fprintf(sb, "  - %s --%s--> %s%s\n",
+			contextPackNodeLabel(src, edge.Source), edge.Kind, contextPackNodeLabel(docNode, docNode.ID), contextPackLineSuffix(edge.Line))
 	}
 	if len(incoming) > limit {
-		sb.WriteString(fmt.Sprintf("  - ... %d more incoming references omitted\n", len(incoming)-limit))
+		fmt.Fprintf(sb, "  - ... %d more incoming references omitted\n", len(incoming)-limit)
 	}
 
-	sb.WriteString(fmt.Sprintf("- **Outgoing references:** %d\n", len(outgoing)))
+	fmt.Fprintf(sb, "- **Outgoing references:** %d\n", len(outgoing))
 	for _, edge := range limitEdges(outgoing, limit) {
 		if edge.Kind == "links_external" {
-			sb.WriteString(fmt.Sprintf("  - %s --%s--> %s%s\n",
-				contextPackNodeLabel(docNode, docNode.ID), edge.Kind, extractURL(edge.Metadata), contextPackLineSuffix(edge.Line)))
+			fmt.Fprintf(sb, "  - %s --%s--> %s%s\n",
+				contextPackNodeLabel(docNode, docNode.ID), edge.Kind, extractURL(edge.Metadata), contextPackLineSuffix(edge.Line))
 			continue
 		}
 		tgt := h.getNodeByIDFromStore(st, edge.Target)
-		sb.WriteString(fmt.Sprintf("  - %s --%s--> %s%s\n",
-			contextPackNodeLabel(docNode, docNode.ID), edge.Kind, contextPackNodeLabel(tgt, edge.Target), contextPackLineSuffix(edge.Line)))
+		fmt.Fprintf(sb, "  - %s --%s--> %s%s\n",
+			contextPackNodeLabel(docNode, docNode.ID), edge.Kind, contextPackNodeLabel(tgt, edge.Target), contextPackLineSuffix(edge.Line))
 	}
 	if len(outgoing) > limit {
-		sb.WriteString(fmt.Sprintf("  - ... %d more outgoing references omitted\n", len(outgoing)-limit))
+		fmt.Fprintf(sb, "  - ... %d more outgoing references omitted\n", len(outgoing)-limit)
 	}
 }
 
@@ -281,7 +281,7 @@ func (h *handler) appendContextPackImpact(sb *strings.Builder, st *store.Store, 
 	for level := 1; level <= depth; level++ {
 		entries := levels[level]
 		total += len(entries)
-		sb.WriteString(fmt.Sprintf("- **Depth %d:** %d documents\n", level, len(entries)))
+		fmt.Fprintf(sb, "- **Depth %d:** %d documents\n", level, len(entries))
 		shown := entries
 		if len(shown) > limit {
 			shown = shown[:limit]
@@ -290,17 +290,17 @@ func (h *handler) appendContextPackImpact(sb *strings.Builder, st *store.Store, 
 			n := nodeCache[entry.docID]
 			if entry.via != "" {
 				via := nodeCache[entry.via]
-				sb.WriteString(fmt.Sprintf("  - %s via %s through %s\n",
-					contextPackNodeLabel(n, entry.docID), entry.kind, contextPackNodeLabel(via, entry.via)))
+				fmt.Fprintf(sb, "  - %s via %s through %s\n",
+					contextPackNodeLabel(n, entry.docID), entry.kind, contextPackNodeLabel(via, entry.via))
 			} else {
-				sb.WriteString(fmt.Sprintf("  - %s via %s\n", contextPackNodeLabel(n, entry.docID), entry.kind))
+				fmt.Fprintf(sb, "  - %s via %s\n", contextPackNodeLabel(n, entry.docID), entry.kind)
 			}
 		}
 		if len(entries) > limit {
-			sb.WriteString(fmt.Sprintf("  - ... %d more impacted documents omitted\n", len(entries)-limit))
+			fmt.Fprintf(sb, "  - ... %d more impacted documents omitted\n", len(entries)-limit)
 		}
 	}
-	sb.WriteString(fmt.Sprintf("- **Total impacted:** %d\n", total))
+	fmt.Fprintf(sb, "- **Total impacted:** %d\n", total)
 }
 
 func (h *handler) contextPackImpactLevels(st *store.Store, startID string, depth int) map[int][]impactEntry {
@@ -395,7 +395,7 @@ func writeContextPackField(sb *strings.Builder, label, value string) {
 	if value == "" {
 		return
 	}
-	sb.WriteString(fmt.Sprintf("- **%s:** %s\n", label, value))
+	fmt.Fprintf(sb, "- **%s:** %s\n", label, value)
 }
 
 // renderDriftAudit runs the policy/process drift audit and formats findings as
@@ -406,7 +406,7 @@ func (h *handler) renderDriftAudit(task string) string {
 	var sb strings.Builder
 	sb.WriteString("# Drift Audit Report\n\n")
 	if task != "" {
-		sb.WriteString(fmt.Sprintf("**Context:** %s\n\n", task))
+		fmt.Fprintf(&sb, "**Context:** %s\n\n", task)
 	}
 	sb.WriteString("- **Format:** docgraph.drift_audit.v1\n")
 	sb.WriteString("- **Packs:** policy_process, assessment_drift, code_doc (when enabled)\n")
@@ -418,10 +418,10 @@ func (h *handler) renderDriftAudit(task string) string {
 		for _, p := range h.workspace.Projects {
 			findings, err := p.Store.GetDriftFindings(opts)
 			if err != nil {
-				sb.WriteString(fmt.Sprintf("## %s\n\n_Error running drift audit: %v_\n\n", p.Name, err))
+				fmt.Fprintf(&sb, "## %s\n\n_Error running drift audit: %v_\n\n", p.Name, err)
 				continue
 			}
-			sb.WriteString(fmt.Sprintf("## %s\n\n", p.Name))
+			fmt.Fprintf(&sb, "## %s\n\n", p.Name)
 			appendDriftFindingsMarkdown(&sb, findings)
 		}
 		return sb.String()
@@ -433,7 +433,7 @@ func (h *handler) renderDriftAudit(task string) string {
 	}
 	findings, err := h.store.GetDriftFindings(opts)
 	if err != nil {
-		sb.WriteString(fmt.Sprintf("_Error running drift audit: %v_\n", err))
+		fmt.Fprintf(&sb, "_Error running drift audit: %v_\n", err)
 		return sb.String()
 	}
 	appendDriftFindingsMarkdown(&sb, findings)
@@ -447,12 +447,12 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 		return
 	}
 	stats := store.SummarizeDriftFindings(findings)
-	sb.WriteString(fmt.Sprintf("**Total findings:** %d", stats.TotalFindings))
+	fmt.Fprintf(sb, "**Total findings:** %d", stats.TotalFindings)
 	if e := stats.BySeverity["error"]; e > 0 {
-		sb.WriteString(fmt.Sprintf(" | **Errors:** %d", e))
+		fmt.Fprintf(sb, " | **Errors:** %d", e)
 	}
 	if w := stats.BySeverity["warning"]; w > 0 {
-		sb.WriteString(fmt.Sprintf(" | **Warnings:** %d", w))
+		fmt.Fprintf(sb, " | **Warnings:** %d", w)
 	}
 	sb.WriteString("\n\n")
 
@@ -495,15 +495,15 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 		if len(group) == 0 {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("### `%s` (%d)\n\n", code, len(group)))
+		fmt.Fprintf(sb, "### `%s` (%d)\n\n", code, len(group))
 		for _, f := range group {
-			sb.WriteString(fmt.Sprintf("- **%s**", sanitizeDriftField(f.FilePath)))
+			fmt.Fprintf(sb, "- **%s**", sanitizeDriftField(f.FilePath))
 			if f.RelatedPath != "" {
-				sb.WriteString(fmt.Sprintf(" ↔ %s", sanitizeDriftField(f.RelatedPath)))
+				fmt.Fprintf(sb, " ↔ %s", sanitizeDriftField(f.RelatedPath))
 			}
-			sb.WriteString(fmt.Sprintf("\n  - %s\n", sanitizeDriftField(f.Message)))
+			fmt.Fprintf(sb, "\n  - %s\n", sanitizeDriftField(f.Message))
 			if f.Evidence != "" {
-				sb.WriteString(fmt.Sprintf("  - Evidence: %s\n", sanitizeDriftField(f.Evidence)))
+				fmt.Fprintf(sb, "  - Evidence: %s\n", sanitizeDriftField(f.Evidence))
 			}
 		}
 		sb.WriteString("\n")

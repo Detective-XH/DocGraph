@@ -129,7 +129,7 @@ func (h *handler) appendContextPackImpactSerialRef(sb *strings.Builder, st *stor
 	for level := 1; level <= depth; level++ {
 		entries := levels[level]
 		total += len(entries)
-		sb.WriteString(fmt.Sprintf("- **Depth %d:** %d documents\n", level, len(entries)))
+		fmt.Fprintf(sb, "- **Depth %d:** %d documents\n", level, len(entries))
 		shown := entries
 		if len(shown) > limit {
 			shown = shown[:limit]
@@ -138,17 +138,17 @@ func (h *handler) appendContextPackImpactSerialRef(sb *strings.Builder, st *stor
 			n := h.getNodeByIDFromStore(st, entry.docID)
 			if entry.via != "" {
 				via := h.getNodeByIDFromStore(st, entry.via)
-				sb.WriteString(fmt.Sprintf("  - %s via %s through %s\n",
-					contextPackNodeLabel(n, entry.docID), entry.kind, contextPackNodeLabel(via, entry.via)))
+				fmt.Fprintf(sb, "  - %s via %s through %s\n",
+					contextPackNodeLabel(n, entry.docID), entry.kind, contextPackNodeLabel(via, entry.via))
 			} else {
-				sb.WriteString(fmt.Sprintf("  - %s via %s\n", contextPackNodeLabel(n, entry.docID), entry.kind))
+				fmt.Fprintf(sb, "  - %s via %s\n", contextPackNodeLabel(n, entry.docID), entry.kind)
 			}
 		}
 		if len(entries) > limit {
-			sb.WriteString(fmt.Sprintf("  - ... %d more impacted documents omitted\n", len(entries)-limit))
+			fmt.Fprintf(sb, "  - ... %d more impacted documents omitted\n", len(entries)-limit)
 		}
 	}
-	sb.WriteString(fmt.Sprintf("- **Total impacted:** %d\n", total))
+	fmt.Fprintf(sb, "- **Total impacted:** %d\n", total)
 }
 
 // setupImpactFixture builds a store with a topology that covers:

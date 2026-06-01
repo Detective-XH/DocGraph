@@ -3,7 +3,6 @@ package extractor
 import (
 	"crypto/sha256"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -26,27 +25,11 @@ const (
 )
 
 func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
-	// Write src to a temp file since Detective-XH/pdf requires a file path.
-	tmp, err := os.CreateTemp("", "docgraph-pdf-*.pdf")
-	if err != nil {
-		return nil, fmt.Errorf("extractPDF: create temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := tmp.Write(src); err != nil {
-		tmp.Close()
-		return nil, fmt.Errorf("extractPDF: write temp file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return nil, fmt.Errorf("extractPDF: close temp file: %w", err)
-	}
-
-	f, r, err := pdf.Open(tmpPath)
+	_ = absPath
+	r, err := pdf.OpenBytes(src)
 	if err != nil {
 		return nil, fmt.Errorf("extractPDF: open PDF: %w", err)
 	}
-	defer f.Close()
 
 	numPages := r.NumPage()
 	if numPages > pdfMaxPages {

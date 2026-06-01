@@ -61,7 +61,7 @@ func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 
 	// Build /Kids array: [3 0 R  5 0 R  ...]
 	kidsParts := make([]string, numPages)
-	for i := 0; i < numPages; i++ {
+	for i := range numPages {
 		kidsParts[i] = fmt.Sprintf("%d 0 R", 3+i*2)
 	}
 	kidsStr := fmt.Sprintf("[%s]", pdfJoinSpace(kidsParts))
@@ -75,7 +75,7 @@ func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 	buf.WriteString("1 0 obj<</Type /Catalog /Pages 2 0 R>>endobj\n")
 
 	offsets[2] = buf.Len()
-	buf.WriteString(fmt.Sprintf("2 0 obj<</Type /Pages /Kids %s /Count %d>>endobj\n", kidsStr, numPages))
+	fmt.Fprintf(&buf, "2 0 obj<</Type /Pages /Kids %s /Count %d>>endobj\n", kidsStr, numPages)
 
 	for i, text := range texts {
 		pageObjID := 3 + i*2
@@ -84,14 +84,14 @@ func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 		stream := fmt.Sprintf("BT /F1 12 Tf 72 720 Td (%s) Tj ET", pdfEscapeString(text))
 
 		offsets[pageObjID] = buf.Len()
-		buf.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&buf,
 			"%d 0 obj<</Type /Page /Parent 2 0 R /MediaBox[0 0 612 792] /Contents %d 0 R /Resources<</Font<</F1 %d 0 R>>>>>>endobj\n",
-			pageObjID, contentsObjID, fontObjID))
+			pageObjID, contentsObjID, fontObjID)
 
 		offsets[contentsObjID] = buf.Len()
-		buf.WriteString(fmt.Sprintf(
+		fmt.Fprintf(&buf,
 			"%d 0 obj<</Length %d>>stream\n%s\nendstream\nendobj\n",
-			contentsObjID, len(stream), stream))
+			contentsObjID, len(stream), stream)
 	}
 
 	fontDict := "<</Type /Font /Subtype /Type1 /BaseFont /Helvetica"
@@ -100,16 +100,16 @@ func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 	}
 	fontDict += ">>"
 	offsets[fontObjID] = buf.Len()
-	buf.WriteString(fmt.Sprintf("%d 0 obj%sendobj\n", fontObjID, fontDict))
+	fmt.Fprintf(&buf, "%d 0 obj%sendobj\n", fontObjID, fontDict)
 
 	xrefOffset := buf.Len()
-	buf.WriteString(fmt.Sprintf("xref\n0 %d\n", totalObjs+1))
+	fmt.Fprintf(&buf, "xref\n0 %d\n", totalObjs+1)
 	buf.WriteString("0000000000 65535 f \n")
 	for n := 1; n <= totalObjs; n++ {
-		buf.WriteString(fmt.Sprintf("%010d 00000 n \n", offsets[n]))
+		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[n])
 	}
-	buf.WriteString(fmt.Sprintf("trailer<</Size %d /Root 1 0 R>>\n", totalObjs+1))
-	buf.WriteString(fmt.Sprintf("startxref\n%d\n%%%%EOF\n", xrefOffset))
+	fmt.Fprintf(&buf, "trailer<</Size %d /Root 1 0 R>>\n", totalObjs+1)
+	fmt.Fprintf(&buf, "startxref\n%d\n%%%%EOF\n", xrefOffset)
 
 	return buf.Bytes()
 }
