@@ -32,11 +32,11 @@ docgraph_status
 ```
 
 Confirm:
-- Schema version is v10 or higher (entity_source_graph migration applied)
 - `policy_process` pack is listed under Domain Packs
 - Governance metadata is indexed (docs with metadata > 0)
 
-If schema version < 10, tell the user to run `docgraph index --force` first.
+If `policy_process` is not listed, the binary is too old or the pack was never registered —
+tell the user to upgrade DocGraph and run `docgraph index --force`.
 
 ---
 

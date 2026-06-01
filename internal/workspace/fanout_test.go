@@ -99,7 +99,7 @@ func TestGetAllFiles_FanOutAndPrefixFilter(t *testing.T) {
 	t.Cleanup(func() { w.Close() })
 
 	// Empty filter: both projects contribute files.
-	all, err := w.GetAllFiles("")
+	all, err := w.GetAllFiles("", "")
 	if err != nil {
 		t.Fatalf("GetAllFiles(\"\"): %v", err)
 	}
@@ -115,7 +115,7 @@ func TestGetAllFiles_FanOutAndPrefixFilter(t *testing.T) {
 	}
 
 	// "notes/" prefix: proj-a has a notes/ file; proj-b does not.
-	filtered, err := w.GetAllFiles("notes/")
+	filtered, err := w.GetAllFiles("notes/", "")
 	if err != nil {
 		t.Fatalf("GetAllFiles(\"notes/\"): %v", err)
 	}
@@ -139,7 +139,7 @@ func TestGetAllTopLevelDirs_DedupSorted(t *testing.T) {
 	w := fanoutCorpus(t)
 	t.Cleanup(func() { w.Close() })
 
-	dirs, err := w.GetAllTopLevelDirs()
+	dirs, err := w.GetAllTopLevelDirs("")
 	if err != nil {
 		t.Fatalf("GetAllTopLevelDirs: %v", err)
 	}

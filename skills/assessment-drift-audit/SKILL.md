@@ -34,11 +34,11 @@ docgraph_status
 ```
 
 Confirm:
-- Schema version is v7 or higher (research_metadata migration applied)
 - `assessment_drift` pack is listed under Domain Packs
 - Research metadata is indexed (docs with research metadata > 0)
 
-If schema version < 7, tell the user to run `docgraph index --force` first.
+If `assessment_drift` is not listed, the binary is too old or the pack was never registered —
+tell the user to upgrade DocGraph and run `docgraph index --force`.
 
 ---
 

@@ -42,6 +42,19 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes))
 		}
 
+		// Projects table — compact name→file-count index so the LLM can discover
+		// project names to pass as project=<name> to any query tool.
+		sb.WriteString("\n## Projects\n\n")
+		sb.WriteString("| Name | Files |\n")
+		sb.WriteString("|------|-------|\n")
+		for _, p := range h.workspace.Projects {
+			s, ok := allStats[p.Name]
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(&sb, "| %s | %d |\n", p.Name, s.FileCount)
+		}
+
 		// Neural embeddings — fan-out across all projects.
 		var allEmbStats []store.EmbeddingModelStat
 		modelTotals := make(map[string]*store.EmbeddingModelStat)

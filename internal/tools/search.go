@@ -31,6 +31,7 @@ var searchTool = mcp.NewTool("docgraph_search",
 	mcp.WithString("analyst_status", mcp.Description("Filter by research analyst_status. Requires metadata reindex.")),
 	mcp.WithString("entity_type", mcp.Description("Filter to documents that mention entities of this type (e.g. person, organization).")),
 	mcp.WithString("entity_id", mcp.Description("Filter to documents that mention a specific entity UUID.")),
+	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
 // ---------------------------------------------------------------------------
@@ -57,6 +58,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	sourceTypeFilter := sanitizeArg(getStringArg(args, "source_type", ""), 100)
 	confidenceFilter := sanitizeArg(getStringArg(args, "confidence", ""), 100)
 	analystStatusFilter := sanitizeArg(getStringArg(args, "analyst_status", ""), 100)
+	projectFilter := sanitizeArg(getStringArg(args, "project", ""), maxArgLength)
 
 	opts := store.SearchOptions{
 		Query:       query,
@@ -77,6 +79,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 			Confidence:    confidenceFilter,
 			AnalystStatus: analystStatusFilter,
 		},
+		ProjectFilter: projectFilter,
 	}
 	useMetadataFilters := opts.HasMetadataFilters()
 

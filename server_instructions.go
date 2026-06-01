@@ -32,6 +32,8 @@ docgraph_search adds governance filters (status=, sensitivity=, canonical_source
 3. docgraph_node <path> → drill into one doc (path WITHOUT [project/] prefix)
 4. docgraph_graph operation=incoming document=<path> → find dependents
 
+In workspace mode, pass project=<name> to scope any query tool to one project. Run docgraph_status to list available project names.
+
 ## Path formats
 
 Search results use [project/]doc.md#heading:line-end — strip the [project/] prefix and :line suffix before passing to docgraph_node. docgraph_files path= expects a bare directory name (e.g. path=docs). docgraph_node section= accepts either the exact heading text (e.g. "Neural Embeddings (agent-driven)") or the anchor slug seen in search results (e.g. neural-embeddings-agent-driven) — both resolve.

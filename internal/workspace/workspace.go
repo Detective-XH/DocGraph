@@ -106,6 +106,9 @@ func (w *Workspace) SearchWithOptions(opts store.SearchOptions) ([]store.SearchR
 	}
 	var all []store.SearchResult
 	for _, p := range w.Projects {
+		if opts.ProjectFilter != "" && p.Name != opts.ProjectFilter {
+			continue
+		}
 		perProjectCap := limit * 2
 		projectOpts := opts
 		projectOpts.Limit = perProjectCap
@@ -133,9 +136,12 @@ func (w *Workspace) GetAllStats() (map[string]store.Stats, error) {
 	}
 	return m, nil
 }
-func (w *Workspace) GetAllFiles(pathFilter string) (map[string][]store.FileInfo, error) {
+func (w *Workspace) GetAllFiles(pathFilter, projectFilter string) (map[string][]store.FileInfo, error) {
 	m := make(map[string][]store.FileInfo)
 	for _, p := range w.Projects {
+		if projectFilter != "" && p.Name != projectFilter {
+			continue
+		}
 		if files, err := p.Store.GetFiles(pathFilter); err == nil {
 			m[p.Name] = files
 		}
@@ -146,9 +152,12 @@ func (w *Workspace) GetAllFiles(pathFilter string) (map[string][]store.FileInfo,
 // GetAllTopLevelDirs fans out GetTopLevelDirs across all projects, deduplicates
 // the segments, and returns them sorted. Per-project errors are silently ignored,
 // mirroring GetAllFiles' error-handling policy.
-func (w *Workspace) GetAllTopLevelDirs() ([]string, error) {
+func (w *Workspace) GetAllTopLevelDirs(projectFilter string) ([]string, error) {
 	seen := make(map[string]struct{})
 	for _, p := range w.Projects {
+		if projectFilter != "" && p.Name != projectFilter {
+			continue
+		}
 		dirs, err := p.Store.GetTopLevelDirs()
 		if err != nil {
 			continue

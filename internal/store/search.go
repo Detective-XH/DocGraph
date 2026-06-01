@@ -34,6 +34,9 @@ type SearchOptions struct {
 	Governance  GovernanceSearchOptions
 	Research    ResearchSearchOptions
 	Entity      EntitySearchOptions
+	// ProjectFilter scopes workspace fan-out to a single project (directory name).
+	// Empty means query all projects. No-op in single-store mode.
+	ProjectFilter string
 }
 
 // EntitySearchOptions carries entity/source graph filter constraints.

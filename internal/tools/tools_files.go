@@ -13,6 +13,7 @@ var filesTool = mcp.NewTool("docgraph_files",
 	mcp.WithDescription("List all indexed files (.md, .docx, .html, .pdf). Use path filter to narrow scope (bare directory name, e.g. path=docs). For a single known doc, use docgraph_node instead."),
 	mcp.WithString("path", mcp.Description("Filter to directory subtree (bare directory name, e.g. docs or reports/2024)")),
 	mcp.WithNumber("limit", mcp.Description("Max files to return (default 50)")),
+	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
 func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -20,11 +21,12 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 	pathFilter := getStringArg(args, "path", "")
 	pathFilter = sanitizeArg(pathFilter, maxArgLength)
 	fileLimit := getIntArgClamped(args, "limit", 50, 0, maxListLimit)
+	projectFilter := sanitizeArg(getStringArg(args, "project", ""), maxArgLength)
 
 	var files []store.FileInfo
 	var err error
 	if h.workspace != nil {
-		allFiles, ferr := h.workspace.GetAllFiles(pathFilter)
+		allFiles, ferr := h.workspace.GetAllFiles(pathFilter, projectFilter)
 		if ferr != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("list files failed: %v", ferr)), nil
 		}
@@ -52,7 +54,7 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 			var dirs []string
 			var dirsErr error
 			if h.workspace != nil {
-				dirs, dirsErr = h.workspace.GetAllTopLevelDirs()
+				dirs, dirsErr = h.workspace.GetAllTopLevelDirs(projectFilter)
 			} else {
 				dirs, dirsErr = h.store.GetTopLevelDirs()
 			}

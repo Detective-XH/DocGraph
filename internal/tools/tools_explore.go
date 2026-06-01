@@ -13,6 +13,7 @@ var exploreTool = mcp.NewTool("docgraph_explore",
 	mcp.WithDescription("Survey several related documents and their cross-references in one call. More efficient than multiple docgraph_node calls. For a single known document, use docgraph_node instead. For governance filters or structured context, use docgraph_context instead."),
 	mcp.WithString("query", mcp.Required(), mcp.Description("Search terms to find related documents")),
 	mcp.WithNumber("maxDocs", mcp.Description("Max documents (default 5)")),
+	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
 func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -23,11 +24,12 @@ func (h *handler) handleExplore(ctx context.Context, request mcp.CallToolRequest
 	}
 	query = sanitizeArg(query, maxArgLength)
 	maxDocs := getIntArgClamped(args, "maxDocs", 5, 1, 200)
+	projectFilter := sanitizeArg(getStringArg(args, "project", ""), maxArgLength)
 
 	var results []store.SearchResult
 	var err error
 	if h.workspace != nil {
-		results, err = h.workspace.Search(query, "", maxDocs)
+		results, err = h.workspace.SearchWithOptions(store.SearchOptions{Query: query, Limit: maxDocs, ProjectFilter: projectFilter})
 	} else {
 		results, err = h.store.Search(query, "", maxDocs)
 	}

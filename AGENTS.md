@@ -57,7 +57,7 @@ These are DocGraph-exclusive. They hold even for small corpora with few links.
   - "What documents are impacted if this one changes?"
   - "Are there competing interpretations of claim Y?"
   - "Give me a reviewable evidence pack with citations and impact."
-- **It's a multi-project workspace** and a question spans repositories.
+- **It's a multi-project workspace** and a question spans repositories. In workspace mode, all query tools accept `project=<name>` to scope results to one project; run `docgraph_status` to list available project names.
 
 ### Supporting signals — useful when several hold together
 

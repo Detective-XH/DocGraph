@@ -446,3 +446,11 @@ func countMarkdownDataRows(markdown string) int {
 	}
 	return rows
 }
+
+// TestServerInstructionsWorkspaceProjectFilter guards the workspace project= guidance (F-40).
+// Prevents a future byte-budget trim from silently removing the workspace scoping note.
+func TestServerInstructionsWorkspaceProjectFilter(t *testing.T) {
+	if !strings.Contains(serverInstructions, "project=") {
+		t.Fatal("serverInstructions must mention 'project=' for workspace project filter guidance (F-40)")
+	}
+}

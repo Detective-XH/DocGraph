@@ -16,6 +16,7 @@ var similarTool = mcp.NewTool("docgraph_similar",
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name or path (document paths only; heading anchors return empty)")),
 	mcp.WithNumber("limit", mcp.Description("Max results (default 10)")),
 	mcp.WithString("engine", mcp.Description("Similarity engine: auto (default), tfidf, or neural. neural requires --enable-embeddings; returns an error if the server was not started with that flag. To check whether neural is available BEFORE querying, call docgraph_status and inspect the docgraph_embeddings field.")),
+	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
 func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -27,6 +28,7 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	document = sanitizeArg(document, maxArgLength)
 	limit := getIntArgClamped(args, "limit", 10, 0, maxListLimit)
 	engine := strings.ToLower(strings.TrimSpace(getStringArg(args, "engine", "auto")))
+	projectFilter := sanitizeArg(getStringArg(args, "project", ""), maxArgLength)
 	if engine == "neural" && !h.enableEmbeddings {
 		return mcp.NewToolResultError("Neural similarity requires --enable-embeddings. Restart the server with that flag, or use the default TF-IDF similarity instead."), nil
 	}
@@ -43,6 +45,9 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	var edges []store.Edge
 	if h.workspace != nil {
 		for _, p := range h.workspace.Projects {
+			if projectFilter != "" && p.Name != projectFilter {
+				continue
+			}
 			if es, err := p.Store.GetSimilarEdgesForDoc(node.ID); err == nil {
 				edges = append(edges, es...)
 			}

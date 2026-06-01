@@ -28,6 +28,7 @@ var contextTool = mcp.NewTool("docgraph_context",
 	mcp.WithString("source_type", mcp.Description("Filter by research source_type.")),
 	mcp.WithString("confidence", mcp.Description("Filter by research confidence.")),
 	mcp.WithString("analyst_status", mcp.Description("Filter by research analyst_status.")),
+	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
 func formatHeadingOutline(headings []store.Node) string {
@@ -79,6 +80,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			Confidence:    sanitizeArg(getStringArg(args, "confidence", ""), 100),
 			AnalystStatus: sanitizeArg(getStringArg(args, "analyst_status", ""), 100),
 		},
+		ProjectFilter: sanitizeArg(getStringArg(args, "project", ""), maxArgLength),
 	}
 
 	var results []store.SearchResult
