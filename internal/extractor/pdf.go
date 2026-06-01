@@ -88,11 +88,11 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 			}
 		}
 
-		// Phase 0 (detection/triage, not a CJK fix): Detective-XH/pdf decodes
-		// fonts whose Encoding is an unrecognised predefined CMap name (e.g.
-		// UniGB-UCS2-H) via a no-op encoder — raw 2-byte CIDs pass through as
-		// U+FFFD garbage with a NIL error. Detect such fonts by name and skip
-		// text extraction for the page rather than indexing garbage.
+		// Phase 0 (detection/triage): Detective-XH/pdf decodes fonts whose
+		// Encoding is an unrecognised predefined CMap name (e.g. GBK-EUC-H)
+		// via a no-op encoder — raw bytes pass through as U+FFFD garbage with
+		// a NIL error. Detect such fonts by name and skip text extraction for
+		// the page rather than indexing garbage.
 		var text string
 		if encName, bad := pageUnsupportedEncoding(pageFontNames, fonts); bad {
 			unsupportedEncoding = true
@@ -337,14 +337,11 @@ func pageUnsupportedEncoding(fontNames []string, fonts map[string]*pdf.Font) (st
 // decode to garbage via the library's no-op encoder; Phase 0 detects and skips them.
 //
 // Implemented (removed from this list as the fork adds decoders):
-//   - 90ms-RKSJ-H/V, 90pv-RKSJ-H  → Shift-JIS via x/text (fork v0.2.0)
+//   - 90ms-RKSJ-H/V, 90pv-RKSJ-H         → Shift-JIS via x/text (fork v0.2.0)
+//   - UniGB/UniCNS/UniJIS/UniKS-UCS2-H/V  → UCS-2-BE direct decode (fork v0.3.0)
 func isUnsupportedCMapName(name string) bool {
 	switch name {
-	case "UniGB-UCS2-H", "UniGB-UCS2-V",
-		"UniCNS-UCS2-H", "UniCNS-UCS2-V",
-		"UniJIS-UCS2-H", "UniJIS-UCS2-V",
-		"UniKS-UCS2-H", "UniKS-UCS2-V",
-		"GBK-EUC-H", "GBK-EUC-V",
+	case "GBK-EUC-H", "GBK-EUC-V",
 		"ETen-B5-H", "ETen-B5-V",
 		"KSCms-UHC-H", "KSCms-UHC-V":
 		return true
