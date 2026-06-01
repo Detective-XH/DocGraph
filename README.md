@@ -581,7 +581,7 @@ scan .md / .docx / .html / .pdf  (docformat registry: extensions + per-format si
        .md          → goldmark + inlined YAML frontmatter parser
        .docx        → stdlib archive/zip + encoding/xml
        .html / .htm → golang.org/x/net HTML tokenizer
-       .pdf         → ledongthuc/pdf (text layer; writes to temp file)
+       .pdf         → Detective-XH/pdf (ledongthuc/pdf fork; text layer + CJK CMaps; writes to temp file)
        code docs    → optional code_doc pack for comments/tests/examples
   -> extract nodes, edges, links, metadata tuples, and section chunks
   -> store in SQLite (modernc.org/sqlite, pure Go)
@@ -602,7 +602,7 @@ FTS5 uses the trigram tokenizer for mixed CJK and Latin full-text search.
 | [mcp-go](https://github.com/mark3labs/mcp-go) | MCP protocol (stdio transport) |
 | [fsnotify](https://github.com/fsnotify/fsnotify) | Cross-platform file watcher |
 | [golang.org/x/net](https://pkg.go.dev/golang.org/x/net/html) | HTML tokenizer for `.html`/`.htm` extraction |
-| [ledongthuc/pdf](https://github.com/ledongthuc/pdf) | PDF text-layer extraction |
+| [Detective-XH/pdf](https://github.com/Detective-XH/pdf) | PDF text-layer extraction (fork of [ledongthuc/pdf](https://github.com/ledongthuc/pdf) adding CJK CMap decoders) |
 | stdlib | `.gitignore` + `.docgraphignore` matching, `archive/zip` + `encoding/xml` for `.docx` |
 
 ## Supply Chain
