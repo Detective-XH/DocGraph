@@ -88,10 +88,11 @@ func cmdServe(args []string) {
 		for _, proj := range w.Projects {
 			paths = append(paths, proj.Path)
 		}
-		go watcher.WatchWithLimit(paths, *maxWatches, func(projectPath string, _ []string) {
+		go watcher.WatchWithLimit(paths, *maxWatches, func(projectPath string, files []string) {
 			for _, proj := range w.Projects {
 				if proj.Path == projectPath {
 					fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
+					pruneDeletedFiles(proj.Path, proj.Store, files)
 					workspace.ReindexProject(proj)
 					break
 				}
@@ -124,8 +125,9 @@ func cmdServe(args []string) {
 		}
 		go doSync()
 		go func() {
-			err := watcher.WatchWithLimit([]string{absRoot}, *maxWatches, func(projectPath string, _ []string) {
+			err := watcher.WatchWithLimit([]string{absRoot}, *maxWatches, func(projectPath string, files []string) {
 				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
+				pruneDeletedFiles(projectPath, st, files)
 				// force=false: incremental re-index of changed files; deletes stay.
 				if err := indexStore(projectPath, st, false); err != nil {
 					fmt.Fprintf(os.Stderr, "[watcher] re-index %s: %v\n", projectPath, err)
