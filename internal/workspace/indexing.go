@@ -12,9 +12,9 @@ import (
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
 	"github.com/Detective-XH/docgraph/internal/docformat"
-	"github.com/Detective-XH/docgraph/internal/entitygraph"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
+	"github.com/Detective-XH/docgraph/internal/indexcore"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
 	"github.com/Detective-XH/docgraph/internal/scanner"
@@ -175,57 +175,10 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 				return err
 			}
 		}
-		if len(res.MetadataTuples) > 0 {
-			if err := p.Store.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("[%s] metadata %s: %w", p.Name, relPath, err)
-			} else if err := p.Store.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("[%s] governance %s: %w", p.Name, relPath, err)
-			} else if err := p.Store.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-				return fmt.Errorf("[%s] research %s: %w", p.Name, relPath, err)
-			}
-		}
-		// Entity graph: extract frontmatter + wikilink entities and persist them,
-		// mirroring indexStore (indexer.go) after the metadata upserts. Non-fatal —
-		// a failed entity pass must not abort indexing the document's nodes/edges.
-		// Without this the serve --workspace path never populates the entity graph,
-		// so entity_type=/entity_id= search filters silently return nothing (the
-		// drift that went unnoticed because entity extraction was wired only into
-		// indexStore, the CLI/serve --path pipeline).
-		if err := entitygraph.IndexFile(p.Store, relPath, res); err != nil {
-			fmt.Fprintf(os.Stderr, "[%s] entity index %s: %v\n", p.Name, relPath, err)
-		}
-		if err := p.Store.InsertEdges(res.Edges); err != nil {
+		if err := indexcore.WriteDependents(p.Store, res, fh, gitEnabled, &changedDocIDs, fmt.Sprintf("[%s] ", p.Name)); err != nil {
 			return err
-		}
-		if len(res.RawLinks) > 0 {
-			refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
-			for _, rl := range res.RawLinks {
-				refs = append(refs, store.UnresolvedRef{
-					FromNodeID: rl.FromNodeID, ReferenceText: rl.Target,
-					ReferenceKind: rl.Kind, Line: rl.Line, FilePath: relPath})
-			}
-			if err := p.Store.InsertUnresolvedRefs(refs); err != nil {
-				return err
-			}
-		}
-		if err := p.Store.UpsertFile(res.FileInfo); err != nil {
-			return err
-		}
-		if gitEnabled {
-			if err := p.Store.UpsertFileHistory(store.FileHistory{
-				Path:          fh.Path,
-				CommitCount:   fh.CommitCount,
-				FirstCommitAt: fh.FirstCommitAt,
-				LastCommitAt:  fh.LastCommitAt,
-				AuthorCount:   fh.AuthorCount,
-				LastAuthor:    fh.LastAuthor,
-				LastSubject:   fh.LastSubject,
-			}); err != nil {
-				fmt.Fprintf(os.Stderr, "[%s] history %s: %v\n", p.Name, relPath, err)
-			}
 		}
 		nNew++
-		changedDocIDs = append(changedDocIDs, res.DocNode.ID)
 		return nil
 	}
 

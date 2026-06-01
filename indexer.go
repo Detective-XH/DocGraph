@@ -13,9 +13,9 @@ import (
 
 	"github.com/Detective-XH/docgraph/internal/codedoc"
 	"github.com/Detective-XH/docgraph/internal/docformat"
-	"github.com/Detective-XH/docgraph/internal/entitygraph"
 	"github.com/Detective-XH/docgraph/internal/extractor"
 	"github.com/Detective-XH/docgraph/internal/git"
+	"github.com/Detective-XH/docgraph/internal/indexcore"
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/resolver"
 	"github.com/Detective-XH/docgraph/internal/scanner"
@@ -241,56 +241,13 @@ func indexStore(root string, st *store.Store, force bool) error {
 			histories = git.CollectHistories(root, relPaths, runtime.NumCPU())
 		}
 		for idx, res := range batch {
-			relPath := res.FileInfo.Path
-			if len(res.MetadataTuples) > 0 {
-				if err := st.InsertDocumentMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-					return fmt.Errorf("metadata %s: %w", relPath, err)
-				} else if err := st.UpsertGovernanceMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-					return fmt.Errorf("governance %s: %w", relPath, err)
-				} else if err := st.UpsertResearchMetadata(res.DocNode.ID, res.MetadataTuples); err != nil {
-					return fmt.Errorf("research %s: %w", relPath, err)
-				}
-			}
-			if err := entitygraph.IndexFile(st, relPath, res); err != nil {
-				fmt.Fprintf(os.Stderr, "entity index %s: %v\n", relPath, err)
-			}
-			if err := st.InsertEdges(res.Edges); err != nil {
-				return err
-			}
-			if len(res.RawLinks) > 0 {
-				refs := make([]store.UnresolvedRef, 0, len(res.RawLinks))
-				for _, rl := range res.RawLinks {
-					refs = append(refs, store.UnresolvedRef{
-						FromNodeID:    rl.FromNodeID,
-						ReferenceText: rl.Target,
-						ReferenceKind: rl.Kind,
-						Line:          rl.Line,
-						Col:           0,
-						FilePath:      relPath,
-					})
-				}
-				if err := st.InsertUnresolvedRefs(refs); err != nil {
-					return err
-				}
-			}
-			if err := st.UpsertFile(res.FileInfo); err != nil {
-				return err
-			}
+			var fh git.FileHistory
 			if gitEnabled {
-				h := histories[idx]
-				if err := st.UpsertFileHistory(store.FileHistory{
-					Path:          h.Path,
-					CommitCount:   h.CommitCount,
-					FirstCommitAt: h.FirstCommitAt,
-					LastCommitAt:  h.LastCommitAt,
-					AuthorCount:   h.AuthorCount,
-					LastAuthor:    h.LastAuthor,
-					LastSubject:   h.LastSubject,
-				}); err != nil {
-					fmt.Fprintf(os.Stderr, "history %s: %v\n", relPath, err)
-				}
+				fh = histories[idx]
 			}
-			changedDocIDs = append(changedDocIDs, res.DocNode.ID)
+			if err := indexcore.WriteDependents(st, res, fh, gitEnabled, &changedDocIDs, ""); err != nil {
+				return err
+			}
 		}
 		batch = batch[:0]
 		batchTextBytes = 0
