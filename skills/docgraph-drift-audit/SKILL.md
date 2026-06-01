@@ -59,9 +59,13 @@ Priority: HIGH for structured docs. LOW for README/changelog.
 ```bash
 sqlite3 "$DB" "
   SELECT f.path FROM files f
-  LEFT JOIN edges e ON e.source = f.path
-    AND e.kind IN ('references','wikilinks_to','related_to')
-  WHERE e.id IS NULL ORDER BY f.path"
+  WHERE NOT EXISTS (
+    SELECT 1 FROM nodes n
+    JOIN edges e ON e.source = n.id
+    WHERE n.file_path = f.path
+      AND e.kind IN ('references','wikilinks_to','related_to')
+  )
+  ORDER BY f.path"
 ```
 
 **PASS** if key docs have at least one outgoing link.
