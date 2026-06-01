@@ -65,7 +65,7 @@ No single one is decisive; together they tip a "selective" project into a fit.
 
 - **20+ interlinked documents** with Markdown links or `[[wikilinks]]` — reverse-reference and impact edges become worth precomputing.
 - **You have both governed docs *and* a codebase and want the gaps between them** — opt-in `code_doc` surfaces docs-code drift (`code.undocumented_export`, `code.missing_symbol`, `code.unanchored_feature`). It is shallow (file headers, doc comments, test/example names as corpus-level nodes — not type resolution or call graphs) and only pays off when docs already reference code: on a docs-less repo `undocumented_export` flags *every* file and the other two never fire. For code *structure*, use CodeGraph; `code_doc` is the corpus-level doc-surface view CodeGraph's per-symbol docstrings don't give.
-- **CJK or mixed Latin/CJK corpus** where consistent trigram search across files helps.
+- **CJK or mixed Latin/CJK corpus** — FTS5 trigram search covers all indexed formats; PDF files with common CJK encodings (Shift-JIS, GBK, Big5-ETen, UHC) are decoded natively rather than skipped or garbled.
 
 ### Anti-signals — prefer your own grep/read
 
