@@ -78,7 +78,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~18 MB |
-| Codebase | ~21,150 lines of Go (+ ~25,930 lines of tests) |
+| Codebase | ~21,160 lines of Go (+ ~25,930 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -111,8 +111,8 @@ docgraph pack disable [--workspace] <pack-id> <path>             # Disable a dom
 docgraph index [--force] [--threshold N] [--no-gitignore] [--no-history] <path>  # Index a project
 docgraph sync [--threshold N] [--no-gitignore] [--no-history] <path>             # Incremental hash-based update
 docgraph status <path>                       # Print index stats
-docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--max-watches N] [--enable-embeddings] [--enable-enrichment] [--no-reconcile-on-start] --path <path>     # MCP stdio server (single project)
-docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--max-watches N] [--enable-embeddings] [--enable-enrichment] [--no-reconcile-on-start] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
+docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--max-watches N] [--enable-embeddings] [--enable-enrichment] --path <path>     # MCP stdio server (single project)
+docgraph serve [--threshold N] [--no-gitignore] [--no-history] [--max-watches N] [--enable-embeddings] [--enable-enrichment] --workspace <dir> # MCP stdio server (auto-discover all child dirs)
 docgraph version                             # Print build version
 ```
 

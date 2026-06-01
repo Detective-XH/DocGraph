@@ -42,7 +42,6 @@ func cmdServe(args []string) {
 	fset.Float64Var(&similarityThreshold, "threshold", 0, "Similarity threshold for similar_to edges (default 0.25)")
 	enableEmbeddings := fset.Bool("enable-embeddings", false, "Register docgraph_embeddings (sends content to external LLM provider)")
 	enableEnrichment := fset.Bool("enable-enrichment", false, "Register docgraph_enrichment (sends content to external LLM provider)")
-	noReconcileOnStart := fset.Bool("no-reconcile-on-start", false, "Skip the startup deletion-reconcile pass (downtime-deleted files stay until index --force)")
 	// Cap fsnotify watches per process to bound open fds: on macOS (kqueue) every
 	// watched dir/file is one fd, so recursively watching a large workspace —
 	// multiplied across every concurrent serve (one per MCP client) — can exhaust
@@ -80,7 +79,10 @@ func cmdServe(args []string) {
 		doSync := func() {
 			defer setIndexing(false)
 			w.IndexAll()
-			if warm && !*noReconcileOnStart {
+			// Always reconcile on a warm start (no opt-out): an LLM-first guarantee that a
+			// restart never serves nodes for files deleted while serve was down. A cold start
+			// ⟹ fresh DB ⟹ nothing absent, so `warm` is a pure no-op skip, not a behavioral knob.
+			if warm {
 				for _, proj := range w.Projects {
 					reconcileDeletedFiles(proj.Path, proj.Store) // PARITY: keep in sync with the single --path branch
 				}
@@ -125,7 +127,8 @@ func cmdServe(args []string) {
 			if err := indexStore(absRoot, st, false); err != nil {
 				fmt.Fprintf(os.Stderr, "[sync] %v\n", err)
 			}
-			if warm && !*noReconcileOnStart {
+			// Always reconcile on a warm start (no opt-out — see the --workspace branch note).
+			if warm {
 				reconcileDeletedFiles(absRoot, st) // PARITY: keep in sync with the --workspace branch
 			}
 		}
