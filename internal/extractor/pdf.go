@@ -11,7 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/ledongthuc/pdf"
+	"github.com/Detective-XH/pdf"
 
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -26,7 +26,7 @@ const (
 )
 
 func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
-	// Write src to a temp file since ledongthuc/pdf requires a file path.
+	// Write src to a temp file since Detective-XH/pdf requires a file path.
 	tmp, err := os.CreateTemp("", "docgraph-pdf-*.pdf")
 	if err != nil {
 		return nil, fmt.Errorf("extractPDF: create temp file: %w", err)
@@ -88,7 +88,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 			}
 		}
 
-		// Phase 0 (detection/triage, not a CJK fix): ledongthuc/pdf decodes
+		// Phase 0 (detection/triage, not a CJK fix): Detective-XH/pdf decodes
 		// fonts whose Encoding is an unrecognised predefined CMap name (e.g.
 		// UniGB-UCS2-H) via a no-op encoder — raw 2-byte CIDs pass through as
 		// U+FFFD garbage with a NIL error. Detect such fonts by name and skip
@@ -306,7 +306,7 @@ func extractPageURIs(page pdf.Page, relPath string, pageNum int) []parser.RawLin
 }
 
 // pageUnsupportedEncoding reports whether any of the page's named fonts declares
-// a predefined CMap name that ledongthuc/pdf cannot decode (it falls through to
+// a predefined CMap name that Detective-XH/pdf cannot decode (it falls through to
 // a no-op encoder, yielding U+FFFD garbage with a nil error). Returns the first
 // such CMap name; the returned name is always one of the constants matched by
 // isUnsupportedCMapName, never attacker-controlled free text.
@@ -333,7 +333,7 @@ func pageUnsupportedEncoding(fontNames []string, fonts map[string]*pdf.Font) (st
 }
 
 // isUnsupportedCMapName reports whether a font Encoding name is a predefined
-// CMap that ledongthuc/pdf does not implement (it recognises only
+// CMap that Detective-XH/pdf does not implement (it recognises only
 // WinAnsiEncoding, MacRomanEncoding, and Identity-H). These predefined CJK
 // CMaps decode to garbage via the library's no-op encoder. Fixing them is
 // Phase 2 (fork); Phase 0 only detects and skips.
@@ -354,7 +354,7 @@ func isUnsupportedCMapName(name string) bool {
 }
 
 // replacementCharRatio returns the fraction of runes in s equal to the Unicode
-// replacement character (U+FFFD). ledongthuc/pdf's no-op encoder emits U+FFFD
+// replacement character (U+FFFD). Detective-XH/pdf's no-op encoder emits U+FFFD
 // for every byte it cannot decode, and U+FFFD is itself valid UTF-8 — so a high
 // ratio (not utf8.ValidString, which always passes) is the reliable signal of
 // encoding garbage from an unlisted CMap. Returns 0 for the empty string.

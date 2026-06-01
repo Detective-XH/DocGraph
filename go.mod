@@ -3,8 +3,8 @@ module github.com/Detective-XH/docgraph
 go 1.25.5
 
 require (
+	github.com/Detective-XH/pdf v0.1.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/mark3labs/mcp-go v0.54.1
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/net v0.55.0
