@@ -12,6 +12,8 @@ env:
 jobs:
   test:
     runs-on: ${{ matrix.os }}
+    env:
+      GOFLAGS: -mod=readonly  # prevents go.sum from being modified during build/test; go mod verify (below) is the checksum-DB gate
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
