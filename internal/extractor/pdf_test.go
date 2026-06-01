@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // ensurePDFFixtures creates sample.pdf and scanned.pdf under testdata/multiformat/
@@ -38,10 +40,15 @@ func ensurePDFFixtures(t testing.TB) {
 	}
 }
 
-// buildMinimalPDF generates a valid minimal PDF with one page per entry in texts.
-// Each text string is rendered with (text) Tj inside a BT...ET block.
-// Byte offsets in the xref table are computed dynamically.
+// buildMinimalPDF generates a valid minimal PDF with one page per entry in texts
+// using the default font (no Encoding override).
 func buildMinimalPDF(texts []string) []byte {
+	return buildMinimalPDFEnc(texts, "")
+}
+
+// buildMinimalPDFEnc generates a valid minimal PDF with one page per entry in texts.
+// If fontEncoding is non-empty, the font object includes /Encoding /<fontEncoding>.
+func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 	numPages := len(texts)
 	// Object IDs (1-indexed):
 	//   1       = Catalog
@@ -87,9 +94,13 @@ func buildMinimalPDF(texts []string) []byte {
 			contentsObjID, len(stream), stream))
 	}
 
+	fontDict := "<</Type /Font /Subtype /Type1 /BaseFont /Helvetica"
+	if fontEncoding != "" {
+		fontDict += " /Encoding /" + fontEncoding
+	}
+	fontDict += ">>"
 	offsets[fontObjID] = buf.Len()
-	buf.WriteString(fmt.Sprintf(
-		"%d 0 obj<</Type /Font /Subtype /Type1 /BaseFont /Helvetica>>endobj\n", fontObjID))
+	buf.WriteString(fmt.Sprintf("%d 0 obj%sendobj\n", fontObjID, fontDict))
 
 	xrefOffset := buf.Len()
 	buf.WriteString(fmt.Sprintf("xref\n0 %d\n", totalObjs+1))
@@ -216,6 +227,97 @@ func TestExtractPDF_Scanned(t *testing.T) {
 	}
 }
 
+func TestExtractPDF_UnsupportedEncoding(t *testing.T) {
+	data := buildMinimalPDFEnc([]string{"some cjk page text"}, "UniGB-UCS2-H")
+	relPath := "testdata/multiformat/cjk_unsupported.pdf"
+	hash := sha256hex(data)
+
+	tmp, err := os.CreateTemp("", "docgraph-test-*.pdf")
+	if err != nil {
+		t.Fatalf("create temp: %v", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		t.Fatalf("write temp: %v", err)
+	}
+	tmp.Close()
+
+	result, err := extractPDF(tmp.Name(), relPath, data, hash)
+	if err != nil {
+		t.Fatalf("extractPDF: unexpected error: %v", err)
+	}
+
+	// Must have the unsupported-encoding warning.
+	wantWarning := "extraction-failed:unsupported-encoding:UniGB-UCS2-H"
+	foundWarning := false
+	for _, mt := range result.MetadataTuples {
+		if mt.Key == "warning" && mt.Value == wantWarning {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected MetadataTuple{warning, %q}, got: %v", wantWarning, result.MetadataTuples)
+	}
+
+	// Must NOT have image-only-pdf (that would be a false signal).
+	for _, mt := range result.MetadataTuples {
+		if mt.Key == "warning" && mt.Value == "image-only-pdf" {
+			t.Errorf("unexpected image-only-pdf warning; unsupported-encoding should suppress it")
+		}
+	}
+
+	// Must have section chunks (page nodes exist, text is empty but chunks are present).
+	if len(result.SectionChunks) == 0 {
+		t.Error("expected at least one SectionChunk, got none")
+	}
+	for i, chunk := range result.SectionChunks {
+		if chunk.Text != "" {
+			t.Errorf("SectionChunks[%d].Text = %q; want empty (encoding skipped)", i, chunk.Text)
+		}
+	}
+}
+
+func TestReplacementCharRatio(t *testing.T) {
+	tests := []struct {
+		name string
+		s    string
+		want float64
+	}{
+		{"empty", "", 0},
+		{"no replacement", "hello world", 0},
+		{"all replacement", string([]rune{utf8.RuneError, utf8.RuneError, utf8.RuneError, utf8.RuneError}), 1.0},
+		{"half replacement", "ab" + string([]rune{utf8.RuneError, utf8.RuneError}), 0.5},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := replacementCharRatio(tt.s)
+			if got != tt.want {
+				t.Errorf("replacementCharRatio(%q) = %v; want %v", tt.s, got, tt.want)
+			}
+		})
+	}
+	// Sanity: garbageReplacementRatio threshold is between 0 and 1.
+	if garbageReplacementRatio <= 0 || garbageReplacementRatio >= 1 {
+		t.Errorf("garbageReplacementRatio = %v; want in (0, 1)", garbageReplacementRatio)
+	}
+}
+
+func TestSanitizeWarningDetail(t *testing.T) {
+	// Control characters are stripped.
+	got := sanitizeWarningDetail("abc\x00\x01\x1fdef")
+	if got != "abcdef" {
+		t.Errorf("sanitizeWarningDetail stripped controls: got %q; want %q", got, "abcdef")
+	}
+
+	// Length is bounded at 120.
+	long := strings.Repeat("x", 200)
+	got = sanitizeWarningDetail(long)
+	if len(got) > 120 {
+		t.Errorf("sanitizeWarningDetail length = %d; want ≤ 120", len(got))
+	}
+}
+
 func TestExtractPDF_TooManyPages(t *testing.T) {
 	// Building a >500-page PDF programmatically would produce a multi-MB file
 	// (each page needs its own content stream and xref entry).
@@ -233,10 +335,14 @@ func FuzzExtractPDF(f *testing.F) {
 		// Fixture not yet built — seed with an inline minimal PDF.
 		f.Add(buildMinimalPDF([]string{"hello fuzz"}))
 	}
+	// CJK encoding seed: exercises the unsupported-encoding detection path.
+	f.Add(buildMinimalPDFEnc([]string{"cjk"}, "UniGB-UCS2-H"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Exercise the production dispatch entry (Extract), which carries the
 		// panic-recovery guard. Must not panic; errors are acceptable.
+		// plaintext-error branch is exercised under fuzz / TestExtractMalformedPDFDoesNotPanic;
+		// encoding-garbage e2e is hard to fixture deterministically, covered by TestReplacementCharRatio.
 		hash := sha256hex(data)
 		result, _ := Extract("/tmp/fuzz-input.pdf", "fuzz/input.pdf", data, hash)
 		if result != nil && result.DocNode.ID != "fuzz/input.pdf" {
