@@ -278,6 +278,46 @@ func TestExtractPDF_UnsupportedEncoding(t *testing.T) {
 	}
 }
 
+// TestExtractPDF_RealModeB1 is the Phase -1 fixture gate: it exercises a real
+// Mode B1 PDF from the mozilla/pdf.js test corpus (Apache 2.0).
+// Source: https://github.com/mozilla/pdf.js/blob/master/test/pdfs/90ms_rksj_h_sample.pdf
+// The font HeiseiMin-W3 uses /90ms-RKSJ-H (predefined CMap) with no /ToUnicode.
+func TestExtractPDF_RealModeB1(t *testing.T) {
+	fixturePath := testdataDir(t) + "/cjk_sample.pdf"
+	src, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read cjk_sample.pdf: %v", err)
+	}
+	hash := sha256hex(src)
+
+	result, err := extractPDF(fixturePath, "testdata/multiformat/cjk_sample.pdf", src, hash)
+	if err != nil {
+		t.Fatalf("extractPDF: %v", err)
+	}
+
+	wantWarning := "extraction-failed:unsupported-encoding:90ms-RKSJ-H"
+	foundWarning := false
+	for _, mt := range result.MetadataTuples {
+		if mt.Key == "warning" && mt.Value == wantWarning {
+			foundWarning = true
+		}
+		if mt.Key == "warning" && mt.Value == "image-only-pdf" {
+			t.Errorf("unexpected image-only-pdf; should be suppressed by unsupported-encoding path")
+		}
+	}
+	if !foundWarning {
+		t.Errorf("expected warning=%q; got tuples: %v", wantWarning, result.MetadataTuples)
+	}
+	if len(result.SectionChunks) == 0 {
+		t.Error("expected at least one SectionChunk")
+	}
+	for i, chunk := range result.SectionChunks {
+		if chunk.Text != "" {
+			t.Errorf("SectionChunks[%d].Text should be empty for unsupported-encoding page", i)
+		}
+	}
+}
+
 func TestReplacementCharRatio(t *testing.T) {
 	tests := []struct {
 		name string
