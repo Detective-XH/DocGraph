@@ -149,6 +149,84 @@ func TestHandleSearch_DistinctFileFooter_MultiFile(t *testing.T) {
 	}
 }
 
+// TestHandleSearch_DistinctFileFooter_Truncated verifies that when the result
+// set is capped at the limit (len(results) >= limit), the footer contains the
+// page-scope caveat explaining that the distinct-file count is page-bounded and
+// not a corpus-wide total. Uses limit=2 with ≥3 matching rows so the cap fires.
+func TestHandleSearch_DistinctFileFooter_Truncated(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	// Insert three document nodes that all match "trunckeyword".
+	// With limit=2 the search will return exactly 2 rows (capped), triggering
+	// the page-scope branch. Each node lives in a separate file so distinctFiles
+	// would grow if the limit were raised (mirrors the probe v5 scenario).
+	nodes := []store.Node{
+		{
+			ID:            "file-a.md",
+			Kind:          "document",
+			Name:          "File A",
+			QualifiedName: "file-a.md",
+			FilePath:      "file-a.md",
+			StartLine:     1,
+			EndLine:       10,
+			BodyExcerpt:   "content with trunckeyword",
+			UpdatedAt:     1,
+		},
+		{
+			ID:            "file-b.md",
+			Kind:          "document",
+			Name:          "File B",
+			QualifiedName: "file-b.md",
+			FilePath:      "file-b.md",
+			StartLine:     1,
+			EndLine:       10,
+			BodyExcerpt:   "content with trunckeyword",
+			UpdatedAt:     1,
+		},
+		{
+			ID:            "file-c.md",
+			Kind:          "document",
+			Name:          "File C",
+			QualifiedName: "file-c.md",
+			FilePath:      "file-c.md",
+			StartLine:     1,
+			EndLine:       10,
+			BodyExcerpt:   "content with trunckeyword",
+			UpdatedAt:     1,
+		},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatalf("InsertNodes: %v", err)
+	}
+
+	// limit=2 forces a cap when 3 rows match — len(results)==limit fires the branch.
+	res, err := callTool(h, h.handleSearch, map[string]any{
+		"query": "trunckeyword",
+		"limit": float64(2),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %v", res.Content)
+	}
+
+	text := extractText(res)
+
+	// A16 invariant: both branches must retain this exact substring.
+	if !strings.Contains(text, "distinct file(s) — count distinct files, not rows") {
+		t.Errorf("A16 substring missing from truncated footer:\n%s", text)
+	}
+
+	// Page-scope note must be present when capped.
+	if !strings.Contains(text, "page count, not a corpus-wide distinct-document total") {
+		t.Errorf("expected page-scope caveat in truncated footer, got:\n%s", text)
+	}
+	if !strings.Contains(text, "capped at limit=") {
+		t.Errorf("expected 'capped at limit=' in truncated footer, got:\n%s", text)
+	}
+}
+
 // TestHandleSearch_NoFooterOnZeroResults verifies that the footer is suppressed
 // when the search returns 0 results.
 func TestHandleSearch_NoFooterOnZeroResults(t *testing.T) {

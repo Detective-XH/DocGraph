@@ -135,8 +135,19 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 
 	if len(results) > 0 {
 		distinctFiles := len(seenFiles)
-		fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows.)\n",
-			len(results), distinctFiles)
+		if len(results) >= limit {
+			// Capped at limit= → distinctFiles is PAGE-SCOPED (only the distinct files
+			// among the rows shown) and grows as limit rises (AX probe v5
+			// limit-dependent-count-instability: K=6/8/11/34 at limit 10/15/50/100 for a
+			// broad query). Tell a weak agent the count is a page total, not a corpus-wide
+			// distinct-document total, so raising limit does not produce a silent
+			// over-count. Mirrors docgraph_graph's "first N of M" truncation honesty. (P-v5-1)
+			fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows. Results were capped at limit=%d; more matching rows and more distinct files likely exist (raise limit=), so this %d is a page count, not a corpus-wide distinct-document total.)\n",
+				len(results), distinctFiles, limit, distinctFiles)
+		} else {
+			fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows.)\n",
+				len(results), distinctFiles)
+		}
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil

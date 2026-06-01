@@ -20,9 +20,9 @@ When the goal is to gather everything about a topic and you have no seed documen
 
 When you already have a specific seed document and need everything related to it, call BOTH docgraph_similar AND docgraph_graph incoming+outgoing — they return DISJOINT related reading, so relying on only one silently under-answers; docgraph_context is topic/keyword-based and does not compose that union.
 
-When enumerating or counting, count DISTINCT DOCUMENTS (use the "distinct" / "Found N documents" counts the tools report) — one document may describe several PRs, changes, or items in its body, which are parts of that one document, not separate results.
+When enumerating or counting, count DISTINCT DOCUMENTS (use the "distinct" / "Found N documents" counts the tools report) — one document may describe several PRs, changes, or items in its body, which are parts of that one document, not separate results. For "list / enumerate ALL documents about X" intents, docgraph_files and docgraph_tags give complete recall; docgraph_search is relevance-ranked and may miss documents phrased differently.
 
-docgraph_context format= supports context_pack and drift_audit modes.
+docgraph_context format= supports context_pack and drift_audit modes. To find which documents are stale, superseded, or shipped-vs-still-open, run docgraph_context format=drift_audit.
 docgraph_search adds governance filters (status=, sensitivity=, canonical_source=, allowed_audience=, as_of_date=), research filters (claim_id=, source_type=, confidence=, analyst_status=), and entity graph filters (entity_type=, entity_id=).
 
 ## Typical flow

@@ -15,7 +15,7 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
-const maxInstructionsBytes = 4000
+const maxInstructionsBytes = 4400 // bumped from 4000: earned by P-v5-3 + P-v5-4 drift_audit trigger + enumerate recall note (~303 bytes)
 
 // Suite A — default (no flags): 10 tools
 func TestToolSurfaceRegistryDefault(t *testing.T) {
@@ -109,6 +109,18 @@ func TestToolSurfaceInstructionsStayCompact(t *testing.T) {
 func TestServerInstructionsFitBudget(t *testing.T) {
 	if len(serverInstructions) > maxInstructionsBytes {
 		t.Fatalf("serverInstructions is %d bytes; must be <= %d to fit injection budget", len(serverInstructions), maxInstructionsBytes)
+	}
+}
+
+// TestServerInstructionsV5Guidance asserts the two AX probe v5 guidance strings
+// are present (P-v5-3 drift_audit trigger and P-v5-4 enumerate-recall note).
+// The substrings are deploy-gate anchors — keep them verbatim.
+func TestServerInstructionsV5Guidance(t *testing.T) {
+	if !strings.Contains(serverInstructions, "shipped-vs-still-open") {
+		t.Fatal("serverInstructions must contain 'shipped-vs-still-open' (P-v5-3 drift_audit trigger)")
+	}
+	if !strings.Contains(serverInstructions, "give complete recall") {
+		t.Fatal("serverInstructions must contain 'give complete recall' (P-v5-4 enumerate-recall note)")
 	}
 }
 
