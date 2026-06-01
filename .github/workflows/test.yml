@@ -26,6 +26,22 @@ jobs:
       - run: go test -race -count=1 -timeout 120s ./...
       - run: go build -o /dev/null .
 
+  gofmt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+      - name: Check gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These Go files are not gofmt-clean — run 'gofmt -w' on them:"
+            echo "$unformatted"
+            exit 1
+          fi
+
   govulncheck:
     runs-on: ubuntu-latest
     steps:

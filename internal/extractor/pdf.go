@@ -277,8 +277,6 @@ func extractPageURIs(page pdf.Page, relPath string, pageNum int) []parser.RawLin
 	return links
 }
 
-
-
 // replacementCharRatio returns the fraction of runes in s equal to the Unicode
 // replacement character (U+FFFD). Detective-XH/pdf's no-op encoder emits U+FFFD
 // for every byte it cannot decode, and U+FFFD is itself valid UTF-8 — so a high

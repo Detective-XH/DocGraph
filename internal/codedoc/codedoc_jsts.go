@@ -183,7 +183,7 @@ func extractFromJSBlock(src []byte, lineOffset int, relPath, lang, fileType stri
 
 		// -- Test calls --
 		// Try the chained .each(table)('name') pattern first (more specific).
-		if loc := testEachRe.FindStringSubmatchIndex(line); loc != nil && len(loc) >= 4 {
+		if loc := testEachRe.FindStringSubmatchIndex(line); len(loc) >= 4 {
 			quoteChar := line[loc[2]:loc[3]]
 			rest := line[loc[3]:]
 			name := extractStringUntilClose(rest, quoteChar)
@@ -201,7 +201,7 @@ func extractFromJSBlock(src []byte, lineOffset int, relPath, lang, fileType stri
 			continue
 		}
 		// Multi-line test.each continuation: ])('name', ...) on its own line.
-		if loc := testEachContinuationRe.FindStringSubmatchIndex(line); loc != nil && len(loc) >= 4 {
+		if loc := testEachContinuationRe.FindStringSubmatchIndex(line); len(loc) >= 4 {
 			quoteChar := line[loc[2]:loc[3]]
 			rest := line[loc[3]:]
 			name := extractStringUntilClose(rest, quoteChar)
@@ -221,7 +221,7 @@ func extractFromJSBlock(src []byte, lineOffset int, relPath, lang, fileType stri
 		if m := testCallRe.FindStringIndex(line); m != nil {
 			// Find the opening quote
 			loc := testCallRe.FindStringSubmatchIndex(line)
-			if loc != nil && len(loc) >= 4 {
+			if len(loc) >= 4 {
 				quoteChar := line[loc[2]:loc[3]] // the captured quote character
 				rest := line[loc[3]:]            // everything after the opening quote
 				name := extractStringUntilClose(rest, quoteChar)

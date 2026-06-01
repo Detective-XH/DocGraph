@@ -366,7 +366,6 @@ func contextPackDocIDFromNodeCache(nodeID string, cache map[string]*store.Node) 
 	return nodeID
 }
 
-
 func contextPackNodeLabel(node *store.Node, fallback string) string {
 	if node == nil {
 		return fallback

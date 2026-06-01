@@ -42,7 +42,7 @@ func TestAppendEntitySection(t *testing.T) {
 		for _, want := range []string{
 			"### Entity References",
 			"- Ada Lovelace (aka Ada, A. Lovelace) [reference] line 12",
-			"- Acme Corp [definition]\n",       // no aliases, no line
+			"- Acme Corp [definition]\n",              // no aliases, no line
 			"- entity:uuid-unknown [wikilink] line 3", // unresolved → UUID fallback
 		} {
 			if !strings.Contains(out, want) {

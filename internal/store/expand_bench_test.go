@@ -60,7 +60,7 @@ func seedExpandCorpus(tb testing.TB, st *Store, nDocs int) int {
 				hName = capitalize(word()) + " " + capitalize(word())
 			}
 			nodes = append(nodes, Node{
-				ID:   fmt.Sprintf("%s#h%d", path, h), Kind: "heading",
+				ID: fmt.Sprintf("%s#h%d", path, h), Kind: "heading",
 				Name: hName, QualifiedName: fmt.Sprintf("%s#h%d", path, h),
 				FilePath: path, StartLine: 10 + h*20, EndLine: 29 + h*20,
 				Level: 1 + h%3, UpdatedAt: nowUnix,
