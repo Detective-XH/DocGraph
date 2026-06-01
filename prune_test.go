@@ -180,3 +180,150 @@ func TestPruneDeletedFiles_NeverIndexed(t *testing.T) {
 		t.Fatalf("expected pruned=0 for never-indexed path, got %d", pruned)
 	}
 }
+
+// TestReconcileDeletedFiles_GapCloser (T1) is the discriminating test: it closes
+// the downtime-deletion gap that the event-driven pruneDeletedFiles cannot see.
+// Index X.md + Y.md, assert X's node EXISTS first (proves the test would catch a
+// no-op), delete X.md from disk, reconcile, then assert X is GONE and Y survives.
+// Two files < pruneBlastRadiusMinFiles so the ratio gate is skipped and X is pruned.
+func TestReconcileDeletedFiles_GapCloser(t *testing.T) {
+	dir, st := openPruneTestStore(t)
+	const (
+		xPath = "vanished.md"
+		yPath = "present.md"
+	)
+	indexPruneTestFile(t, dir, st, yPath, "# Present\n\nstays on disk.\n")
+	indexPruneTestFile(t, dir, st, xPath, "# Vanished\n\ngap-closer marker.\n")
+
+	// Pre-condition: X's node EXISTS before reconcile — proves the test discriminates.
+	if n := nodeCountSQL(t, dir, xPath); n == 0 {
+		t.Fatalf("pre-condition failed: expected X (%s) to have >0 nodes before reconcile", xPath)
+	}
+
+	// Delete X.md from disk while no watcher saw it (the downtime-deletion gap).
+	if err := os.Remove(filepath.Join(dir, xPath)); err != nil {
+		t.Fatal(err)
+	}
+
+	pruned := reconcileDeletedFiles(dir, st)
+	if pruned != 1 {
+		t.Fatalf("expected reconcile to prune 1 file, got %d", pruned)
+	}
+
+	// X is GONE, Y survives.
+	if n := nodeCountSQL(t, dir, xPath); n != 0 {
+		t.Errorf("expected 0 nodes for deleted X (%s) after reconcile, got %d", xPath, n)
+	}
+	if n := nodeCountSQL(t, dir, yPath); n == 0 {
+		t.Errorf("expected present file Y (%s) to survive reconcile, got 0 nodes", yPath)
+	}
+}
+
+// TestReconcileDeletedFiles_BlastRadius (T2) pins the >50% blast-radius refusal.
+// Index >=pruneBlastRadiusMinFiles files, delete >50% of them from disk, and assert
+// reconcile returns 0 (refused) and every node is INTACT. Guard 2 fires on > 0.5,
+// so with 10 files we delete 6 (0.6 > 0.5) to land strictly above the threshold.
+func TestReconcileDeletedFiles_BlastRadius(t *testing.T) {
+	dir, st := openPruneTestStore(t)
+	const total = pruneBlastRadiusMinFiles // 10 — at/above the floor so the ratio gate is live
+	const toDelete = 6                     // 6/10 = 0.6 > 0.5 → refused
+	paths := make([]string, total)
+	for i := range total {
+		paths[i] = "doc" + string(rune('0'+i)) + ".md"
+		indexPruneTestFile(t, dir, st, paths[i], "# Doc\n\nblast-radius marker.\n")
+	}
+	for i := range toDelete {
+		if err := os.Remove(filepath.Join(dir, paths[i])); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	pruned := reconcileDeletedFiles(dir, st)
+	if pruned != 0 {
+		t.Fatalf("expected reconcile to REFUSE (return 0) above blast radius, got %d", pruned)
+	}
+
+	// Every node is intact — including the deleted-on-disk ones (refusal = no prune).
+	for _, p := range paths {
+		if n := nodeCountSQL(t, dir, p); n == 0 {
+			t.Errorf("expected %s nodes intact after refused reconcile, got 0", p)
+		}
+	}
+}
+
+// TestReconcileDeletedFiles_TreeGone (T3) verifies Guard 1: when the project root is
+// not accessible, reconcile is a no-op (returns 0, no panic, no prune). To make the
+// test DISCRIMINATING, the DB has 1 indexed file (< pruneBlastRadiusMinFiles, so Guard
+// 2 can't also catch it) — with Guard 1 removed, 1 file < 10 → ratio gate skipped →
+// the file WOULD be pruned. The surviving node proves Guard 1 is what stopped it.
+func TestReconcileDeletedFiles_TreeGone(t *testing.T) {
+	dir, st := openPruneTestStore(t)
+	const relPath = "lonely.md"
+	indexPruneTestFile(t, dir, st, relPath, "# Lonely\n\ntree-gone marker.\n")
+	if n := nodeCountSQL(t, dir, relPath); n == 0 {
+		t.Fatalf("pre-condition failed: expected %s to have >0 nodes", relPath)
+	}
+
+	bogusRoot := filepath.Join(dir, "does", "not", "exist")
+	pruned := reconcileDeletedFiles(bogusRoot, st)
+	if pruned != 0 {
+		t.Fatalf("expected reconcile to skip (return 0) for inaccessible root, got %d", pruned)
+	}
+
+	// The indexed file SURVIVES — Guard 1 short-circuited before any per-file Stat.
+	if n := nodeCountSQL(t, dir, relPath); n == 0 {
+		t.Errorf("expected %s to survive reconcile against a missing tree, got 0 nodes", relPath)
+	}
+}
+
+// TestReconcileDeletedFiles_PresentFileKept (T4) proves the per-file Stat keeps files
+// that are present on disk: an unmodified, still-present file is never pruned.
+func TestReconcileDeletedFiles_PresentFileKept(t *testing.T) {
+	dir, st := openPruneTestStore(t)
+	const relPath = "kept.md"
+	indexPruneTestFile(t, dir, st, relPath, "# Kept\n\npresent-file marker.\n")
+
+	pruned := reconcileDeletedFiles(dir, st)
+	if pruned != 0 {
+		t.Fatalf("expected reconcile to prune nothing for a present file, got %d", pruned)
+	}
+	if n := nodeCountSQL(t, dir, relPath); n == 0 {
+		t.Errorf("expected present file %s to keep its nodes, got 0", relPath)
+	}
+}
+
+// TestReconcileDeletedFiles_BelowFloor (T5) pins the absolute-floor semantics: with
+// fewer than pruneBlastRadiusMinFiles indexed files, the >50% ratio gate is SKIPPED,
+// so a tiny project where most files were deleted DOES get reconciled. Here 2 files,
+// delete both (100% > 50%) — below the floor the deletes still happen.
+func TestReconcileDeletedFiles_BelowFloor(t *testing.T) {
+	dir, st := openPruneTestStore(t)
+	const (
+		aPath = "a.md"
+		bPath = "b.md"
+	)
+	indexPruneTestFile(t, dir, st, aPath, "# A\n\nbelow-floor marker A.\n")
+	indexPruneTestFile(t, dir, st, bPath, "# B\n\nbelow-floor marker B.\n")
+	// Sanity: 2 < floor, so the ratio gate must NOT engage even at 100% deletion.
+	if total := 2; total >= pruneBlastRadiusMinFiles {
+		t.Fatalf("test assumes 2 < pruneBlastRadiusMinFiles (%d)", pruneBlastRadiusMinFiles)
+	}
+
+	if err := os.Remove(filepath.Join(dir, aPath)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, bPath)); err != nil {
+		t.Fatal(err)
+	}
+
+	pruned := reconcileDeletedFiles(dir, st)
+	if pruned != 2 {
+		t.Fatalf("expected reconcile to prune both files below the floor, got %d", pruned)
+	}
+	if n := nodeCountSQL(t, dir, aPath); n != 0 {
+		t.Errorf("expected 0 nodes for %s after below-floor reconcile, got %d", aPath, n)
+	}
+	if n := nodeCountSQL(t, dir, bPath); n != 0 {
+		t.Errorf("expected 0 nodes for %s after below-floor reconcile, got %d", bPath, n)
+	}
+}
