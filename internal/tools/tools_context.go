@@ -94,8 +94,8 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 
 	format := strings.ToLower(strings.TrimSpace(getStringArg(args, "format", "")))
 	if format == "context_pack" || format == "evidence_pack" {
-		impactDepth := getIntArg(args, "impactDepth", 1)
-		referenceLimit := getIntArg(args, "referenceLimit", 5)
+		impactDepth := getIntArgClamped(args, "impactDepth", 1, 1, 3)
+		referenceLimit := getIntArgClamped(args, "referenceLimit", 5, 1, 20)
 		return mcp.NewToolResultText(h.renderContextPack(task, results, contextPackOptions{
 			IncludeContent:  includeContent,
 			MaxContentBytes: maxContentBytes,
