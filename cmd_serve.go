@@ -83,9 +83,7 @@ func cmdServe(args []string) {
 			// restart never serves nodes for files deleted while serve was down. A cold start
 			// ⟹ fresh DB ⟹ nothing absent, so `warm` is a pure no-op skip, not a behavioral knob.
 			if warm {
-				for _, proj := range w.Projects {
-					reconcileDeletedFiles(proj.Path, proj.Store) // PARITY: keep in sync with the single --path branch
-				}
+				reconcileWorkspaceProjects(w.Projects) // PARITY: single --path branch calls reconcileDeletedFiles directly
 			}
 		}
 		if !warm {
