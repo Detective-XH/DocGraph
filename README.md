@@ -78,7 +78,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~18 MB |
-| Codebase | ~21,140 lines of Go (+ ~24,870 lines of tests) |
+| Codebase | ~21,070 lines of Go (+ ~24,900 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -287,7 +287,7 @@ nodes when the `code_doc` domain pack is enabled.
 - Each page becomes a `heading` node and a section chunk
 - Info-dict fields (Title, Author, Subject, Keywords, CreationDate) indexed as metadata tuples
 - Image-only PDFs detected via average chars/page and flagged with `warning: image-only-pdf`
-- Extraction failures and fonts using unsupported predefined CMaps (e.g. `UniGB-UCS2-H`) are flagged with a `warning: extraction-failed:…` tuple and the affected page is skipped rather than indexed with replacement-character garbage (CJK text via such fonts is not yet searchable — a known limitation)
+- Extraction failures and fonts using still-unsupported predefined CMaps (e.g. `GBK-EUC-H`, `ETen-B5-H`) are flagged with a `warning: extraction-failed:…` tuple and the affected page is skipped rather than indexed with replacement-character garbage. `Uni*-UCS2-*` CMaps (UniGB, UniCNS, UniJIS, UniKS) and `90ms-RKSJ-*` (Shift-JIS) are now decoded correctly
 
 **Code documentation surfaces (opt-in)** — up to 1 MB per file:
 - Enable the `code_doc` domain pack to index file headers, exported doc comments, test names, and example names:
