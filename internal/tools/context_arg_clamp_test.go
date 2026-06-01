@@ -106,9 +106,9 @@ func TestHandleContext_PayloadOverflowNotice(t *testing.T) {
 			Name:          fmt.Sprintf("Auth Doc %d", i),
 			QualifiedName: fmt.Sprintf("overflow%d.md", i),
 			FilePath:      fmt.Sprintf("overflow%d.md", i),
-			StartLine: 1, EndLine: 50,
+			StartLine:     1, EndLine: 50,
 			BodyExcerpt: bigExcerpt,
-			UpdatedAt: 1,
+			UpdatedAt:   1,
 		}
 	}
 	if err := st.InsertNodes(nodes); err != nil {
