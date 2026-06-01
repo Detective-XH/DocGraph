@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -87,5 +88,96 @@ func TestHandleContext_ReferenceLimitClampedAtRetrieval(t *testing.T) {
 	// line disappears.
 	if !strings.Contains(text, "more incoming references omitted") {
 		t.Errorf("expected referenceLimit to be clamped to 1 at retrieval (one reference omitted), got:\n%s", text)
+	}
+}
+
+func TestHandleContext_PayloadOverflowNotice(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	// Insert 30 documents so that total rendered output exceeds the 20 KB budget.
+	// Each doc renders to ~1.1 KB (BodyExcerpt capped at 500 B by store.InsertNodes,
+	// no chunk/governance metadata in synthetic nodes); 30 × 1.1 KB ≈ 33 KB > 20 KB threshold.
+	bigExcerpt := strings.Repeat("authentication access control token credential session bearer oauth ", 7)
+	nodes := make([]store.Node, 30)
+	for i := range nodes {
+		nodes[i] = store.Node{
+			ID:            fmt.Sprintf("overflow%d.md", i),
+			Kind:          "document",
+			Name:          fmt.Sprintf("Auth Doc %d", i),
+			QualifiedName: fmt.Sprintf("overflow%d.md", i),
+			FilePath:      fmt.Sprintf("overflow%d.md", i),
+			StartLine: 1, EndLine: 50,
+			BodyExcerpt: bigExcerpt,
+			UpdatedAt: 1,
+		}
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleContext, map[string]any{
+		"task":     "authentication access control token credential session bearer oauth",
+		"maxNodes": float64(30),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+	t.Logf("overflow test: output size = %d bytes", len(text))
+
+	if !strings.Contains(text, "Response budget reached") {
+		t.Errorf("expected truncation notice, got output of %d bytes:\n%s", len(text), text)
+	}
+	if !strings.Contains(text, "omitted") {
+		t.Errorf("expected omitted count in truncation notice; got:\n%s", text)
+	}
+	// At least 1 doc must have been rendered before the notice.
+	if !strings.Contains(text, "Auth Doc 0") {
+		t.Errorf("expected at least the first document to be rendered before truncation; got:\n%s", text)
+	}
+}
+
+func TestHandleContext_PayloadOverflowNotice_SmallQuery(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	bigExcerpt := strings.Repeat("authentication access control token credential session bearer oauth ", 110)
+	// Only 3 docs — well below the 20 KB budget.
+	nodes := []store.Node{
+		{ID: "small0.md", Kind: "document", Name: "Small Doc 0", QualifiedName: "small0.md",
+			FilePath: "small0.md", StartLine: 1, EndLine: 10, BodyExcerpt: bigExcerpt, UpdatedAt: 1},
+		{ID: "small1.md", Kind: "document", Name: "Small Doc 1", QualifiedName: "small1.md",
+			FilePath: "small1.md", StartLine: 1, EndLine: 10, BodyExcerpt: bigExcerpt, UpdatedAt: 1},
+		{ID: "small2.md", Kind: "document", Name: "Small Doc 2", QualifiedName: "small2.md",
+			FilePath: "small2.md", StartLine: 1, EndLine: 10, BodyExcerpt: bigExcerpt, UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleContext, map[string]any{
+		"task":     "authentication access control token credential session bearer oauth",
+		"maxNodes": float64(3),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+	t.Logf("small query test: output size = %d bytes", len(text))
+
+	if strings.Contains(text, "Response budget reached") {
+		t.Errorf("unexpected truncation notice for small (3-doc) response of %d bytes", len(text))
+	}
+	// All 3 docs must appear.
+	for i := range 3 {
+		docName := fmt.Sprintf("Small Doc %d", i)
+		if !strings.Contains(text, docName) {
+			t.Errorf("expected %q in output; got:\n%s", docName, text)
+		}
 	}
 }

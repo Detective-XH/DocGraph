@@ -48,6 +48,15 @@ func headingNames(headings []store.Node) string {
 	return strings.Join(names, ", ")
 }
 
+// maxContextResponseBytes is the soft output-size cap for the summary format.
+// When the rendered payload exceeds this limit mid-loop, remaining documents are
+// skipped and a truncation notice is emitted so the agent can refine the query.
+//
+// Calibrated against workspace mode (23 projects): focused queries (maxNodes≤5)
+// measure ~8–14 KB; broad cross-workspace queries (maxNodes=10) measure ~24–27 KB.
+// 20 KB sits strictly between those bands — below broad queries, above focused ones.
+const maxContextResponseBytes = 20 * 1024
+
 func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	task := getStringArg(args, "task", "")
@@ -193,6 +202,14 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			if mentions, err := st.Entity.GetEntityMentions(node.ID); err == nil {
 				sb.WriteString(appendEntitySection(st.Entity, mentions))
 			}
+		}
+
+		// Check payload budget after rendering each document.
+		if sb.Len() >= maxContextResponseBytes && i < len(deduped)-1 {
+			omitted := len(deduped) - i - 1
+			fmt.Fprintf(&sb, "\n---\n> ⚠ Response budget reached — showing %d of %d documents (%d omitted). Set includeContent=false, reduce maxNodes, or add project=<name> to scope to one project.\n",
+				i+1, len(deduped), omitted)
+			break
 		}
 	}
 
