@@ -333,10 +333,11 @@ func pageUnsupportedEncoding(fontNames []string, fonts map[string]*pdf.Font) (st
 }
 
 // isUnsupportedCMapName reports whether a font Encoding name is a predefined
-// CMap that Detective-XH/pdf does not implement (it recognises only
-// WinAnsiEncoding, MacRomanEncoding, and Identity-H). These predefined CJK
-// CMaps decode to garbage via the library's no-op encoder. Fixing them is
-// Phase 2 (fork); Phase 0 only detects and skips.
+// CMap that Detective-XH/pdf does not implement. These predefined CJK CMaps
+// decode to garbage via the library's no-op encoder; Phase 0 detects and skips them.
+//
+// Implemented (removed from this list as the fork adds decoders):
+//   - 90ms-RKSJ-H/V, 90pv-RKSJ-H  → Shift-JIS via x/text (fork v0.2.0)
 func isUnsupportedCMapName(name string) bool {
 	switch name {
 	case "UniGB-UCS2-H", "UniGB-UCS2-V",
@@ -345,7 +346,6 @@ func isUnsupportedCMapName(name string) bool {
 		"UniKS-UCS2-H", "UniKS-UCS2-V",
 		"GBK-EUC-H", "GBK-EUC-V",
 		"ETen-B5-H", "ETen-B5-V",
-		"90ms-RKSJ-H", "90ms-RKSJ-V",
 		"KSCms-UHC-H", "KSCms-UHC-V":
 		return true
 	default:

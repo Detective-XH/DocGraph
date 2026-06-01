@@ -278,10 +278,11 @@ func TestExtractPDF_UnsupportedEncoding(t *testing.T) {
 	}
 }
 
-// TestExtractPDF_RealModeB1 is the Phase -1 fixture gate: it exercises a real
-// Mode B1 PDF from the mozilla/pdf.js test corpus (Apache 2.0).
+// TestExtractPDF_RealModeB1 exercises a real Shift-JIS (90ms-RKSJ-H) PDF from
+// the mozilla/pdf.js test corpus (Apache 2.0).
 // Source: https://github.com/mozilla/pdf.js/blob/master/test/pdfs/90ms_rksj_h_sample.pdf
 // The font HeiseiMin-W3 uses /90ms-RKSJ-H (predefined CMap) with no /ToUnicode.
+// Fork v0.2.0 added a Shift-JIS decoder, so extraction must now succeed.
 func TestExtractPDF_RealModeB1(t *testing.T) {
 	fixturePath := testdataDir(t) + "/cjk_sample.pdf"
 	src, err := os.ReadFile(fixturePath)
@@ -295,25 +296,27 @@ func TestExtractPDF_RealModeB1(t *testing.T) {
 		t.Fatalf("extractPDF: %v", err)
 	}
 
-	wantWarning := "extraction-failed:unsupported-encoding:90ms-RKSJ-H"
-	foundWarning := false
+	// No unsupported-encoding or image-only-pdf warnings expected.
 	for _, mt := range result.MetadataTuples {
-		if mt.Key == "warning" && mt.Value == wantWarning {
-			foundWarning = true
-		}
-		if mt.Key == "warning" && mt.Value == "image-only-pdf" {
-			t.Errorf("unexpected image-only-pdf; should be suppressed by unsupported-encoding path")
+		if mt.Key == "warning" {
+			t.Errorf("unexpected warning %q", mt.Value)
 		}
 	}
-	if !foundWarning {
-		t.Errorf("expected warning=%q; got tuples: %v", wantWarning, result.MetadataTuples)
+
+	// At least one chunk with non-empty text.
+	var allText string
+	for _, chunk := range result.SectionChunks {
+		allText += chunk.Text
 	}
-	if len(result.SectionChunks) == 0 {
-		t.Error("expected at least one SectionChunk")
+	if allText == "" {
+		t.Fatalf("expected non-empty extracted text; got no text across %d chunks", len(result.SectionChunks))
 	}
-	for i, chunk := range result.SectionChunks {
-		if chunk.Text != "" {
-			t.Errorf("SectionChunks[%d].Text should be empty for unsupported-encoding page", i)
+
+	// The fixture encodes 日本語テスト via HeiseiMin-W3 / 90ms-RKSJ-H.
+	// The Latin page also contains "Hello ASCII" from a WinAnsiEncoding font.
+	for _, want := range []string{"日本語テスト", "Hello ASCII"} {
+		if !strings.Contains(allText, want) {
+			t.Errorf("extracted text missing %q; got: %q", want, allText)
 		}
 	}
 }
