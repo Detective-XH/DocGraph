@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/ledongthuc/pdf"
 
@@ -16,10 +18,11 @@ import (
 )
 
 const (
-	pdfMaxPages         = 500
-	pdfMaxTextLen       = 10 * 1024 // 10 KB per section chunk
-	pdfExcerptLen       = 500       // 500 byte body excerpt cap
-	pdfScannedThreshold = 50        // avg chars/page below which we flag as image-only
+	pdfMaxPages             = 500
+	pdfMaxTextLen           = 10 * 1024 // 10 KB per section chunk
+	pdfExcerptLen           = 500       // 500 byte body excerpt cap
+	pdfScannedThreshold     = 50        // avg chars/page below which we flag as image-only
+	garbageReplacementRatio = 0.3       // U+FFFD rune fraction above which page text is treated as encoding garbage
 )
 
 func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
@@ -69,22 +72,78 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 	var chunks []store.SectionChunk
 	var rawLinks []parser.RawLink
 	var totalChars int
+	var metaTuples []store.MetadataTuple
+	var unsupportedEncoding bool
 
 	pageTexts := make([]string, numPages)
+	seenBadEnc := make(map[string]bool)
 	for n := 1; n <= numPages; n++ {
 		page := r.Page(n)
 		// Cache fonts for performance.
-		for _, name := range page.Fonts() {
+		pageFontNames := page.Fonts()
+		for _, name := range pageFontNames {
 			if _, ok := fonts[name]; !ok {
 				f := page.Font(name)
 				fonts[name] = &f
 			}
 		}
-		text, _ := page.GetPlainText(fonts)
+
+		// Phase 0 (detection/triage, not a CJK fix): ledongthuc/pdf decodes
+		// fonts whose Encoding is an unrecognised predefined CMap name (e.g.
+		// UniGB-UCS2-H) via a no-op encoder — raw 2-byte CIDs pass through as
+		// U+FFFD garbage with a NIL error. Detect such fonts by name and skip
+		// text extraction for the page rather than indexing garbage.
+		var text string
+		if encName, bad := pageUnsupportedEncoding(pageFontNames, fonts); bad {
+			unsupportedEncoding = true
+			if !seenBadEnc[encName] {
+				// One tuple per distinct CMap name per document — the honest
+				// semantic is "this document uses an unsupported encoding", not
+				// "N separate problems" (N = page count).
+				seenBadEnc[encName] = true
+				metaTuples = append(metaTuples, store.MetadataTuple{
+					Key:       "warning",
+					Value:     "extraction-failed:unsupported-encoding:" + encName,
+					ValueType: "string",
+					Source:    "extractor",
+				})
+			}
+		} else {
+			t, err := page.GetPlainText(fonts)
+			if err != nil {
+				// Previously discarded (text, _ :=); surface it so a parse/encoding
+				// failure is visible. The error originates from a third-party parser
+				// on untrusted bytes, so sanitize + bound it and tag it under a fixed
+				// sub-key that cannot be confused with the structured detections above
+				// (prevents metadata/prompt injection via a crafted PDF).
+				metaTuples = append(metaTuples, store.MetadataTuple{
+					Key:       "warning",
+					Value:     "extraction-failed:plaintext-error:" + sanitizeWarningDetail(err.Error()),
+					ValueType: "string",
+					Source:    "extractor",
+				})
+			}
+			if replacementCharRatio(t) >= garbageReplacementRatio {
+				// nopEncoder garbage surfaces as U+FFFD runes, which are valid
+				// UTF-8 — so utf8.ValidString cannot detect it. A high U+FFFD
+				// density is the reliable signal that an unlisted CMap decoded to
+				// replacement characters; discard rather than index the garbage.
+				if err == nil {
+					metaTuples = append(metaTuples, store.MetadataTuple{
+						Key:       "warning",
+						Value:     "extraction-failed:encoding-garbage",
+						ValueType: "string",
+						Source:    "extractor",
+					})
+				}
+				t = ""
+			}
+			text = t
+		}
 		pageTexts[n-1] = text
 		totalChars += len(text)
 
-		// Extract URI annotations from this page.
+		// Extract URI annotations from this page (encoding-independent).
 		rawLinks = append(rawLinks, extractPageURIs(page, relPath, n)...)
 	}
 
@@ -93,7 +152,10 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 	if numPages > 0 {
 		avgChars = totalChars / numPages
 	}
-	isScanned := numPages > 0 && avgChars < pdfScannedThreshold
+	// A document whose text we deliberately skipped due to an unsupported
+	// encoding is NOT image-only; suppress the scanned heuristic so the
+	// extraction-failed:unsupported-encoding warning is the single honest signal.
+	isScanned := numPages > 0 && avgChars < pdfScannedThreshold && !unsupportedEncoding
 
 	// --- Body excerpt from page 1 text (500 byte cap) ---
 	var bodyExcerpt string
@@ -159,7 +221,6 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 	}
 
 	// --- Metadata tuples ---
-	var metaTuples []store.MetadataTuple
 	if docTitle != "" {
 		metaTuples = append(metaTuples, store.MetadataTuple{Key: "pdf.title", Value: docTitle, ValueType: "string", Source: "pdf_info"})
 	}
@@ -242,6 +303,95 @@ func extractPageURIs(page pdf.Page, relPath string, pageNum int) []parser.RawLin
 		})
 	}
 	return links
+}
+
+// pageUnsupportedEncoding reports whether any of the page's named fonts declares
+// a predefined CMap name that ledongthuc/pdf cannot decode (it falls through to
+// a no-op encoder, yielding U+FFFD garbage with a nil error). Returns the first
+// such CMap name; the returned name is always one of the constants matched by
+// isUnsupportedCMapName, never attacker-controlled free text.
+//
+// Note: a positive result causes the whole page's text to be skipped, including
+// text from any well-encoded (e.g. Latin) fonts on the same page. That is an
+// acceptable Phase-0 triage tradeoff; per-font selective extraction is deferred
+// to the Phase 2 fork.
+func pageUnsupportedEncoding(fontNames []string, fonts map[string]*pdf.Font) (string, bool) {
+	for _, name := range fontNames {
+		f, ok := fonts[name]
+		if !ok || f == nil {
+			continue
+		}
+		enc := f.V.Key("Encoding")
+		if enc.Kind() != pdf.Name {
+			continue
+		}
+		if n := enc.Name(); isUnsupportedCMapName(n) {
+			return n, true
+		}
+	}
+	return "", false
+}
+
+// isUnsupportedCMapName reports whether a font Encoding name is a predefined
+// CMap that ledongthuc/pdf does not implement (it recognises only
+// WinAnsiEncoding, MacRomanEncoding, and Identity-H). These predefined CJK
+// CMaps decode to garbage via the library's no-op encoder. Fixing them is
+// Phase 2 (fork); Phase 0 only detects and skips.
+func isUnsupportedCMapName(name string) bool {
+	switch name {
+	case "UniGB-UCS2-H", "UniGB-UCS2-V",
+		"UniCNS-UCS2-H", "UniCNS-UCS2-V",
+		"UniJIS-UCS2-H", "UniJIS-UCS2-V",
+		"UniKS-UCS2-H", "UniKS-UCS2-V",
+		"GBK-EUC-H", "GBK-EUC-V",
+		"ETen-B5-H", "ETen-B5-V",
+		"90ms-RKSJ-H", "90ms-RKSJ-V",
+		"KSCms-UHC-H", "KSCms-UHC-V":
+		return true
+	default:
+		return false
+	}
+}
+
+// replacementCharRatio returns the fraction of runes in s equal to the Unicode
+// replacement character (U+FFFD). ledongthuc/pdf's no-op encoder emits U+FFFD
+// for every byte it cannot decode, and U+FFFD is itself valid UTF-8 — so a high
+// ratio (not utf8.ValidString, which always passes) is the reliable signal of
+// encoding garbage from an unlisted CMap. Returns 0 for the empty string.
+func replacementCharRatio(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var total, bad int
+	for _, r := range s {
+		total++
+		if r == utf8.RuneError {
+			bad++
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(bad) / float64(total)
+}
+
+// sanitizeWarningDetail strips control characters and the replacement rune from
+// an untrusted parser error and bounds its length, so attacker-controlled error
+// text from a malformed PDF cannot inject structure or bloat into stored
+// metadata that an LLM later reads as authoritative.
+func sanitizeWarningDetail(s string) string {
+	const maxLen = 120
+	var b strings.Builder
+	for _, r := range s {
+		if r == utf8.RuneError || unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+		if b.Len() >= maxLen {
+			break
+		}
+	}
+	return b.String()
 }
 
 // sectionHash returns a SHA-256 hex string of the given section text.
