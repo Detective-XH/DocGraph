@@ -227,9 +227,16 @@ func TestExtractPDF_Scanned(t *testing.T) {
 	}
 }
 
-func TestExtractPDF_UnsupportedEncoding(t *testing.T) {
-	data := buildMinimalPDFEnc([]string{"some cjk page text"}, "GBK-EUC-H")
-	relPath := "testdata/multiformat/cjk_unsupported.pdf"
+// TestExtractPDF_GBKNowSupported verifies that GBK-EUC-H is no longer in the
+// unsupported-encoding blocklist (which was removed entirely). The extractor
+// must not emit an extraction-failed:unsupported-encoding warning; it may emit
+// encoding-garbage if the fork's no-op decoder produces U+FFFD-heavy output,
+// but that is the runtime backstop — not a static blocklist rejection.
+func TestExtractPDF_GBKNowSupported(t *testing.T) {
+	// Use >50 chars so the page clears pdfScannedThreshold and is not flagged
+	// as image-only-pdf due to low char density after decoding.
+	data := buildMinimalPDFEnc([]string{"This page uses a GBK-EUC-H font encoding label for testing purposes only."}, "GBK-EUC-H")
+	relPath := "testdata/multiformat/cjk_gbk_nowsupported.pdf"
 	hash := sha256hex(data)
 
 	tmp, err := os.CreateTemp("", "docgraph-test-*.pdf")
@@ -248,33 +255,22 @@ func TestExtractPDF_UnsupportedEncoding(t *testing.T) {
 		t.Fatalf("extractPDF: unexpected error: %v", err)
 	}
 
-	// Must have the unsupported-encoding warning.
-	wantWarning := "extraction-failed:unsupported-encoding:GBK-EUC-H"
-	foundWarning := false
-	for _, mt := range result.MetadataTuples {
-		if mt.Key == "warning" && mt.Value == wantWarning {
-			foundWarning = true
-		}
-	}
-	if !foundWarning {
-		t.Errorf("expected MetadataTuple{warning, %q}, got: %v", wantWarning, result.MetadataTuples)
+	// DocNode ID must be correct.
+	if result.DocNode.ID != relPath {
+		t.Errorf("DocNode.ID = %q; want %q", result.DocNode.ID, relPath)
 	}
 
-	// Must NOT have image-only-pdf (that would be a false signal).
+	// The static blocklist (isUnsupportedCMapName) was removed entirely; no
+	// extraction-failed:unsupported-encoding warning must ever be emitted.
 	for _, mt := range result.MetadataTuples {
-		if mt.Key == "warning" && mt.Value == "image-only-pdf" {
-			t.Errorf("unexpected image-only-pdf warning; unsupported-encoding should suppress it")
+		if mt.Key == "warning" && strings.HasPrefix(mt.Value, "extraction-failed:unsupported-encoding") {
+			t.Errorf("unexpected unsupported-encoding warning %q — blocklist should be gone", mt.Value)
 		}
 	}
 
-	// Must have section chunks (page nodes exist, text is empty but chunks are present).
+	// At least one section chunk must be present (page node created).
 	if len(result.SectionChunks) == 0 {
 		t.Error("expected at least one SectionChunk, got none")
-	}
-	for i, chunk := range result.SectionChunks {
-		if chunk.Text != "" {
-			t.Errorf("SectionChunks[%d].Text = %q; want empty (encoding skipped)", i, chunk.Text)
-		}
 	}
 }
 
@@ -414,7 +410,8 @@ func FuzzExtractPDF(f *testing.F) {
 		// Fixture not yet built — seed with an inline minimal PDF.
 		f.Add(buildMinimalPDF([]string{"hello fuzz"}))
 	}
-	// CJK encoding seed: exercises the unsupported-encoding detection path.
+	// CJK encoding seed: exercises the runtime encoding-garbage backstop path
+	// (the static unsupported-encoding blocklist was removed entirely).
 	f.Add(buildMinimalPDFEnc([]string{"cjk"}, "GBK-EUC-H"))
 
 	f.Fuzz(func(t *testing.T, data []byte) {

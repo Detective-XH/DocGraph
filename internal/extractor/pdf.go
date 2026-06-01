@@ -73,10 +73,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 	var rawLinks []parser.RawLink
 	var totalChars int
 	var metaTuples []store.MetadataTuple
-	var unsupportedEncoding bool
-
 	pageTexts := make([]string, numPages)
-	seenBadEnc := make(map[string]bool)
 	for n := 1; n <= numPages; n++ {
 		page := r.Page(n)
 		// Cache fonts for performance.
@@ -88,58 +85,36 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 			}
 		}
 
-		// Phase 0 (detection/triage): Detective-XH/pdf decodes fonts whose
-		// Encoding is an unrecognised predefined CMap name (e.g. GBK-EUC-H)
-		// via a no-op encoder — raw bytes pass through as U+FFFD garbage with
-		// a NIL error. Detect such fonts by name and skip text extraction for
-		// the page rather than indexing garbage.
-		var text string
-		if encName, bad := pageUnsupportedEncoding(pageFontNames, fonts); bad {
-			unsupportedEncoding = true
-			if !seenBadEnc[encName] {
-				// One tuple per distinct CMap name per document — the honest
-				// semantic is "this document uses an unsupported encoding", not
-				// "N separate problems" (N = page count).
-				seenBadEnc[encName] = true
-				metaTuples = append(metaTuples, store.MetadataTuple{
-					Key:       "warning",
-					Value:     "extraction-failed:unsupported-encoding:" + encName,
-					ValueType: "string",
-					Source:    "extractor",
-				})
-			}
-		} else {
-			t, err := page.GetPlainText(fonts)
-			if err != nil {
-				// Previously discarded (text, _ :=); surface it so a parse/encoding
-				// failure is visible. The error originates from a third-party parser
-				// on untrusted bytes, so sanitize + bound it and tag it under a fixed
-				// sub-key that cannot be confused with the structured detections above
-				// (prevents metadata/prompt injection via a crafted PDF).
-				metaTuples = append(metaTuples, store.MetadataTuple{
-					Key:       "warning",
-					Value:     "extraction-failed:plaintext-error:" + sanitizeWarningDetail(err.Error()),
-					ValueType: "string",
-					Source:    "extractor",
-				})
-			}
-			if replacementCharRatio(t) >= garbageReplacementRatio {
-				// nopEncoder garbage surfaces as U+FFFD runes, which are valid
-				// UTF-8 — so utf8.ValidString cannot detect it. A high U+FFFD
-				// density is the reliable signal that an unlisted CMap decoded to
-				// replacement characters; discard rather than index the garbage.
-				if err == nil {
-					metaTuples = append(metaTuples, store.MetadataTuple{
-						Key:       "warning",
-						Value:     "extraction-failed:encoding-garbage",
-						ValueType: "string",
-						Source:    "extractor",
-					})
-				}
-				t = ""
-			}
-			text = t
+		t, err := page.GetPlainText(fonts)
+		if err != nil {
+			// Previously discarded (text, _ :=); surface it so a parse/encoding
+			// failure is visible. The error originates from a third-party parser
+			// on untrusted bytes, so sanitize + bound it and tag it under a fixed
+			// sub-key that cannot be confused with the structured detections above
+			// (prevents metadata/prompt injection via a crafted PDF).
+			metaTuples = append(metaTuples, store.MetadataTuple{
+				Key:       "warning",
+				Value:     "extraction-failed:plaintext-error:" + sanitizeWarningDetail(err.Error()),
+				ValueType: "string",
+				Source:    "extractor",
+			})
 		}
+		if replacementCharRatio(t) >= garbageReplacementRatio {
+			// nopEncoder garbage surfaces as U+FFFD runes, which are valid
+			// UTF-8 — so utf8.ValidString cannot detect it. A high U+FFFD
+			// density is the reliable signal that an unlisted CMap decoded to
+			// replacement characters; discard rather than index the garbage.
+			if err == nil {
+				metaTuples = append(metaTuples, store.MetadataTuple{
+					Key:       "warning",
+					Value:     "extraction-failed:encoding-garbage",
+					ValueType: "string",
+					Source:    "extractor",
+				})
+			}
+			t = ""
+		}
+		text := t
 		pageTexts[n-1] = text
 		totalChars += len(text)
 
@@ -152,10 +127,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 	if numPages > 0 {
 		avgChars = totalChars / numPages
 	}
-	// A document whose text we deliberately skipped due to an unsupported
-	// encoding is NOT image-only; suppress the scanned heuristic so the
-	// extraction-failed:unsupported-encoding warning is the single honest signal.
-	isScanned := numPages > 0 && avgChars < pdfScannedThreshold && !unsupportedEncoding
+	isScanned := numPages > 0 && avgChars < pdfScannedThreshold
 
 	// --- Body excerpt from page 1 text (500 byte cap) ---
 	var bodyExcerpt string
@@ -305,50 +277,7 @@ func extractPageURIs(page pdf.Page, relPath string, pageNum int) []parser.RawLin
 	return links
 }
 
-// pageUnsupportedEncoding reports whether any of the page's named fonts declares
-// a predefined CMap name that Detective-XH/pdf cannot decode (it falls through to
-// a no-op encoder, yielding U+FFFD garbage with a nil error). Returns the first
-// such CMap name; the returned name is always one of the constants matched by
-// isUnsupportedCMapName, never attacker-controlled free text.
-//
-// Note: a positive result causes the whole page's text to be skipped, including
-// text from any well-encoded (e.g. Latin) fonts on the same page. That is an
-// acceptable Phase-0 triage tradeoff; per-font selective extraction is deferred
-// to the Phase 2 fork.
-func pageUnsupportedEncoding(fontNames []string, fonts map[string]*pdf.Font) (string, bool) {
-	for _, name := range fontNames {
-		f, ok := fonts[name]
-		if !ok || f == nil {
-			continue
-		}
-		enc := f.V.Key("Encoding")
-		if enc.Kind() != pdf.Name {
-			continue
-		}
-		if n := enc.Name(); isUnsupportedCMapName(n) {
-			return n, true
-		}
-	}
-	return "", false
-}
 
-// isUnsupportedCMapName reports whether a font Encoding name is a predefined
-// CMap that Detective-XH/pdf does not implement. These predefined CJK CMaps
-// decode to garbage via the library's no-op encoder; Phase 0 detects and skips them.
-//
-// Implemented (removed from this list as the fork adds decoders):
-//   - 90ms-RKSJ-H/V, 90pv-RKSJ-H         → Shift-JIS via x/text (fork v0.2.0)
-//   - UniGB/UniCNS/UniJIS/UniKS-UCS2-H/V  → UCS-2-BE direct decode (fork v0.3.0)
-func isUnsupportedCMapName(name string) bool {
-	switch name {
-	case "GBK-EUC-H", "GBK-EUC-V",
-		"ETen-B5-H", "ETen-B5-V",
-		"KSCms-UHC-H", "KSCms-UHC-V":
-		return true
-	default:
-		return false
-	}
-}
 
 // replacementCharRatio returns the fraction of runes in s equal to the Unicode
 // replacement character (U+FFFD). Detective-XH/pdf's no-op encoder emits U+FFFD
