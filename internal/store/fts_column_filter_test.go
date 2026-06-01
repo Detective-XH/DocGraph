@@ -19,7 +19,7 @@ func TestFTS5ColumnFilter(t *testing.T) {
 		{ID: "b.md", Kind: "document", Name: "Security Overview",
 			QualifiedName: "b.md", FilePath: "b.md",
 			BodyExcerpt: "apikey rotation policy",
-			StartLine: 1, EndLine: 100, UpdatedAt: 1},
+			StartLine:   1, EndLine: 100, UpdatedAt: 1},
 	}
 	if err := st.InsertNodes(nodes); err != nil {
 		t.Fatalf("InsertNodes: %v", err)

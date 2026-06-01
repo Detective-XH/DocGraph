@@ -279,10 +279,12 @@ func TestContextPackImpactBatchEquivalence(t *testing.T) {
 // setupWorkspaceImpactFixture creates a two-project workspace handler.
 //
 // Project alpha: hub.md, b1.md, b2.md, c1.md, d1.md, ca.md
-//   Edges (all intra-store):  b1→hub, b2→hub, c1→b1, d1→c1, ca→hub
+//
+//	Edges (all intra-store):  b1→hub, b2→hub, c1→b1, d1→c1, ca→hub
 //
 // Project beta: hub.md (duplicate for FK), f01.md, f02.md
-//   Edges: f01→hub, f02→hub
+//
+//	Edges: f01→hub, f02→hub
 //
 // Exercises workspace-specific branches:
 //   - edgesOfBatch per-project merge: hub.md is doc in alpha (doc-branch) and

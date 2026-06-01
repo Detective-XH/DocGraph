@@ -27,7 +27,7 @@ func newLinksTestHandler(t *testing.T) *handler {
 	}
 	edges := []store.Edge{
 		{Source: "hub.md", Target: "other.md", Kind: "references", Line: 1},
-		{Source: "hub.md", Target: "other.md", Kind: "references", Line: 2}, // duplicate target document
+		{Source: "hub.md", Target: "other.md", Kind: "references", Line: 2},     // duplicate target document
 		{Source: "hub.md", Target: "hub.md#sec", Kind: "wikilinks_to", Line: 3}, // same-document reference
 		{Source: "hub.md", Target: "hub.md", Kind: "links_external", Metadata: `{"url":"https://x.test"}`, Line: 4},
 	}
