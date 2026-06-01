@@ -287,7 +287,7 @@ nodes when the `code_doc` domain pack is enabled.
 - Each page becomes a `heading` node and a section chunk
 - Info-dict fields (Title, Author, Subject, Keywords, CreationDate) indexed as metadata tuples
 - Image-only PDFs detected via average chars/page and flagged with `warning: image-only-pdf`
-- Extraction failures and fonts using still-unsupported predefined CMaps (e.g. `GBK-EUC-H`, `ETen-B5-H`) are flagged with a `warning: extraction-failed:…` tuple and the affected page is skipped rather than indexed with replacement-character garbage. `Uni*-UCS2-*` CMaps (UniGB, UniCNS, UniJIS, UniKS) and `90ms-RKSJ-*` (Shift-JIS) are now decoded correctly
+- Predefined CMap fonts decoded natively: `Uni*-UCS2-*` (UniGB/CNS/JIS/KS), `90ms-RKSJ-*` (Shift-JIS), `GBK-EUC-H/V` (Simplified Chinese), `ETen-B5-H/V` (Traditional Chinese), `KSCms-UHC-H/V` (Korean). Pages that still cannot be decoded are flagged with `warning: extraction-failed:encoding-garbage` and skipped rather than indexed with replacement-character garbage
 
 **Code documentation surfaces (opt-in)** — up to 1 MB per file:
 - Enable the `code_doc` domain pack to index file headers, exported doc comments, test names, and example names:
