@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/Detective-XH/docgraph/internal/workspace"
 )
 
 // openPruneTestStore opens a fresh in-memory-style store in a temp dir for
@@ -325,5 +326,40 @@ func TestReconcileDeletedFiles_BelowFloor(t *testing.T) {
 	}
 	if n := nodeCountSQL(t, dir, bPath); n != 0 {
 		t.Errorf("expected 0 nodes for %s after below-floor reconcile, got %d", bPath, n)
+	}
+}
+
+// TestReconcileWorkspaceProjects_PerProjectIsolation covers the --workspace reconcile path
+// the single-store tests never exercise: the per-project loop, project-relative paths
+// (filepath.Join(proj.Path, f.Path)), and cross-project isolation. Deleting a file in
+// project A must prune ONLY A's nodes; project B is untouched. This is the runtime coverage
+// the --workspace doSync branch otherwise lacked (this machine serves --path .).
+func TestReconcileWorkspaceProjects_PerProjectIsolation(t *testing.T) {
+	dirA, stA := openPruneTestStore(t)
+	dirB, stB := openPruneTestStore(t)
+	indexPruneTestFile(t, dirA, stA, "a.md", "# A\n\nproject A doc.\n")
+	indexPruneTestFile(t, dirA, stA, "keep-a.md", "# KeepA\n\nstays on disk.\n")
+	indexPruneTestFile(t, dirB, stB, "b.md", "# B\n\nproject B doc.\n")
+
+	// Delete a.md from project A's disk only.
+	if err := os.Remove(filepath.Join(dirA, "a.md")); err != nil {
+		t.Fatal(err)
+	}
+
+	projects := []*workspace.Project{
+		{Path: dirA, Store: stA},
+		{Path: dirB, Store: stB},
+	}
+	if pruned := reconcileWorkspaceProjects(projects); pruned != 1 {
+		t.Fatalf("expected exactly 1 pruned (a.md in project A), got %d", pruned)
+	}
+	if n := nodeCountSQL(t, dirA, "a.md"); n != 0 {
+		t.Errorf("project A: a.md should be pruned, got %d nodes", n)
+	}
+	if n := nodeCountSQL(t, dirA, "keep-a.md"); n == 0 {
+		t.Error("project A: keep-a.md must survive (present on disk)")
+	}
+	if n := nodeCountSQL(t, dirB, "b.md"); n == 0 {
+		t.Error("project B: b.md must be untouched (different project, no deletion)")
 	}
 }

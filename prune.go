@@ -8,6 +8,7 @@ import (
 
 	"github.com/Detective-XH/docgraph/internal/docformat"
 	"github.com/Detective-XH/docgraph/internal/store"
+	"github.com/Detective-XH/docgraph/internal/workspace"
 )
 
 const (
@@ -59,6 +60,18 @@ func reconcileDeletedFiles(root string, st *store.Store) int {
 	// The re-stat inside pruneDeletedFiles is an intentional TOCTOU guard (delete+recreate
 	// between our candidate-stat and its re-stat → seen present → not pruned), not redundant.
 	return pruneDeletedFiles(root, st, absent)
+}
+
+// reconcileWorkspaceProjects runs the startup deletion-reconcile across every workspace
+// project. PARITY: the single --path branch calls reconcileDeletedFiles directly; this is
+// the --workspace counterpart — a future edit must not wire reconcile into one branch and
+// miss the other (both live in cmd_serve.go doSync). Returns total nodes pruned.
+func reconcileWorkspaceProjects(projects []*workspace.Project) int {
+	total := 0
+	for _, p := range projects {
+		total += reconcileDeletedFiles(p.Path, p.Store)
+	}
+	return total
 }
 
 // pruneDeletedFiles removes index data for files the watcher flagged as changed
