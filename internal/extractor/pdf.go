@@ -10,7 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/Detective-XH/pdf"
+	"github.com/Detective-XH/gopdf" // repo/module renamed pdf → gopdf; package identifier is still `pdf`
 
 	"github.com/Detective-XH/docgraph/internal/parser"
 	"github.com/Detective-XH/docgraph/internal/store"
@@ -269,7 +269,7 @@ func extractPageURIs(page pdf.Page, relPath string, pageNum int) []parser.RawLin
 }
 
 // replacementCharRatio returns the fraction of runes in s equal to the Unicode
-// replacement character (U+FFFD). Detective-XH/pdf's no-op encoder emits U+FFFD
+// replacement character (U+FFFD). Detective-XH/gopdf's no-op encoder emits U+FFFD
 // for every byte it cannot decode, and U+FFFD is itself valid UTF-8 — so a high
 // ratio (not utf8.ValidString, which always passes) is the reliable signal of
 // encoding garbage from an unlisted CMap. Returns 0 for the empty string.

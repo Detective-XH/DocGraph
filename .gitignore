@@ -15,3 +15,5 @@ docgraph
 serve.log
 *.test
 *.prof
+go.work
+go.work.sum

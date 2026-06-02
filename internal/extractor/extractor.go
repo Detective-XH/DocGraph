@@ -17,7 +17,7 @@ import (
 // bytes; hash is the pre-computed SHA-256 hex string.
 func Extract(absPath, relPath string, src []byte, hash string) (res *parser.ParseResult, err error) {
 	// Untrusted documents are parsed by third-party libraries (notably
-	// Detective-XH/pdf, which panics on malformed input — proven by
+	// Detective-XH/gopdf, which panics on malformed input — proven by
 	// FuzzExtractPDF). Recover so a hostile file degrades to a skipped file
 	// with an error, never a crash of the long-lived `serve` watcher process.
 	defer func() {
