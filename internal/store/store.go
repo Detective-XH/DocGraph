@@ -405,7 +405,7 @@ func (s *Store) GetNodesByIDs(ids []string) (map[string]*Node, error) {
 		return out, nil
 	}
 	rows, err := s.db.Query(`SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
-		FROM nodes WHERE id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...)
+		FROM nodes WHERE id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	if err != nil {
 		return nil, err
 	}

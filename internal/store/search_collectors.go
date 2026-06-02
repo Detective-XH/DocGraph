@@ -79,7 +79,7 @@ func (s *Store) collectNodeLikeCandidates(req searchRequest, candidates map[stri
 		  AND (? = '' OR kind = ?)
 		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = nodes.file_path AND cf.kind = 'code_file'))
 		ORDER BY name
-		LIMIT ?`, args...)
+		LIMIT ?`, args...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	if err != nil {
 		return err
 	}
@@ -150,7 +150,7 @@ func (s *Store) collectSectionLikeCandidates(req searchRequest, candidates map[s
 		  AND (? = '' OR n.kind = ?)
 		  AND (? OR NOT EXISTS (SELECT 1 FROM nodes cf WHERE cf.file_path = n.file_path AND cf.kind = 'code_file'))
 		ORDER BY n.file_path, n.start_line
-		LIMIT ?`, args...)
+		LIMIT ?`, args...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	if err != nil {
 		return err
 	}
@@ -322,7 +322,7 @@ func (s *Store) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
 		LEFT JOIN governance_metadata gm ON gm.node_id = n.id
 		LEFT JOIN research_metadata rm ON rm.node_id = n.id
 		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY n.id`
+		ORDER BY n.id` // #nosec G202 -- structural SQL: column names are compile-time constants; where clauses are built from constant strings, all user values bound via ? parameters, never interpolated
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err

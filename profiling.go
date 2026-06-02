@@ -20,7 +20,7 @@ func startProfiling() func() {
 	var stops []func()
 
 	if path := os.Getenv("DOCGRAPH_CPUPROFILE"); path != "" {
-		f, err := os.Create(path)
+		f, err := os.Create(path) // #nosec G703 -- path from operator-only DOCGRAPH_CPUPROFILE env var
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cpuprofile: %v\n", err)
 		} else if err := pprof.StartCPUProfile(f); err != nil {
@@ -36,7 +36,7 @@ func startProfiling() func() {
 
 	if path := os.Getenv("DOCGRAPH_MEMPROFILE"); path != "" {
 		stops = append(stops, func() {
-			f, err := os.Create(path)
+			f, err := os.Create(path) // #nosec G703 -- path from operator-only DOCGRAPH_MEMPROFILE env var
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "memprofile: %v\n", err)
 				return

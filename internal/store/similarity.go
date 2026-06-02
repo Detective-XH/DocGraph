@@ -20,7 +20,7 @@ func (s *Store) DeleteSimilarityEdgesForDocs(nodeIDs []string) error {
 	for _, id := range nodeIDs {
 		args = append(args, id)
 	}
-	q := "DELETE FROM edges WHERE kind=? AND (source IN (" + ph + ") OR target IN (" + ph + "))"
+	q := "DELETE FROM edges WHERE kind=? AND (source IN (" + ph + ") OR target IN (" + ph + "))" // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	_, err := s.db.Exec(q, args...)
 	return err
 }
