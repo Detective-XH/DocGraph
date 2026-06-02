@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.3.0 — 2026-06-02
+
+Feature release: PDF CJK text extraction, workspace per-project filtering, and a search/indexing performance pass. Backward-compatible; no schema change.
+
+### Added
+
+- **PDF CJK extraction** — Shift-JIS (90ms-RKSJ), GBK, Big5-ETen, UHC, and UCS-2 CMap decoding via the `Detective-XH/pdf` fork (v0.6.0). PDF Info-dict fields are indexed as metadata; `pdf.creation_date` is normalized to an RFC3339 UTC timestamp.
+- **Workspace per-project filter** on all workspace query tools, for scoped fan-out.
+- **Exact filename match** surfaces the named document first in search.
+
+### Changed
+
+- **Search/graph performance** — FTS5 trigram `MATCH` replaces full-table query expansion; per-candidate ranking and `operation=impact` traversal are batched (N+1 → set-based).
+- **`serve` reconcile** — startup deletion-reconcile is always-on and warm-start reconciles downtime-deleted files, closing a watcher-gap staleness window.
+- Internal: split the `workspace.go` and `similarity.go` god files; extracted shared indexing helpers.
+
+### Fixed
+
+- Agent-experience (AX) surface fixes across the tool set: context dedup, `similar`/`node` provenance and parity, distinct-document counting guidance, and trace description accuracy.
+- `docgraph_context` summary payload soft-capped at 20 KB.
+- `watcher` caps fsnotify watches per process to bound fd usage under `serve --workspace`.
+
+### Security
+
+- Context-pack integer args clamped at retrieval (H-24); content-trust test guard (S-1); supply-chain hardening (S-6) with `govulncheck` + SBOM CI gates.
+
+---
+
 ## v0.2.3 — 2026-05-29
 
 Maintenance release: LLM-facing UX fixes, indexing-correctness fixes, and internal cleanup. No breaking changes.
