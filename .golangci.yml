@@ -2,7 +2,19 @@ version: "2"
 
 # Default linters (errcheck, govet, ineffassign, staticcheck, unused) kept.
 linters:
+  enable:
+    - cyclop
   settings:
+    cyclop:
+      # Per-function complexity backstop. NO //nolint whitelist: the CI job uses
+      # --new-from-rev (revgrep), which reports only issues on changed lines, so
+      # the known high-CC baseline (handleNode 55, indexStore 44, indexProjectOpts
+      # 43, extractHTML/extractCStyle 40 — all flat-dispatch/inherent, breadth not
+      # depth) is grandfathered untouched and stays VISIBLE on local full runs as a
+      # periodic-review list. A PR only trips cyclop by adding a new >40 function or
+      # by growing an existing one's lines past 40.
+      max-complexity: 40
+      package-average: 0      # per-function gate only
     errcheck:
       # Conventionally-ignorable cleanup. errcheck matches concrete signatures,
       # so the sql/* cleanup methods are listed explicitly (the io.Closer

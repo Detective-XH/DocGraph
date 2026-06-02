@@ -165,6 +165,27 @@ func (s *Store) UpsertAgentEnrichment(e AgentEnrichment) error {
 	}
 	defer tx.Rollback()
 
+	if err := insertEnrichmentRunInTx(tx, e, runID, summaryHash, metadataHash, now); err != nil {
+		return err
+	}
+	if err := upsertCurrentEnrichmentInTx(tx, e.DocID, runID, now); err != nil {
+		return err
+	}
+	if err := upsertSummaryInTx(tx, e, now); err != nil {
+		return err
+	}
+	if err := upsertMetadataInTx(tx, e, runID, now); err != nil {
+		return err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return s.RefreshMetadataProjections(e.DocID)
+}
+
+// insertEnrichmentRunInTx appends one row to the append-only agent_enrichment_runs ledger.
+func insertEnrichmentRunInTx(tx *sql.Tx, e AgentEnrichment, runID, summaryHash, metadataHash string, now int64) error {
 	if _, err := tx.Exec(`
 		INSERT INTO agent_enrichment_runs(
 			run_id, node_id, provider, model_id, agent_id,
@@ -174,75 +195,89 @@ func (s *Store) UpsertAgentEnrichment(e AgentEnrichment) error {
 		e.ContentHash, summaryHash, metadataHash, now); err != nil {
 		return fmt.Errorf("insert enrichment run: %w", err)
 	}
+	return nil
+}
 
+// upsertCurrentEnrichmentInTx updates the single-row current-pointer for a node
+// so retrieval always returns the latest run's output.
+func upsertCurrentEnrichmentInTx(tx *sql.Tx, nodeID, runID string, now int64) error {
 	if _, err := tx.Exec(`
 		INSERT INTO agent_enrichment_current(node_id, run_id, updated_at)
 		VALUES(?,?,?)
 		ON CONFLICT(node_id) DO UPDATE SET
 			run_id     = excluded.run_id,
 			updated_at = excluded.updated_at`,
-		e.DocID, runID, now); err != nil {
+		nodeID, runID, now); err != nil {
 		return fmt.Errorf("upsert current enrichment: %w", err)
 	}
+	return nil
+}
 
-	if e.Summary != "" {
+// upsertSummaryInTx writes the agent-authored summary into ai_summaries when one
+// is present. No-ops when e.Summary is empty.
+func upsertSummaryInTx(tx *sql.Tx, e AgentEnrichment, now int64) error {
+	if e.Summary == "" {
+		return nil
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO ai_summaries(node_id, summary, model_hint, content_hash, updated_at)
+		VALUES(?,?,?,?,?)
+		ON CONFLICT(node_id) DO UPDATE SET
+			summary      = excluded.summary,
+			model_hint   = excluded.model_hint,
+			content_hash = excluded.content_hash,
+			updated_at   = excluded.updated_at`,
+		e.DocID, e.Summary, e.ModelID, e.ContentHash, now); err != nil {
+		return fmt.Errorf("upsert ai summary: %w", err)
+	}
+	return nil
+}
+
+// upsertMetadataInTx writes each validated metadata tuple and its provenance
+// pointer into document_metadata and agent_metadata_provenance. No-ops when
+// e.Metadata is empty.
+func upsertMetadataInTx(tx *sql.Tx, e AgentEnrichment, runID string, now int64) error {
+	if len(e.Metadata) == 0 {
+		return nil
+	}
+	stmt, err := tx.Prepare(`
+		INSERT INTO document_metadata(node_id, key, value, value_type, source, confidence, updated_at)
+		VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(node_id, key, source) DO UPDATE SET
+			value      = excluded.value,
+			value_type = excluded.value_type,
+			confidence = excluded.confidence,
+			updated_at = excluded.updated_at`)
+	if err != nil {
+		return fmt.Errorf("prepare metadata insert: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, t := range e.Metadata {
+		t.Source = "agent_inferred"
+		if t.Key == "" {
+			return fmt.Errorf("metadata key must not be empty")
+		}
+		if !validSources[t.Source] {
+			return fmt.Errorf("invalid metadata source %q", t.Source)
+		}
+		if len(t.Value) > maxAgentValueBytes {
+			t.Value = t.Value[:maxAgentValueBytes]
+		}
+		if _, err := stmt.Exec(e.DocID, t.Key, t.Value, t.ValueType, t.Source, t.Confidence, now); err != nil {
+			return fmt.Errorf("insert metadata %q: %w", t.Key, err)
+		}
 		if _, err := tx.Exec(`
-			INSERT INTO ai_summaries(node_id, summary, model_hint, content_hash, updated_at)
-			VALUES(?,?,?,?,?)
-			ON CONFLICT(node_id) DO UPDATE SET
-				summary      = excluded.summary,
-				model_hint   = excluded.model_hint,
-				content_hash = excluded.content_hash,
-				updated_at   = excluded.updated_at`,
-			e.DocID, e.Summary, e.ModelID, e.ContentHash, now); err != nil {
-			return fmt.Errorf("upsert ai summary: %w", err)
+			INSERT INTO agent_metadata_provenance(node_id, key, run_id, updated_at)
+			VALUES(?,?,?,?)
+			ON CONFLICT(node_id, key) DO UPDATE SET
+				run_id     = excluded.run_id,
+				updated_at = excluded.updated_at`,
+			e.DocID, t.Key, runID, now); err != nil {
+			return fmt.Errorf("upsert metadata provenance %q: %w", t.Key, err)
 		}
 	}
-
-	if len(e.Metadata) > 0 {
-		stmt, err := tx.Prepare(`
-			INSERT INTO document_metadata(node_id, key, value, value_type, source, confidence, updated_at)
-			VALUES(?,?,?,?,?,?,?)
-			ON CONFLICT(node_id, key, source) DO UPDATE SET
-				value      = excluded.value,
-				value_type = excluded.value_type,
-				confidence = excluded.confidence,
-				updated_at = excluded.updated_at`)
-		if err != nil {
-			return fmt.Errorf("prepare metadata insert: %w", err)
-		}
-		defer stmt.Close()
-
-		for _, t := range e.Metadata {
-			t.Source = "agent_inferred"
-			if t.Key == "" {
-				return fmt.Errorf("metadata key must not be empty")
-			}
-			if !validSources[t.Source] {
-				return fmt.Errorf("invalid metadata source %q", t.Source)
-			}
-			if len(t.Value) > maxAgentValueBytes {
-				t.Value = t.Value[:maxAgentValueBytes]
-			}
-			if _, err := stmt.Exec(e.DocID, t.Key, t.Value, t.ValueType, t.Source, t.Confidence, now); err != nil {
-				return fmt.Errorf("insert metadata %q: %w", t.Key, err)
-			}
-			if _, err := tx.Exec(`
-				INSERT INTO agent_metadata_provenance(node_id, key, run_id, updated_at)
-				VALUES(?,?,?,?)
-				ON CONFLICT(node_id, key) DO UPDATE SET
-					run_id     = excluded.run_id,
-					updated_at = excluded.updated_at`,
-				e.DocID, t.Key, runID, now); err != nil {
-				return fmt.Errorf("upsert metadata provenance %q: %w", t.Key, err)
-			}
-		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	return s.RefreshMetadataProjections(e.DocID)
+	return nil
 }
 
 // GetAISummary returns an agent-authored summary for a document, when present.
