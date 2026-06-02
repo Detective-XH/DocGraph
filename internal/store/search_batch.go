@@ -58,7 +58,7 @@ func (s *Store) getGovernanceMetadataBatch(ids []string) (map[string]*Governance
 		       effective_date, review_due, supersedes, superseded_by,
 		       sensitivity, allowed_audience, canonical_source, updated_at
 		FROM governance_metadata
-		WHERE node_id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...)
+		WHERE node_id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *Store) getResearchMetadataBatch(ids []string) (map[string]*ResearchReco
 		       event_date, assessment_date, last_verified, valid_until,
 		       analyst_status, client, deliverable_id, updated_at
 		FROM research_metadata
-		WHERE node_id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...)
+		WHERE node_id IN (`+inPlaceholders(len(ids))+`)`, toArgs(ids)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func (s *Store) getFileHistoryBatch(paths []string) (map[string]*FileHistory, er
 	rows, err := s.db.Query(`
 		SELECT path, commit_count, first_commit_at, last_commit_at, author_count, last_author, last_subject
 		FROM file_history
-		WHERE path IN (`+inPlaceholders(len(paths))+`)`, toArgs(paths)...)
+		WHERE path IN (`+inPlaceholders(len(paths))+`)`, toArgs(paths)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func (s *Store) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (
 			WHERE e.source IN (`+inPlaceholders(len(srcs))+`)
 			  AND e.kind = 'tagged' AND t.kind = 'tag'
 			  AND lower(t.name) IN (`+inPlaceholders(len(terms))+`)
-			GROUP BY e.source`, args...)
+			GROUP BY e.source`, args...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 		if err != nil {
 			return nil, err
 		}

@@ -27,7 +27,7 @@ func cmdPack(args []string) {
 	case "disable":
 		cmdPackSet(args[1:], false)
 	default:
-		log.Fatalf("unknown pack command %q", args[0])
+		log.Fatalf("unknown pack command %q", args[0]) // #nosec G706 -- %q quotes the value, neutralizing log/format injection
 	}
 }
 

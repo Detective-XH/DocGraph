@@ -191,7 +191,7 @@ func ensureGitignoreLine(path, line string) error {
 	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
 		prefix = "\n"
 	}
-	if err := os.WriteFile(path, append(data, []byte(prefix+line+"\n")...), 0o644); err != nil {
+	if err := os.WriteFile(path, append(data, []byte(prefix+line+"\n")...), 0o644); err != nil { // #nosec G703 -- path is an operator-supplied gitignore file path; ensureGitignoreLine is only called from the CLI init command
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "Updated %s\n", path)

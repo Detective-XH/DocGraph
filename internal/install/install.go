@@ -508,7 +508,7 @@ func invokeClaudeMCPAdd(root string, workspace bool) error {
 	server := globalServer(root, workspace)
 	cmdArgs := []string{"mcp", "add", "--scope", "user", "docgraph", "--", absBin}
 	cmdArgs = append(cmdArgs, server.Args...)
-	cmd := exec.Command("claude", cmdArgs...)
+	cmd := exec.Command("claude", cmdArgs...) // #nosec G204 -- args built from operator CLI flag + compile-time constants (globalServer), not MCP-client input
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -521,7 +521,7 @@ func writeFile(path string, data []byte, perm os.FileMode) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, perm)
+	return os.WriteFile(path, data, perm) // #nosec G703 -- path from operator-controlled root/env/home + fixed filename constants
 }
 
 // IsClaudeResult reports whether r is a Claude Code installation result.

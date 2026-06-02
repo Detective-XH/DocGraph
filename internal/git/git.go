@@ -15,7 +15,7 @@ import (
 // per-file CollectHistory forks when the tree is not version-controlled
 // (or git is not installed). Returns false on any error.
 func IsRepo(root string) bool {
-	cmd := exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree")
+	cmd := exec.Command("git", "-C", root, "rev-parse", "--is-inside-work-tree") // #nosec G204 -- literal "git" binary with fixed/structured args; no untrusted input
 	out, err := cmd.Output()
 	if err != nil {
 		return false
@@ -52,7 +52,7 @@ var forkSem = make(chan struct{}, runtime.NumCPU())
 // Returns a zero-value FileHistory (CommitCount == 0) on any error: git not installed,
 // directory not a git repo, or file untracked.
 func CollectHistory(gitRoot, relPath string) FileHistory {
-	cmd := exec.Command("git", "-C", gitRoot, "log", "--follow",
+	cmd := exec.Command("git", "-C", gitRoot, "log", "--follow", // #nosec G204 -- literal "git" binary with fixed/structured args; no untrusted input
 		"--format=%at|%ae|%s", "--", relPath)
 	// Bound concurrent git children to NumCPU process-wide (see forkSem). Held
 	// only around the fork: the in-process parsing below runs off-budget so the

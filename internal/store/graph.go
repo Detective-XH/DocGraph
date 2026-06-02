@@ -73,7 +73,7 @@ func (s *Store) GetIncomingEdgesBatch(nodeIDs []string) (map[string][]Edge, erro
 			FROM edges e JOIN nodes t ON t.id = e.target
 			WHERE t.file_path IN (`+inPlaceholders(len(docFilePaths))+`)
 			  AND e.kind IN ('references','wikilinks_to','related_to','embeds')
-			ORDER BY e.source, e.kind, e.line, e.target`, toArgs(docFilePaths)...)
+			ORDER BY e.source, e.kind, e.line, e.target`, toArgs(docFilePaths)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 		if err != nil {
 			return nil, err
 		}
@@ -97,7 +97,7 @@ func (s *Store) GetIncomingEdgesBatch(nodeIDs []string) (map[string][]Edge, erro
 		rows, err := s.db.Query(`SELECT source, target, kind, metadata, line
 			FROM edges WHERE target IN (`+inPlaceholders(len(nonDocIDs))+`)
 			  AND kind IN ('references','wikilinks_to','related_to','embeds')
-			ORDER BY source, kind, line, target`, toArgs(nonDocIDs)...)
+			ORDER BY source, kind, line, target`, toArgs(nonDocIDs)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
 		if err != nil {
 			return nil, err
 		}

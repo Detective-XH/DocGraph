@@ -254,7 +254,7 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 			totalBytes += int64(len(rawCore))
 		default:
 			// Still count other entries against budget; read header only via UncompressedSize64.
-			totalBytes += int64(f.UncompressedSize64)
+			totalBytes += int64(f.UncompressedSize64) // #nosec G115 -- non-named zip entries are counted but never decompressed; named entries are capped by readZipEntry's LimitReader, so an overflowed accumulator cannot create a decompression-bomb path
 		}
 		if totalBytes > docxMaxTotalBytes {
 			return nil, errors.New("docx: total uncompressed size exceeds 50 MB budget")
