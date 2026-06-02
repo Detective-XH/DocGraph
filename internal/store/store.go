@@ -272,14 +272,26 @@ func (s *Store) GetFileHash(path string) (string, error) {
 func (s *Store) GetStats() (Stats, error) {
 	var st Stats
 
-	s.db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&st.FileCount)
-	s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&st.NodeCount)
-	s.db.QueryRow(`SELECT COUNT(*) FROM edges`).Scan(&st.EdgeCount)
-	s.db.QueryRow(`SELECT COUNT(*) FROM unresolved_refs`).Scan(&st.UnresolvedCount)
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM files`).Scan(&st.FileCount); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&st.NodeCount); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM edges`).Scan(&st.EdgeCount); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM unresolved_refs`).Scan(&st.UnresolvedCount); err != nil {
+		return st, err
+	}
 
 	var pageCount, pageSize int64
-	s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount)
-	s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize)
+	if err := s.db.QueryRow(`PRAGMA page_count`).Scan(&pageCount); err != nil {
+		return st, err
+	}
+	if err := s.db.QueryRow(`PRAGMA page_size`).Scan(&pageSize); err != nil {
+		return st, err
+	}
 	st.DBSizeBytes = pageCount * pageSize
 
 	st.NodesByKind = make(map[string]int)

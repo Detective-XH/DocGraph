@@ -138,7 +138,8 @@ func allTermsSubTrigram(terms []string) bool {
 
 func normalizeSearchTerm(term string) string {
 	term = strings.TrimFunc(strings.ToLower(term), func(r rune) bool {
-		return !(unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '/' || r == '.')
+		allowed := unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '/' || r == '.'
+		return !allowed
 	})
 	return term
 }

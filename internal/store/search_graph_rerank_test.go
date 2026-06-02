@@ -77,7 +77,7 @@ func TestGraphRerankActivatesOnLinkDensity(t *testing.T) {
 		t.Fatalf("baseline: twins must tie to isolate the graph signal, got aaa=%.6f zzz=%.6f",
 			base[ia].Rank, base[iz].Rank)
 	}
-	if !(ia < iz) {
+	if ia >= iz {
 		t.Fatalf("baseline: expected aaa.md before zzz.md on a tie (sparse=%d, dense=%d)", ia, iz)
 	}
 
@@ -98,7 +98,7 @@ func TestGraphRerankActivatesOnLinkDensity(t *testing.T) {
 	if ja < 0 || jz < 0 {
 		t.Fatalf("treatment: both docs must be present, got sparse=%d dense=%d", ja, jz)
 	}
-	if !(jz < ja) {
+	if jz >= ja {
 		t.Fatalf("graph rerank did NOT activate: zzz.md has %d incoming wikilinks_to but did "+
 			"not overtake aaa.md (sparse=%d, dense=%d). The feature is wired but ineffective.",
 			linkers, ja, jz)

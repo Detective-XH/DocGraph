@@ -102,9 +102,18 @@ func pruneDeletedFiles(root string, st *store.Store, changed []string) int {
 		// (FK ON DELETE CASCADE on edges.source+target), FTS sync (nodes_fts_delete +
 		// section_chunks_fts_delete AFTER DELETE triggers), and entity-orphan prune
 		// (DeleteEntityData prunes inline) all fire.
-		st.DeleteSectionChunksByFile(rel)
-		st.DeleteDocumentMetadataByFile(rel)
-		st.Entity.DeleteEntityData(rel)
+		if err := st.DeleteSectionChunksByFile(rel); err != nil {
+			fmt.Fprintf(os.Stderr, "[prune] %s: %v\n", rel, err)
+			continue
+		}
+		if err := st.DeleteDocumentMetadataByFile(rel); err != nil {
+			fmt.Fprintf(os.Stderr, "[prune] %s: %v\n", rel, err)
+			continue
+		}
+		if err := st.Entity.DeleteEntityData(rel); err != nil {
+			fmt.Fprintf(os.Stderr, "[prune] %s: %v\n", rel, err)
+			continue
+		}
 		if err := st.DeleteFileData(rel); err != nil {
 			fmt.Fprintf(os.Stderr, "[prune] %s: %v\n", rel, err)
 			continue
