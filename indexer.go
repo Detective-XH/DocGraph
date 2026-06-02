@@ -284,10 +284,22 @@ func indexStore(root string, st *store.Store, force bool) error {
 		// inserts above duplicate edges / orphan chunks. force==true is the only
 		// signal meaning "removeIndexDB ran ⟹ DB empty ⟹ nothing to delete".
 		if !force {
-			st.DeleteSectionChunksByFile(e.RelPath)
-			st.DeleteDocumentMetadataByFile(e.RelPath)
-			st.Entity.DeleteEntityData(e.RelPath)
-			st.DeleteFileData(e.RelPath)
+			if err := st.DeleteSectionChunksByFile(e.RelPath); err != nil {
+				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
+				continue
+			}
+			if err := st.DeleteDocumentMetadataByFile(e.RelPath); err != nil {
+				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
+				continue
+			}
+			if err := st.Entity.DeleteEntityData(e.RelPath); err != nil {
+				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
+				continue
+			}
+			if err := st.DeleteFileData(e.RelPath); err != nil {
+				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
+				continue
+			}
 		}
 		res, err := dispatchParse(e.Path, e.RelPath, src, hash)
 		if err != nil {

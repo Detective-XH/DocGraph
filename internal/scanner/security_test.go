@@ -142,9 +142,9 @@ func TestUnicodeFilename(t *testing.T) {
 	tmp := t.TempDir()
 
 	files := map[string]string{
-		"normal.md":  "# Normal\n",
-		"READ​ME.md": "# Zero Width Space\n", // U+200B in name
-		"café.md":   "# Combining Acute\n",  // e + combining accent
+		"normal.md":       "# Normal\n",
+		"READ\u200bME.md": "# Zero Width Space\n", // U+200B in name
+		"café.md":        "# Combining Acute\n",  // e + combining accent
 	}
 
 	created := 0

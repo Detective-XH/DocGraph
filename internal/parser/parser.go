@@ -91,7 +91,7 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 	currentHeadingID := docNode.ID
 	currentBlockLine := 1
 
-	ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+	if err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
@@ -155,7 +155,9 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 		}
 
 		return ast.WalkContinue, nil
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	// Determine document name: first H1 > frontmatter title > filename
 	docNode.Name = firstH1
@@ -430,7 +432,9 @@ func offsetToLine(offsets []int, byteOffset int) int {
 // extractText walks the children of n and collects text content.
 func extractText(n ast.Node, source []byte) string {
 	var buf bytes.Buffer
-	ast.Walk(n, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+	// The callback never returns an error (always WalkContinue, nil), so the
+	// Walk error is structurally impossible here; assign to _ to satisfy errcheck.
+	_ = ast.Walk(n, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
 			if t, ok := node.(*ast.Text); ok {
 				buf.Write(t.Segment.Value(source))

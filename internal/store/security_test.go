@@ -326,7 +326,7 @@ func TestUnicodeExtremes(t *testing.T) {
 	}{
 		{"RTL Arabic", "rtl.md", "مرحبا بالعالم"},
 		{"emoji", "emoji.md", "📊 Dashboard"},
-		{"zero-width joiner", "zwj.md", "READ​ME"},
+		{"zero-width joiner", "zwj.md", "READ\u200bME"},
 		{"NFC cafe", "cafe-nfc.md", "café"},
 		{"NFD cafe", "cafe-nfd.md", "café"},
 	}

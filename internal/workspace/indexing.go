@@ -159,10 +159,18 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 		// Delete derived rows before DeleteFileData so cascade-deleted node IDs are
 		// still reachable. Skipped on a cold-start (empty DB) where they are no-ops.
 		if !baseEmpty {
-			p.Store.DeleteSectionChunksByFile(relPath)
-			p.Store.DeleteDocumentMetadataByFile(relPath)
-			p.Store.Entity.DeleteEntityData(relPath)
-			p.Store.DeleteFileData(relPath)
+			if err := p.Store.DeleteSectionChunksByFile(relPath); err != nil {
+				return fmt.Errorf("delete %s: %w", relPath, err)
+			}
+			if err := p.Store.DeleteDocumentMetadataByFile(relPath); err != nil {
+				return fmt.Errorf("delete %s: %w", relPath, err)
+			}
+			if err := p.Store.Entity.DeleteEntityData(relPath); err != nil {
+				return fmt.Errorf("delete %s: %w", relPath, err)
+			}
+			if err := p.Store.DeleteFileData(relPath); err != nil {
+				return fmt.Errorf("delete %s: %w", relPath, err)
+			}
 		}
 		nodes := append([]store.Node{res.DocNode}, res.Headings...)
 		nodes = append(nodes, res.Defs...)

@@ -78,7 +78,9 @@ func cmdServe(args []string) {
 		setIndexing := tools.RegisterWorkspaceWithOpts(srv, w, regOpts)
 		doSync := func() {
 			defer setIndexing(false)
-			w.IndexAll()
+			if err := w.IndexAll(); err != nil {
+				log.Printf("[serve] IndexAll: %v", err)
+			}
 			// Always reconcile on a warm start (no opt-out): an LLM-first guarantee that a
 			// restart never serves nodes for files deleted while serve was down. A cold start
 			// ⟹ fresh DB ⟹ nothing absent, so `warm` is a pure no-op skip, not a behavioral knob.
@@ -94,16 +96,20 @@ func cmdServe(args []string) {
 		for _, proj := range w.Projects {
 			paths = append(paths, proj.Path)
 		}
-		go watcher.WatchWithLimit(paths, *maxWatches, func(projectPath string, files []string) {
-			for _, proj := range w.Projects {
-				if proj.Path == projectPath {
-					fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
-					pruneDeletedFiles(proj.Path, proj.Store, files)
-					workspace.ReindexProject(proj)
-					break
+		go func() {
+			if err := watcher.WatchWithLimit(paths, *maxWatches, func(projectPath string, files []string) {
+				for _, proj := range w.Projects {
+					if proj.Path == projectPath {
+						fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
+						pruneDeletedFiles(proj.Path, proj.Store, files)
+						workspace.ReindexProject(proj)
+						break
+					}
 				}
+			}); err != nil {
+				log.Printf("[serve] watcher: %v", err)
 			}
-		})
+		}()
 	} else {
 		path := *p
 		if path == "" {
