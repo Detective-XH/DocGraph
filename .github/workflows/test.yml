@@ -62,13 +62,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history so --new-from-rev can diff against the PR base
       - uses: actions/setup-go@v6
         with:
           go-version: 'stable'
-      - uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.12.2
-          only-new-issues: true
+      # Pinned go install instead of golangci-lint-action: no third-party JS action
+      # (avoids the Node-20 deprecation warning and the extra supply-chain surface).
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      - name: golangci-lint (new issues only)
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE"
+          golangci-lint run --new-from-rev=FETCH_HEAD ./...
 
   sbom:
     runs-on: ubuntu-latest
