@@ -25,120 +25,152 @@ func (h *handler) handleStatus(ctx context.Context, request mcp.CallToolRequest)
 	}
 
 	if h.workspace != nil {
-		allStats, err := h.workspace.GetAllStats()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err)), nil
+		if errResult := appendWorkspaceStatus(&sb, h); errResult != nil {
+			return errResult, nil
 		}
-		sb.WriteString("## DocGraph Workspace Status\n\n")
-		sb.WriteString("| Project | Files | Nodes | Edges | Unresolved | DB Size |\n")
-		sb.WriteString("|---------|-------|-------|-------|------------|--------|\n")
-
-		for _, p := range h.workspace.Projects {
-			s, ok := allStats[p.Name]
-			if !ok {
-				continue
-			}
-			fmt.Fprintf(&sb, "| %s | %d | %d | %d | %d | %s |\n",
-				p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes))
-		}
-
-		// Projects table — compact name→file-count index so the LLM can discover
-		// project names to pass as project=<name> to any query tool.
-		sb.WriteString("\n## Projects\n\n")
-		sb.WriteString("| Name | Files |\n")
-		sb.WriteString("|------|-------|\n")
-		for _, p := range h.workspace.Projects {
-			s, ok := allStats[p.Name]
-			if !ok {
-				continue
-			}
-			fmt.Fprintf(&sb, "| %s | %d |\n", p.Name, s.FileCount)
-		}
-
-		// Neural embeddings — fan-out across all projects.
-		var allEmbStats []store.EmbeddingModelStat
-		modelTotals := make(map[string]*store.EmbeddingModelStat)
-		for _, p := range h.workspace.Projects {
-			if embStats, err := p.Store.GetEmbeddingModelStats(); err == nil {
-				for _, es := range embStats {
-					if m, ok := modelTotals[es.ModelID]; ok {
-						m.Total += es.Total
-						m.Stale += es.Stale
-					} else {
-						cp := es
-						modelTotals[es.ModelID] = &cp
-					}
-				}
-			}
-		}
-		for _, s := range modelTotals {
-			allEmbStats = append(allEmbStats, *s)
-		}
-		appendEmbeddingStats(&sb, allEmbStats)
-		appendWorkspaceEnrichmentStats(&sb, h)
-		appendWorkspaceDomainPacks(&sb, h)
-		appendWorkspaceMetadataQualityStats(&sb, h)
-		if es, err := h.workspace.GetEntityStats(); err == nil && (es.TotalEntities > 0 || es.TotalMentions > 0) {
-			sb.WriteString("\n### Entity Graph\n")
-			fmt.Fprintf(&sb, "Entities: %d | Mentions: %d\n", es.TotalEntities, es.TotalMentions)
-		}
-		appendWorkspaceDriftAudit(&sb, h)
-		appendLLMCalloutState(&sb, h)
 	} else {
-		stats, err := h.store.GetStats()
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err)), nil
+		if errResult := appendSingleStoreStatus(&sb, h); errResult != nil {
+			return errResult, nil
 		}
-		fmt.Fprintf(&sb, "Files: %d | Nodes: %d | Edges: %d | Unresolved: %d | DB: %s\n\n",
-			stats.FileCount, stats.NodeCount, stats.EdgeCount, stats.UnresolvedCount, formatSize(stats.DBSizeBytes))
-		if len(stats.NodesByKind) > 2 {
-			sb.WriteString("### Nodes by Kind\n| Kind | Count |\n|------|-------|\n")
-			for kind, count := range stats.NodesByKind {
-				fmt.Fprintf(&sb, "| %s | %d |\n", kind, count)
-			}
-		}
-		if len(stats.EdgesByKind) > 2 {
-			sb.WriteString("\n### Edges by Kind\n| Kind | Count |\n|------|-------|\n")
-			for kind, count := range stats.EdgesByKind {
-				fmt.Fprintf(&sb, "| %s | %d |\n", kind, count)
-			}
-		}
-
-		embStats, err := h.store.GetEmbeddingModelStats()
-		if err == nil {
-			appendEmbeddingStats(&sb, embStats)
-		}
-
-		// Metadata index stats.
-		if metaStats, err := h.store.GetMetadataStats(); err == nil {
-			sb.WriteString("\n### Metadata Index\n")
-			fmt.Fprintf(&sb, "Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs)
-			fmt.Fprintf(&sb, "Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs)
-		}
-		if enrichmentStats, err := h.store.GetEnrichmentStats(); err == nil && enrichmentStats.EligibleDocs > 0 {
-			appendEnrichmentStats(&sb, enrichmentStats)
-		}
-
-		if qualityStats, err := h.store.GetMetadataQualityStats(time.Time{}); err == nil {
-			appendMetadataQualityStats(&sb, qualityStats)
-		}
-
-		if packs, err := h.store.GetDomainPacks(); err == nil {
-			if packStats, err := h.store.GetDomainPackStats(); err == nil {
-				appendDomainPackStats(&sb, packs, packStats)
-			}
-		}
-
-		if entities, mentions, err := h.store.Entity.GetEntityStats(); err == nil && (entities > 0 || mentions > 0) {
-			sb.WriteString("\n### Entity Graph\n")
-			fmt.Fprintf(&sb, "Entities: %d | Mentions: %d\n", entities, mentions)
-		}
-
-		appendDriftAuditStats(&sb, h.store)
-		appendLLMCalloutState(&sb, h)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// appendWorkspaceStatus renders the workspace-mode section of handleStatus output
+// into sb. Returns a non-nil *mcp.CallToolResult only on a fatal stats error.
+func appendWorkspaceStatus(sb *strings.Builder, h *handler) *mcp.CallToolResult {
+	allStats, err := h.workspace.GetAllStats()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err))
+	}
+	sb.WriteString("## DocGraph Workspace Status\n\n")
+	sb.WriteString("| Project | Files | Nodes | Edges | Unresolved | DB Size |\n")
+	sb.WriteString("|---------|-------|-------|-------|------------|--------|\n")
+
+	for _, p := range h.workspace.Projects {
+		s, ok := allStats[p.Name]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(sb, "| %s | %d | %d | %d | %d | %s |\n",
+			p.Name, s.FileCount, s.NodeCount, s.EdgeCount, s.UnresolvedCount, formatSize(s.DBSizeBytes))
+	}
+
+	// Projects table — compact name→file-count index so the LLM can discover
+	// project names to pass as project=<name> to any query tool.
+	sb.WriteString("\n## Projects\n\n")
+	sb.WriteString("| Name | Files |\n")
+	sb.WriteString("|------|-------|\n")
+	for _, p := range h.workspace.Projects {
+		s, ok := allStats[p.Name]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(sb, "| %s | %d |\n", p.Name, s.FileCount)
+	}
+
+	appendWorkspaceEmbeddingStats(sb, h)
+	appendWorkspaceEnrichmentStats(sb, h)
+	appendWorkspaceDomainPacks(sb, h)
+	appendWorkspaceMetadataQualityStats(sb, h)
+	if es, err := h.workspace.GetEntityStats(); err == nil && (es.TotalEntities > 0 || es.TotalMentions > 0) {
+		appendEntityGraph(sb, es.TotalEntities, es.TotalMentions)
+	}
+	appendWorkspaceDriftAudit(sb, h)
+	appendLLMCalloutState(sb, h)
+	return nil
+}
+
+// appendSingleStoreStatus renders the single-store section of handleStatus output
+// into sb. Returns a non-nil *mcp.CallToolResult only on a fatal stats error.
+func appendSingleStoreStatus(sb *strings.Builder, h *handler) *mcp.CallToolResult {
+	stats, err := h.store.GetStats()
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("get stats failed: %v", err))
+	}
+	fmt.Fprintf(sb, "Files: %d | Nodes: %d | Edges: %d | Unresolved: %d | DB: %s\n\n",
+		stats.FileCount, stats.NodeCount, stats.EdgeCount, stats.UnresolvedCount, formatSize(stats.DBSizeBytes))
+	if len(stats.NodesByKind) > 2 {
+		sb.WriteString("### Nodes by Kind\n| Kind | Count |\n|------|-------|\n")
+		for kind, count := range stats.NodesByKind {
+			fmt.Fprintf(sb, "| %s | %d |\n", kind, count)
+		}
+	}
+	if len(stats.EdgesByKind) > 2 {
+		sb.WriteString("\n### Edges by Kind\n| Kind | Count |\n|------|-------|\n")
+		for kind, count := range stats.EdgesByKind {
+			fmt.Fprintf(sb, "| %s | %d |\n", kind, count)
+		}
+	}
+
+	embStats, err := h.store.GetEmbeddingModelStats()
+	if err == nil {
+		appendEmbeddingStats(sb, embStats)
+	}
+
+	// Metadata index stats.
+	if metaStats, err := h.store.GetMetadataStats(); err == nil {
+		sb.WriteString("\n### Metadata Index\n")
+		fmt.Fprintf(sb, "Documents with metadata: %d / %d\n", metaStats.DocsWithMetadata, metaStats.TotalDocs)
+		fmt.Fprintf(sb, "Documents with research metadata: %d / %d\n", metaStats.DocsWithResearch, metaStats.TotalDocs)
+	}
+	if enrichmentStats, err := h.store.GetEnrichmentStats(); err == nil && enrichmentStats.EligibleDocs > 0 {
+		appendEnrichmentStats(sb, enrichmentStats)
+	}
+
+	if qualityStats, err := h.store.GetMetadataQualityStats(time.Time{}); err == nil {
+		appendMetadataQualityStats(sb, qualityStats)
+	}
+
+	if packs, err := h.store.GetDomainPacks(); err == nil {
+		if packStats, err := h.store.GetDomainPackStats(); err == nil {
+			appendDomainPackStats(sb, packs, packStats)
+		}
+	}
+
+	if entities, mentions, err := h.store.Entity.GetEntityStats(); err == nil && (entities > 0 || mentions > 0) {
+		appendEntityGraph(sb, entities, mentions)
+	}
+
+	appendDriftAuditStats(sb, h.store)
+	appendLLMCalloutState(sb, h)
+	return nil
+}
+
+// appendEntityGraph writes the compact Entity Graph section.
+// It is shared by the workspace fan-out branch and the single-store branch.
+func appendEntityGraph(sb *strings.Builder, entities, mentions int) {
+	sb.WriteString("\n### Entity Graph\n")
+	fmt.Fprintf(sb, "Entities: %d | Mentions: %d\n", entities, mentions)
+}
+
+// appendWorkspaceEmbeddingStats fans out embedding stats across every project,
+// aggregates by model ID, and delegates to appendEmbeddingStats for rendering.
+// Extracted from the workspace branch of handleStatus to reduce its complexity.
+func appendWorkspaceEmbeddingStats(sb *strings.Builder, h *handler) {
+	if h == nil || h.workspace == nil {
+		return
+	}
+	modelTotals := make(map[string]*store.EmbeddingModelStat)
+	for _, p := range h.workspace.Projects {
+		if embStats, err := p.Store.GetEmbeddingModelStats(); err == nil {
+			for _, es := range embStats {
+				if m, ok := modelTotals[es.ModelID]; ok {
+					m.Total += es.Total
+					m.Stale += es.Stale
+				} else {
+					cp := es
+					modelTotals[es.ModelID] = &cp
+				}
+			}
+		}
+	}
+	var allEmbStats []store.EmbeddingModelStat
+	for _, s := range modelTotals {
+		allEmbStats = append(allEmbStats, *s)
+	}
+	appendEmbeddingStats(sb, allEmbStats)
 }
 
 func appendEnrichmentStats(sb *strings.Builder, stats store.EnrichmentStats) {

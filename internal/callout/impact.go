@@ -9,6 +9,11 @@ import (
 	"unicode"
 )
 
+const (
+	divider     = "════════════════════════════════════════════════════════════════════════"
+	thinDivider = "────────────────────────────────────────────────────────────────────────"
+)
+
 // PendingDoc is one document awaiting LLM processing.
 type PendingDoc struct {
 	FilePath    string // relative to WorkspaceDir
@@ -48,9 +53,6 @@ func BuildImpactGraph(docs []PendingDoc, opts ImpactOpts) string {
 		totalTok += EstimateTokens(d.BodyExcerpt)
 	}
 
-	const divider = "════════════════════════════════════════════════════════════════════════"
-	const thinDivider = "────────────────────────────────────────────────────────────────────────"
-
 	var sb strings.Builder
 
 	header := fmt.Sprintf("## Pending scope — %s", opts.ToolName)
@@ -63,11 +65,30 @@ func BuildImpactGraph(docs []PendingDoc, opts ImpactOpts) string {
 	sb.WriteString("\n\n")
 
 	// --- Section 1: Scope tree ---
+	buildScopeTree(&sb, docs, opts, totalTok)
+
+	sb.WriteString("\n" + divider + "\n")
+
+	// --- Section 2: RELAY block ---
+	buildRelaySection(&sb, docs, opts, totalTok, allSensitive, sensitiveFlags)
+
+	sb.WriteString("\n" + thinDivider + "\n")
+
+	// --- Section 3: ACTION block ---
+	buildActionSection(&sb, opts, allSensitive)
+
+	sb.WriteString(divider + "\n")
+
+	return sb.String()
+}
+
+// buildScopeTree writes the scope-tree portion of Section 1 into sb.
+func buildScopeTree(sb *strings.Builder, docs []PendingDoc, opts ImpactOpts, totalTok int) {
 	workspaceName := filepath.Base(opts.WorkspaceDir)
 	if workspaceName == "" || workspaceName == "." {
 		workspaceName = "workspace"
 	}
-	fmt.Fprintf(&sb, "%-52s %5d files  ~%d tok\n", workspaceName+"/", len(docs), totalTok)
+	fmt.Fprintf(sb, "%-52s %5d files  ~%d tok\n", workspaceName+"/", len(docs), totalTok)
 
 	topDirOrder, topDirFiles, topDirTok, subDirOrder, subDirFiles, subDirTok := buildTree(docs)
 
@@ -82,7 +103,7 @@ func BuildImpactGraph(docs []PendingDoc, opts ImpactOpts) string {
 			topSens = "  ⚠️ SENSITIVE"
 		}
 		label := top + "/"
-		fmt.Fprintf(&sb, "%s%-42s%s %5d files  ~%d tok\n",
+		fmt.Fprintf(sb, "%s%-42s%s %5d files  ~%d tok\n",
 			topPfx, label, topSens, topDirFiles[top], topDirTok[top])
 
 		childPfx := "│   "
@@ -101,93 +122,97 @@ func BuildImpactGraph(docs []PendingDoc, opts ImpactOpts) string {
 				subSens = "  ⚠️ SENSITIVE"
 			}
 			subLabel := strings.TrimPrefix(sub, top+"/") + "/"
-			fmt.Fprintf(&sb, "%s%-38s%s %5d files  ~%d tok\n",
+			fmt.Fprintf(sb, "%s%-38s%s %5d files  ~%d tok\n",
 				subPfx, subLabel, subSens, subDirFiles[sub], subDirTok[sub])
 		}
 	}
+}
 
-	sb.WriteString("\n" + divider + "\n")
+// buildCostSection writes the cost-estimates block and rates footer into sb.
+// Called from within buildRelaySection's non-all-sensitive path.
+func buildCostSection(sb *strings.Builder, totalTok int, opts ImpactOpts) {
+	costLines := EstimateCost(totalTok, opts.Rates)
+	for _, cl := range costLines {
+		marker := ""
+		if opts.ModelHint != "" && strings.EqualFold(cl.ModelName, opts.ModelHint) {
+			marker = "  ← selected model"
+		}
+		fmt.Fprintf(sb, "  • %-32s : ~$%.2f%s\n", cl.ModelName, cl.CostUSD, marker)
+	}
 
-	// --- Section 2: RELAY block ---
+	asOf := mostRecentAsOf(opts.Rates)
+	if asOf != "" {
+		sb.WriteString("\nRates as of ")
+		sb.WriteString(asOf)
+		if warn := staleRateWarning(opts.Rates, time.Now()); warn != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(warn)
+		}
+		sb.WriteString("\n")
+	}
+}
+
+// buildRelaySection writes Section 2 (the RELAY block) into sb.
+func buildRelaySection(sb *strings.Builder, docs []PendingDoc, opts ImpactOpts, totalTok int, allSensitive bool, sensitiveFlags []SensitiveFlag) {
 	sb.WriteString("── RELAY THIS TO THE USER (copy verbatim) ──────────────────────────────\n\n")
 
 	if allSensitive {
 		sb.WriteString("⛔ ALL pending files are in sensitive-path folders. I cannot proceed.\n")
 		sb.WriteString("Please add non-sensitive files or exclude these paths via .docgraphignore before retrying.\n")
-	} else {
-		totalSensitive := 0
-		var sensFolders []string
-		for _, f := range sensitiveFlags {
-			totalSensitive += f.FileCount
-			if f.Path != "" {
-				sensFolders = append(sensFolders, f.Path+"/")
-			} else {
-				sensFolders = append(sensFolders, "(root)")
-			}
-		}
+		return
+	}
 
-		fmt.Fprintf(&sb, "I found **%d documents** pending processing (~%d tokens).\n\n", len(docs), totalTok)
-		sb.WriteString("Estimated cost to process all files:\n")
-
-		costLines := EstimateCost(totalTok, opts.Rates)
-		for _, cl := range costLines {
-			marker := ""
-			if opts.ModelHint != "" && strings.EqualFold(cl.ModelName, opts.ModelHint) {
-				marker = "  ← selected model"
-			}
-			fmt.Fprintf(&sb, "  • %-32s : ~$%.2f%s\n", cl.ModelName, cl.CostUSD, marker)
-		}
-
-		asOf := mostRecentAsOf(opts.Rates)
-		if asOf != "" {
-			sb.WriteString("\nRates as of ")
-			sb.WriteString(asOf)
-			if warn := staleRateWarning(opts.Rates, time.Now()); warn != "" {
-				sb.WriteString(" — ")
-				sb.WriteString(warn)
-			}
-			sb.WriteString("\n")
-		}
-
-		if totalSensitive > 0 {
-			fmt.Fprintf(&sb, "\n⚠️  %d files are in sensitive-path folder(s) (%s).\n",
-				totalSensitive, strings.Join(sensFolders, ", "))
-			sb.WriteString("   I will not process anything until you confirm.\n")
-		}
-
-		sb.WriteString("\nPlease confirm:\n")
-		sb.WriteString("  1. **Scope** — all files, a specific folder, or a limit?\n")
-		sb.WriteString("  2. **Model** — which provider and model?\n")
-		if totalSensitive > 0 {
-			sb.WriteString("  3. **Sensitive files** — include or skip?\n")
+	totalSensitive := 0
+	var sensFolders []string
+	for _, f := range sensitiveFlags {
+		totalSensitive += f.FileCount
+		if f.Path != "" {
+			sensFolders = append(sensFolders, f.Path+"/")
+		} else {
+			sensFolders = append(sensFolders, "(root)")
 		}
 	}
 
-	sb.WriteString("\n" + thinDivider + "\n")
+	fmt.Fprintf(sb, "I found **%d documents** pending processing (~%d tokens).\n\n", len(docs), totalTok)
+	sb.WriteString("Estimated cost to process all files:\n")
 
-	// --- Section 3: ACTION block ---
+	buildCostSection(sb, totalTok, opts)
+
+	if totalSensitive > 0 {
+		fmt.Fprintf(sb, "\n⚠️  %d files are in sensitive-path folder(s) (%s).\n",
+			totalSensitive, strings.Join(sensFolders, ", "))
+		sb.WriteString("   I will not process anything until you confirm.\n")
+	}
+
+	sb.WriteString("\nPlease confirm:\n")
+	sb.WriteString("  1. **Scope** — all files, a specific folder, or a limit?\n")
+	sb.WriteString("  2. **Model** — which provider and model?\n")
+	if totalSensitive > 0 {
+		sb.WriteString("  3. **Sensitive files** — include or skip?\n")
+	}
+}
+
+// buildActionSection writes Section 3 (the ACTION block) into sb.
+func buildActionSection(sb *strings.Builder, opts ImpactOpts, allSensitive bool) {
 	sb.WriteString("── ACTION (for LLM only — do not show to user) ─────────────────────────\n")
 
 	if allSensitive {
 		sb.WriteString("⛔ ALL SENSITIVE — do NOT call the processing action.\n")
 		sb.WriteString("WAIT for user to add non-sensitive files or update .docgraphignore.\n")
-	} else {
-		sb.WriteString("WAIT for user to confirm scope + model + sensitive paths (if any).\n")
-		if opts.ConfirmationToken != "" {
-			fmt.Fprintf(&sb, "CONFIRMATION_TOKEN: %s\n", opts.ConfirmationToken)
-			sb.WriteString("TOKEN_EXPIRES: 30 minutes from now\n")
-			nextAction := "action=store"
-			if opts.ToolName == "docgraph_enrichment" {
-				nextAction = "action=process"
-			}
-			fmt.Fprintf(&sb, "CONFIRMED → call %s scope=<choice> model=<choice> confirmation_token=<token above>\n", nextAction)
-			sb.WriteString("NOT CONFIRMED or \"cancel\" → do NOT call the processing action.\n")
-		}
+		return
 	}
 
-	sb.WriteString(divider + "\n")
-
-	return sb.String()
+	sb.WriteString("WAIT for user to confirm scope + model + sensitive paths (if any).\n")
+	if opts.ConfirmationToken != "" {
+		fmt.Fprintf(sb, "CONFIRMATION_TOKEN: %s\n", opts.ConfirmationToken)
+		sb.WriteString("TOKEN_EXPIRES: 30 minutes from now\n")
+		nextAction := "action=store"
+		if opts.ToolName == "docgraph_enrichment" {
+			nextAction = "action=process"
+		}
+		fmt.Fprintf(sb, "CONFIRMED → call %s scope=<choice> model=<choice> confirmation_token=<token above>\n", nextAction)
+		sb.WriteString("NOT CONFIRMED or \"cancel\" → do NOT call the processing action.\n")
+	}
 }
 
 // EstimateTokens estimates token count using a blended CJK/Latin ratio.
