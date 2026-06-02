@@ -7,6 +7,7 @@
 **MCP-native for LLM agents · CJK + Latin FTS5 · Multi-format graph**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Detective-XH/docgraph)](https://goreportcard.com/report/github.com/Detective-XH/docgraph)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8.svg)](https://go.dev)
 [![Single binary](https://img.shields.io/badge/binary-%7E13_MB_%C2%B7_zero_runtime_deps-brightgreen.svg)](#install)
 [![Formats](https://img.shields.io/badge/formats-.md_%C2%B7_.docx_%C2%B7_.html_%C2%B7_.pdf-orange.svg)](#what-gets-indexed)
