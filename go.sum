@@ -1,7 +1,5 @@
-github.com/Detective-XH/pdf v0.4.0 h1:1tRXgNr2LaP/M55G6X1AAbbdSX5ET2z2lK1wYhKyTsQ=
-github.com/Detective-XH/pdf v0.4.0/go.mod h1:6ZWsnuTVbMR7YfUp4e0RGLzsF8XCX7+YMU29kejToac=
-github.com/Detective-XH/pdf v0.5.0 h1:hchUxzDg8zHeHqWXwbpP3tTXLiQWP+mjR96LcQ5kah8=
-github.com/Detective-XH/pdf v0.5.0/go.mod h1:6ZWsnuTVbMR7YfUp4e0RGLzsF8XCX7+YMU29kejToac=
+github.com/Detective-XH/pdf v0.6.0 h1:fdE+5LI7QH+xUt4hnl9pdCSdx9aEGOW8X2Te1yy5f5I=
+github.com/Detective-XH/pdf v0.6.0/go.mod h1:6ZWsnuTVbMR7YfUp4e0RGLzsF8XCX7+YMU29kejToac=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxKI=
