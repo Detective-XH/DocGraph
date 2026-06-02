@@ -54,6 +54,29 @@ jobs:
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
 
+  golangci-lint:
+    # PR-only: only-new-issues diffs against the PR base, so it gates issues this
+    # PR introduces without blocking on the pre-existing baseline. On push to main
+    # there is no base to diff, so the job is skipped.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # full history so --new-from-rev can diff against the PR base
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+      # Pinned go install instead of golangci-lint-action: no third-party JS action
+      # (avoids the Node-20 deprecation warning and the extra supply-chain surface).
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      - name: golangci-lint (new issues only)
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE"
+          golangci-lint run --new-from-rev=FETCH_HEAD ./...
+
   sbom:
     runs-on: ubuntu-latest
     steps:
