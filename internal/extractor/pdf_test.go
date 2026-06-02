@@ -43,12 +43,14 @@ func ensurePDFFixtures(t testing.TB) {
 // buildMinimalPDF generates a valid minimal PDF with one page per entry in texts
 // using the default font (no Encoding override).
 func buildMinimalPDF(texts []string) []byte {
-	return buildMinimalPDFEnc(texts, "")
+	return buildMinimalPDFEnc(texts, "", "")
 }
 
 // buildMinimalPDFEnc generates a valid minimal PDF with one page per entry in texts.
 // If fontEncoding is non-empty, the font object includes /Encoding /<fontEncoding>.
-func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
+// If infoContent is non-empty, an /Info dictionary object (e.g.
+// "/Title (X) /CreationDate (D:...)") is appended and referenced from the trailer.
+func buildMinimalPDFEnc(texts []string, fontEncoding, infoContent string) []byte {
 	numPages := len(texts)
 	// Object IDs (1-indexed):
 	//   1       = Catalog
@@ -56,8 +58,14 @@ func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 	//   3+i*2   = Page i dict  (i = 0..numPages-1)
 	//   4+i*2   = Page i contents stream
 	//   3+2*N   = Font /F1
+	//   3+2*N+1 = Info dict (only when infoContent != "")
 	fontObjID := 3 + 2*numPages
 	totalObjs := fontObjID
+	infoObjID := 0
+	if infoContent != "" {
+		infoObjID = fontObjID + 1
+		totalObjs = infoObjID
+	}
 
 	// Build /Kids array: [3 0 R  5 0 R  ...]
 	kidsParts := make([]string, numPages)
@@ -102,13 +110,23 @@ func buildMinimalPDFEnc(texts []string, fontEncoding string) []byte {
 	offsets[fontObjID] = buf.Len()
 	fmt.Fprintf(&buf, "%d 0 obj%sendobj\n", fontObjID, fontDict)
 
+	if infoObjID != 0 {
+		offsets[infoObjID] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj<<%s>>endobj\n", infoObjID, infoContent)
+	}
+
 	xrefOffset := buf.Len()
 	fmt.Fprintf(&buf, "xref\n0 %d\n", totalObjs+1)
 	buf.WriteString("0000000000 65535 f \n")
 	for n := 1; n <= totalObjs; n++ {
 		fmt.Fprintf(&buf, "%010d 00000 n \n", offsets[n])
 	}
-	fmt.Fprintf(&buf, "trailer<</Size %d /Root 1 0 R>>\n", totalObjs+1)
+	trailer := fmt.Sprintf("trailer<</Size %d /Root 1 0 R", totalObjs+1)
+	if infoObjID != 0 {
+		trailer += fmt.Sprintf(" /Info %d 0 R", infoObjID)
+	}
+	buf.WriteString(trailer)
+	buf.WriteString(">>\n")
 	fmt.Fprintf(&buf, "startxref\n%d\n%%%%EOF\n", xrefOffset)
 
 	return buf.Bytes()
@@ -227,6 +245,41 @@ func TestExtractPDF_Scanned(t *testing.T) {
 	}
 }
 
+// TestExtractPDF_CreationDateNormalized verifies the v0.6.0 Metadata API
+// adoption: a /Info dict with a raw PDF date (D:YYYYMMDDHHmmSS±HH'mm') is
+// surfaced as a normalized RFC3339 UTC timestamp, and Title flows through
+// r.Info().Title().
+func TestExtractPDF_CreationDateNormalized(t *testing.T) {
+	// 09:30:00 at +05:00 == 04:30:00 UTC.
+	info := "/Title (Normalized Date Doc) /CreationDate (D:20240115093000+05'00')"
+	data := buildMinimalPDFEnc(
+		[]string{"This page exists so the document is not flagged as scanned during extraction."},
+		"", info)
+	relPath := "testdata/multiformat/info_date.pdf"
+	hash := sha256hex(data)
+
+	result, err := extractPDF("/tmp/info_date.pdf", relPath, data, hash)
+	if err != nil {
+		t.Fatalf("extractPDF: %v", err)
+	}
+
+	want := map[string]string{
+		"pdf.title":         "Normalized Date Doc",
+		"pdf.creation_date": "2024-01-15T04:30:00Z",
+	}
+	got := map[string]string{}
+	for _, mt := range result.MetadataTuples {
+		if _, ok := want[mt.Key]; ok {
+			got[mt.Key] = mt.Value
+		}
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("MetadataTuple %s = %q; want %q (all tuples: %v)", k, got[k], v, result.MetadataTuples)
+		}
+	}
+}
+
 // TestExtractPDF_GBKNowSupported verifies that GBK-EUC-H is no longer in the
 // unsupported-encoding blocklist (which was removed entirely). The extractor
 // must not emit an extraction-failed:unsupported-encoding warning; it may emit
@@ -235,7 +288,7 @@ func TestExtractPDF_Scanned(t *testing.T) {
 func TestExtractPDF_GBKNowSupported(t *testing.T) {
 	// Use >50 chars so the page clears pdfScannedThreshold and is not flagged
 	// as image-only-pdf due to low char density after decoding.
-	data := buildMinimalPDFEnc([]string{"This page uses a GBK-EUC-H font encoding label for testing purposes only."}, "GBK-EUC-H")
+	data := buildMinimalPDFEnc([]string{"This page uses a GBK-EUC-H font encoding label for testing purposes only."}, "GBK-EUC-H", "")
 	relPath := "testdata/multiformat/cjk_gbk_nowsupported.pdf"
 	hash := sha256hex(data)
 
@@ -412,7 +465,7 @@ func FuzzExtractPDF(f *testing.F) {
 	}
 	// CJK encoding seed: exercises the runtime encoding-garbage backstop path
 	// (the static unsupported-encoding blocklist was removed entirely).
-	f.Add(buildMinimalPDFEnc([]string{"cjk"}, "GBK-EUC-H"))
+	f.Add(buildMinimalPDFEnc([]string{"cjk"}, "GBK-EUC-H", ""))
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		// Exercise the production dispatch entry (Extract), which carries the

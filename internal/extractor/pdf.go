@@ -36,13 +36,21 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 		return nil, fmt.Errorf("extractPDF: PDF has %d pages, exceeds cap of %d", numPages, pdfMaxPages)
 	}
 
-	// --- Extract Info dict (Trailer → Info, not Trailer → Root → Info) ---
-	info := r.Trailer().Key("Info")
-	docTitle := strings.TrimSpace(info.Key("Title").Text())
-	docAuthor := strings.TrimSpace(info.Key("Author").Text())
-	docSubject := strings.TrimSpace(info.Key("Subject").Text())
-	docKeywords := strings.TrimSpace(info.Key("Keywords").Text())
-	docCreationDate := strings.TrimSpace(info.Key("CreationDate").Text())
+	// --- Extract Info dict via the v0.6.0 Metadata API. r.Info() wraps
+	// Trailer → Info (not Trailer → Root → Info) and parses dates per PDF
+	// spec §14.3.3, so we no longer hand-walk the dictionary. ---
+	info := r.Info()
+	docTitle := strings.TrimSpace(info.Title())
+	docAuthor := strings.TrimSpace(info.Author())
+	docSubject := strings.TrimSpace(info.Subject())
+	docKeywords := strings.TrimSpace(info.Keywords())
+	// CreationDate() returns a parsed time.Time (zero on absent/unparseable).
+	// Normalize to an RFC3339 UTC timestamp so the stored tuple is a clean,
+	// sortable ISO date rather than the raw "D:YYYYMMDDHHmmSS±HH'mm'" string.
+	var docCreationDate string
+	if t := info.CreationDate(); !t.IsZero() {
+		docCreationDate = t.UTC().Format(time.RFC3339)
+	}
 
 	// Determine display name: prefer title from info dict, else basename.
 	docName := docTitle
