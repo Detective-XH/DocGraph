@@ -1,0 +1,30 @@
+version: "2"
+
+# Default linters (errcheck, govet, ineffassign, staticcheck, unused) kept.
+linters:
+  settings:
+    errcheck:
+      # Conventionally-ignorable cleanup. errcheck matches concrete signatures,
+      # so the sql/* cleanup methods are listed explicitly (the io.Closer
+      # interface form only matches calls through an io.Closer value).
+      exclude-functions:
+        - (io.Closer).Close
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - (*github.com/fsnotify/fsnotify.Watcher).Close
+        - (*github.com/Detective-XH/docgraph/internal/store.Store).Close
+        - (*github.com/Detective-XH/docgraph/internal/workspace.Workspace).Close
+        - (*flag.FlagSet).Parse
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+  exclusions:
+    rules:
+      # Test setup/teardown: an unchecked error surfaces as a later assertion
+      # failure, so errcheck on _test.go is noise rather than signal.
+      - path: _test\.go
+        linters:
+          - errcheck

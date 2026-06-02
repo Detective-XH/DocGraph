@@ -54,6 +54,22 @@ jobs:
       - run: go install golang.org/x/vuln/cmd/govulncheck@latest
       - run: govulncheck ./...
 
+  golangci-lint:
+    # PR-only: only-new-issues diffs against the PR base, so it gates issues this
+    # PR introduces without blocking on the pre-existing baseline. On push to main
+    # there is no base to diff, so the job is skipped.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 'stable'
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+          only-new-issues: true
+
   sbom:
     runs-on: ubuntu-latest
     steps:
