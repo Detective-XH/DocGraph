@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.3.1 — 2026-06-13
+
+Maintenance + agent-experience release. Drift and metadata-quality findings are now actionable, binary documents are no longer mis-scored for governance fields they cannot hold, and `.docgraphignore` exclusions are discoverable from the tools and apply on a running server. Dependency bump; backward-compatible, no schema change.
+
+### Added
+
+- Every drift and metadata-quality finding now carries a remediation (`Fix:`) line — what to do about it, not just the symptom.
+- `docgraph_status` gains an **Index Configuration** section: which ignore sources are active (`.gitignore` / `.docgraphignore` / `--no-gitignore`) and how to exclude files from the index.
+
+### Changed
+
+- `docgraph_context format=drift_audit` now honors the `project=` filter; previously it always scanned the whole workspace.
+- Editing `.docgraphignore` while `docgraph serve` is running applies the change automatically — newly-excluded files are pruned from the index (guarded so an over-broad rule can't empty it), instead of lingering until a `--force` rebuild.
+- Bumped the PDF-extraction dependency (`gopdf`) to v0.7.9.
+
+### Fixed
+
+- PDF and Word (`.docx`) documents are no longer flagged for a missing `status`, `owner`, or `review_due` — frontmatter fields those formats structurally cannot carry. Git- and graph-based findings (stale-by-git, isolated document) still apply to them.
+
 ## v0.3.0 — 2026-06-02
 
 Feature release: PDF CJK text extraction, workspace per-project filtering, and a search/indexing performance pass. Backward-compatible; no schema change.
