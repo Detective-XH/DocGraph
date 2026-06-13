@@ -12,7 +12,7 @@ import (
 )
 
 var nodeTool = mcp.NewTool("docgraph_node",
-	mcp.WithDescription("Get a single document or heading's full details: metadata, structure, and cross-references. Use 'section' to read the full content of a specific heading section from the source file. For multiple documents, use docgraph_explore instead."),
+	mcp.WithDescription("Get a single document or heading's full details: metadata, structure, and cross-references. Use 'section' to read the full content of a specific heading section from the source file. For multiple documents, use docgraph_context instead."),
 	mcp.WithString("document", mcp.Required(), mcp.Description("Document name, path, or heading qualified name (e.g. 'docs/guide.md' or 'guide.md#Installation') When copying a path from docgraph_search results, strip the trailing '#heading:line' suffix (and any '[project/]' prefix in workspace mode) to the bare file path before passing it here.")),
 	mcp.WithBoolean("includeBody", mcp.Description("Include body excerpt (default true)")),
 	mcp.WithString("section", mcp.Description("Return full content of a specific heading section. Accepts the exact heading text OR the anchor slug shown in search results (e.g. 'Neural Embeddings (agent-driven)' or 'neural-embeddings-agent-driven').")),
@@ -134,27 +134,8 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	}
 
 	if s := h.getStoreForResolvedNode(node); s != nil {
-		if hist, err := s.GetFileHistory(node.FilePath); err == nil && hist != nil && hist.CommitCount > 0 {
-			sb.WriteString("\n### History\n")
-			amendWord := "time"
-			if hist.CommitCount != 1 {
-				amendWord = "times"
-			}
-			fmt.Fprintf(&sb, "**Amended:** %d %s", hist.CommitCount, amendWord)
-			if hist.AuthorCount > 0 {
-				authorWord := "author"
-				if hist.AuthorCount != 1 {
-					authorWord = "authors"
-				}
-				fmt.Fprintf(&sb, " by %d %s", hist.AuthorCount, authorWord)
-			}
-			sb.WriteString("\n")
-			if hist.LastSubject != "" {
-				fmt.Fprintf(&sb, "**Last commit:** %s\n", hist.LastSubject)
-			}
-			if hist.LastCommitAt > 0 {
-				fmt.Fprintf(&sb, "**Last changed:** %s\n", time.Unix(hist.LastCommitAt, 0).UTC().Format("2006-01-02"))
-			}
+		if hist, err := s.GetFileHistory(node.FilePath); err == nil {
+			sb.WriteString(appendHistorySection(hist))
 		}
 	}
 
@@ -219,6 +200,44 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// appendHistorySection formats per-document git history as a Markdown section string.
+// It returns "" when there is no tracked history (hist nil or zero commits), so
+// docgraph_node simply omits the section for untracked documents. Mirrors the field
+// order of store.FileHistory; surfaces the same data the dedicated history tool did.
+func appendHistorySection(hist *store.FileHistory) string {
+	if hist == nil || hist.CommitCount == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\n### History\n")
+	amendWord := "time"
+	if hist.CommitCount != 1 {
+		amendWord = "times"
+	}
+	fmt.Fprintf(&sb, "**Amended:** %d %s", hist.CommitCount, amendWord)
+	if hist.AuthorCount > 0 {
+		authorWord := "author"
+		if hist.AuthorCount != 1 {
+			authorWord = "authors"
+		}
+		fmt.Fprintf(&sb, " by %d %s", hist.AuthorCount, authorWord)
+	}
+	sb.WriteString("\n")
+	if hist.LastAuthor != "" {
+		fmt.Fprintf(&sb, "**Last author:** %s\n", hist.LastAuthor)
+	}
+	if hist.LastSubject != "" {
+		fmt.Fprintf(&sb, "**Last commit:** %s\n", hist.LastSubject)
+	}
+	if hist.FirstCommitAt > 0 {
+		fmt.Fprintf(&sb, "**First changed:** %s\n", time.Unix(hist.FirstCommitAt, 0).UTC().Format("2006-01-02"))
+	}
+	if hist.LastCommitAt > 0 {
+		fmt.Fprintf(&sb, "**Last changed:** %s\n", time.Unix(hist.LastCommitAt, 0).UTC().Format("2006-01-02"))
+	}
+	return sb.String()
 }
 
 // appendGovernanceSection formats governance metadata as a Markdown section string.

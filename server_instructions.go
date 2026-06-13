@@ -12,11 +12,10 @@ DocGraph indexes Markdown, Word (.docx), HTML, and PDF files into a searchable k
 | Exact lookup or status | docgraph_search, docgraph_node, docgraph_files, docgraph_status |
 | Reference, impact, trace | docgraph_graph operation=incoming/outgoing/impact/trace |
 | Topically similar docs | docgraph_similar (TF-IDF + tags; engine=auto/tfidf/neural; docs only, not heading anchors) |
-| Multi-doc survey | docgraph_explore |
 | List or filter by tag | docgraph_tags |
-| Git commit history | docgraph_history |
+| Git commit history | docgraph_node (inline ### History) |
 
-When the goal is to gather everything about a topic and you have no seed document, prefer docgraph_context (and docgraph_explore for breadth) over search-then-node drilling — piecemeal node lookups return only matched fragments and can silently miss a multi-section document's later sections.
+When the goal is to gather everything about a topic and you have no seed document, prefer docgraph_context over search-then-node drilling — piecemeal node lookups return only matched fragments and can silently miss a multi-section document's later sections.
 
 When you already have a specific seed document and need everything related to it, call BOTH docgraph_similar AND docgraph_graph incoming+outgoing — they return DISJOINT related reading, so relying on only one silently under-answers; docgraph_context is topic/keyword-based and does not compose that union.
 
@@ -41,7 +40,6 @@ Search results use [project/]doc.md#heading:line-end — strip the [project/] pr
 ## Reducing noise
 
 - docgraph_files returns ALL indexed files — use the path filter to narrow scope.
-- docgraph_explore caps at maxDocs (default 5) — keep it low for focused answers.
 - docgraph_graph operation=impact with depth > 2 can return many results — start with depth=1.
 - docgraph_context includes source content by default; set includeContent=false when structure is enough.
 - In workspace mode, results include [project_name] prefixes to identify source.
