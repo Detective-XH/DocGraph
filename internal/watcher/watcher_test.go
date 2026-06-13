@@ -226,6 +226,48 @@ func TestWatchWithContextEmitsMarkdownChanges(t *testing.T) {
 	}
 }
 
+// TestWatchWithContextEmitsIgnoreRuleChanges verifies that editing a
+// .docgraphignore — which has no supported extension — still reaches onChange, so
+// a live server can re-apply the exclusion on save. Without the basename
+// passthrough the event is dropped by the ext filter and the loop never closes.
+func TestWatchWithContextEmitsIgnoreRuleChanges(t *testing.T) {
+	root := t.TempDir()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	changes := make(chan []string, 4)
+	errs := make(chan error, 1)
+	go func() {
+		errs <- WatchWithContext(ctx, []string{root}, 25*time.Millisecond, 0, func(_ string, files []string) {
+			changes <- files
+		})
+	}()
+
+	// Give fsnotify time to register the temporary directory before writing.
+	time.Sleep(100 * time.Millisecond)
+
+	if err := os.WriteFile(filepath.Join(root, ".docgraphignore"), []byte("*.pdf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case files := <-changes:
+		if !contains(files, ".docgraphignore") {
+			t.Fatalf("expected .docgraphignore to pass the watcher filter, got %v", files)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out: .docgraphignore change did not reach onChange (passthrough missing)")
+	}
+
+	cancel()
+	select {
+	case <-errs:
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for watcher shutdown")
+	}
+}
+
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

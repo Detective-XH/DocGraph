@@ -11,10 +11,11 @@ import (
 // Codes are stable machine-readable anchors for future audit packs; messages
 // are human-facing summaries and may evolve without changing the code.
 type MetadataQualityIssue struct {
-	Code     string
-	Severity string
-	Message  string
-	Penalty  int
+	Code        string
+	Severity    string
+	Message     string
+	Penalty     int
+	Remediation string // actionable fix; "" when none applies
 }
 
 // MetadataQualityRecord is an advisory score derived from explicit metadata and
@@ -94,24 +95,32 @@ func (s *Store) GetMetadataQuality(nodeID string, asOf time.Time) (*MetadataQual
 	}
 	addIssue := func(code, severity, message string, penalty int) {
 		rec.Issues = append(rec.Issues, MetadataQualityIssue{
-			Code:     code,
-			Severity: severity,
-			Message:  message,
-			Penalty:  penalty,
+			Code:        code,
+			Severity:    severity,
+			Message:     message,
+			Penalty:     penalty,
+			Remediation: remediationFor(code, node.FilePath),
 		})
 		rec.Score -= penalty
 	}
 
-	if gov == nil || strings.TrimSpace(gov.Status) == "" {
-		addIssue("missing_status", "warning", "Governance status is missing. (Narrative body 'Status:' prose does not satisfy the frontmatter governance status field — set frontmatter status: to clear this.)", 12)
-	}
-	if gov == nil || strings.TrimSpace(gov.Owner) == "" {
-		addIssue("missing_owner", "warning", "Document owner is missing.", 10)
-	}
-	if gov == nil || strings.TrimSpace(gov.ReviewDue) == "" {
-		addIssue("missing_review_due", "warning", "Review due date is missing.", 8)
-	} else if dateBefore(gov.ReviewDue, asOf) {
-		addIssue("stale_review_due", "error", "Review due date is in the past.", 16)
+	// Frontmatter governance findings are suppressed for formats that structurally
+	// cannot carry frontmatter (PDF/DOCX) — flagging a binary for a status/owner/
+	// review_due field it can never hold is a false positive. The git/graph-based
+	// findings below (stale_review_due is gated on a frontmatter date so it never
+	// fires for binaries anyway; isolated_document is format-agnostic) are kept.
+	if isFrontmatterCapable(node.FilePath) {
+		if gov == nil || strings.TrimSpace(gov.Status) == "" {
+			addIssue("missing_status", "warning", "Governance status is missing. (Narrative body 'Status:' prose does not satisfy the frontmatter governance status field — set frontmatter status: to clear this.)", 12)
+		}
+		if gov == nil || strings.TrimSpace(gov.Owner) == "" {
+			addIssue("missing_owner", "warning", "Document owner is missing.", 10)
+		}
+		if gov == nil || strings.TrimSpace(gov.ReviewDue) == "" {
+			addIssue("missing_review_due", "warning", "Review due date is missing.", 8)
+		} else if dateBefore(gov.ReviewDue, asOf) {
+			addIssue("stale_review_due", "error", "Review due date is in the past.", 16)
+		}
 	}
 	if gov != nil && isNonCanonicalGovernance(gov) {
 		addIssue("non_canonical", "error", "Document is marked non-canonical or superseded.", 18)

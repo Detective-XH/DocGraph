@@ -78,8 +78,8 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 | Metric | Value |
 |--------|-------|
 | Language | Go 1.25+ |
-| Binary size | ~18 MB |
-| Codebase | ~21,770 lines of Go (+ ~26,430 lines of tests) |
+| Binary size | ~13 MB |
+| Codebase | ~22,130 lines of Go (+ ~26,750 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -446,6 +446,14 @@ projects by directory name:
 OSINT-Platform-backup-20260518
 csint-private
 ```
+
+Editing `.docgraphignore` while `docgraph serve` is running applies the change
+automatically: newly-excluded files are pruned from the index on save (a guarded
+reconcile — an over-broad pattern that would drop more than half the corpus is
+refused with a message rather than emptying the index). With no server running, a
+newly-excluded file is dropped on the next `docgraph index --force <path>`.
+`docgraph_status` reports the active ignore sources (`.gitignore`,
+`.docgraphignore`, `--no-gitignore`) and how to add an exclusion.
 
 ### Indexing all files
 

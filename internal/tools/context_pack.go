@@ -210,6 +210,9 @@ func (h *handler) appendContextPackQuality(sb *strings.Builder, st *store.Store,
 	}
 	for _, issue := range quality.Issues[:limit] {
 		fmt.Fprintf(sb, "  - `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message)
+		if issue.Remediation != "" {
+			fmt.Fprintf(sb, "    - Fix: %s\n", issue.Remediation)
+		}
 	}
 	if len(quality.Issues) > limit {
 		fmt.Fprintf(sb, "  - ... %d more quality issues omitted\n", len(quality.Issues)-limit)
@@ -399,10 +402,12 @@ func writeContextPackField(sb *strings.Builder, label, value string) {
 }
 
 // renderDriftAudit runs the policy/process drift audit and formats findings as
-// a Markdown report. In workspace mode it fans out across all projects. The
-// task label is used for the report header only; findings are not filtered by
-// topic — the audit scans all indexed documents.
-func (h *handler) renderDriftAudit(task string) string {
+// a Markdown report. In workspace mode it fans out across projects; a non-empty
+// projectFilter (the docgraph_context `project` arg) scopes the audit to that one
+// project, mirroring how SearchWithOptions scopes the other formats. The task
+// label is used for the report header only; findings are not filtered by topic —
+// the audit scans all indexed documents within the selected scope.
+func (h *handler) renderDriftAudit(task, projectFilter string) string {
 	var sb strings.Builder
 	sb.WriteString("# Drift Audit Report\n\n")
 	if task != "" {
@@ -410,12 +415,20 @@ func (h *handler) renderDriftAudit(task string) string {
 	}
 	sb.WriteString("- **Format:** docgraph.drift_audit.v1\n")
 	sb.WriteString("- **Packs:** policy_process, assessment_drift, code_doc (when enabled)\n")
+	if projectFilter != "" {
+		fmt.Fprintf(&sb, "- **Project scope:** %s\n", projectFilter)
+	}
 	sb.WriteString("- **Findings are advisory** — they highlight candidates for human review, not authoritative rulings.\n\n")
 
 	opts := store.DriftAuditOpts{}
 
 	if h.workspace != nil {
+		matched := false
 		for _, p := range h.workspace.Projects {
+			if projectFilter != "" && p.Name != projectFilter {
+				continue
+			}
+			matched = true
 			findings, err := p.Store.GetDriftFindings(opts)
 			if err != nil {
 				fmt.Fprintf(&sb, "## %s\n\n_Error running drift audit: %v_\n\n", p.Name, err)
@@ -423,6 +436,9 @@ func (h *handler) renderDriftAudit(task string) string {
 			}
 			fmt.Fprintf(&sb, "## %s\n\n", p.Name)
 			appendDriftFindingsMarkdown(&sb, findings)
+		}
+		if projectFilter != "" && !matched {
+			fmt.Fprintf(&sb, "_No project named %q in this workspace._\n", projectFilter)
 		}
 		return sb.String()
 	}
@@ -504,6 +520,9 @@ func appendDriftFindingsMarkdown(sb *strings.Builder, findings []store.DriftFind
 			fmt.Fprintf(sb, "\n  - %s\n", sanitizeDriftField(f.Message))
 			if f.Evidence != "" {
 				fmt.Fprintf(sb, "  - Evidence: %s\n", sanitizeDriftField(f.Evidence))
+			}
+			if f.Remediation != "" {
+				fmt.Fprintf(sb, "  - Fix: %s\n", sanitizeDriftField(f.Remediation))
 			}
 		}
 		sb.WriteString("\n")
