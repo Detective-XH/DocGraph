@@ -8,7 +8,7 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
-// TestHandleContext_ReferenceLimitClampedAtRetrieval pins the H-24 contract:
+// TestHandleContext_ReferenceLimitClampedAtRetrieval pins the reference-limit retrieval-clamp contract:
 // handleContext must clamp the user-facing referenceLimit arg at RETRIEVAL
 // (getIntArgClamped(args,"referenceLimit",5,1,20)) before handing it to the
 // context-pack renderer — not rely solely on the sink's own re-clamp in
@@ -131,12 +131,212 @@ func TestHandleContext_PayloadOverflowNotice(t *testing.T) {
 	if !strings.Contains(text, "Response budget reached") {
 		t.Errorf("expected truncation notice, got output of %d bytes:\n%s", len(text), text)
 	}
-	if !strings.Contains(text, "omitted") {
-		t.Errorf("expected omitted count in truncation notice; got:\n%s", text)
+	// Notice now reports head/tail split instead of a bare "omitted" count.
+	if !strings.Contains(text, "showing full content for") {
+		t.Errorf("expected head/tail count in truncation notice; got:\n%s", text)
 	}
 	// At least 1 doc must have been rendered before the notice.
 	if !strings.Contains(text, "Auth Doc 0") {
 		t.Errorf("expected at least the first document to be rendered before truncation; got:\n%s", text)
+	}
+}
+
+// TestHandleContext_PayloadOverflowListsOmitted pins the "list the tail, don't
+// drop it" contract. On payload overflow, handleContext degrades the tail to
+// stub lines (path + refs only) instead of dropping the remaining documents.
+//
+// Mutation check: the assertions on the omitted-tail FilePaths FAIL if Change 1
+// is reverted to a bare `break`, because the bare break erases every doc in
+// deduped[i+1:] — their paths never reach the output. All 30 docs share the same
+// BodyExcerpt (identical FTS score), so which docs land in the tail is rowid /
+// tie-break dependent; asserting that ALL 30 FilePaths appear is therefore
+// order-independent — under the fix every doc is either head-rendered or
+// tail-stubbed, under a bare break the ~dozen tail paths vanish regardless of order.
+func TestHandleContext_PayloadOverflowListsOmitted(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	// Same fixture as TestHandleContext_PayloadOverflowNotice: 30 docs, broad query,
+	// crossing the 20 KB maxContextResponseBytes cap so the tail overflows.
+	bigExcerpt := strings.Repeat("authentication access control token credential session bearer oauth ", 7)
+	nodes := make([]store.Node, 30)
+	for i := range nodes {
+		nodes[i] = store.Node{
+			ID:            fmt.Sprintf("overflow%d.md", i),
+			Kind:          "document",
+			Name:          fmt.Sprintf("Auth Doc %d", i),
+			QualifiedName: fmt.Sprintf("overflow%d.md", i),
+			FilePath:      fmt.Sprintf("overflow%d.md", i),
+			StartLine:     1, EndLine: 50,
+			BodyExcerpt: bigExcerpt,
+			UpdatedAt:   1,
+		}
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleContext, map[string]any{
+		"task":     "authentication access control token credential session bearer oauth",
+		"maxNodes": float64(30),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+	t.Logf("overflow-lists-omitted test: output size = %d bytes", len(text))
+
+	// (a) The overflow notice still fires.
+	if !strings.Contains(text, "Response budget reached") {
+		t.Errorf("expected truncation notice; got output of %d bytes:\n%s", len(text), text)
+	}
+	// (b) The stub-tail marker is present.
+	if !strings.Contains(text, "path + refs only") {
+		t.Errorf("expected stub-tail marker 'path + refs only'; got:\n%s", text)
+	}
+	// (c) MUTATION CHECK: every matched document's path survives — head-rendered
+	// or tail-stubbed. A bare `break` erases the tail paths and this fails.
+	for i := range 30 {
+		fp := fmt.Sprintf("overflow%d.md", i)
+		if !strings.Contains(text, fp) {
+			t.Errorf("expected omitted-tail document %q to be listed (path must survive overflow); got:\n%s", fp, text)
+		}
+	}
+}
+
+// TestHandleContext_PayloadOverflowTailBounded pins the Codex/advisor follow-up:
+// the stub tail is byte-capped (maxTailStubBytes), so a large maxNodes cannot
+// append ~200 stub lines and ~double the payload. Stubs past the cap are NOT
+// dropped silently — they are disclosed as a trailing "…and N more not listed"
+// count. This bounds the stub LIST, not the whole response (a single huge-heading
+// doc can still overshoot the head budget — out of scope here; the fixture uses
+// small bodies so the head overshoot is a single ~1 KB doc).
+//
+// Mutation check: remove the `sb.Len()-tailStart >= maxTailStubBytes` cap and the
+// envelope assertion FAILS (200 long-path stubs ≈ 26 KB tail → ~46 KB total).
+func TestHandleContext_PayloadOverflowTailBounded(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	// 200 docs with long paths AND names so an uncapped tail would blow the
+	// payload. BodyExcerpt is capped at 500 B by InsertNodes, so head doc size is
+	// bounded and the head overshoot is a single ~1 KB doc.
+	bigExcerpt := strings.Repeat("authentication access control token credential session bearer oauth ", 7)
+	const n = 200
+	nodes := make([]store.Node, n)
+	for i := range nodes {
+		id := fmt.Sprintf("very/long/nested/workspace/path/segment/for/overflow/document-%03d.md", i)
+		nodes[i] = store.Node{
+			ID:            id,
+			Kind:          "document",
+			Name:          fmt.Sprintf("Authentication and Access Control Reference Document Number %03d", i),
+			QualifiedName: id,
+			FilePath:      id,
+			StartLine:     1, EndLine: 50,
+			BodyExcerpt: bigExcerpt,
+			UpdatedAt:   1,
+		}
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleContext, map[string]any{
+		"task":     "authentication access control token credential session bearer oauth",
+		"maxNodes": float64(n),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+	t.Logf("tail-bounded test: output size = %d bytes (%d docs)", len(text), n)
+
+	// Overflow fired and the stub-tail marker is present.
+	if !strings.Contains(text, "Response budget reached") {
+		t.Errorf("expected overflow notice; got %d bytes", len(text))
+	}
+	if !strings.Contains(text, "path + refs only") {
+		t.Errorf("expected stub-tail marker 'path + refs only'; got %d bytes", len(text))
+	}
+	// The tail was capped: the trailing disclosure of un-listed docs must appear.
+	if !strings.Contains(text, "more not listed") {
+		t.Errorf("expected capped-tail disclosure '…and N more not listed' (tail not bounded?); got %d bytes", len(text))
+	}
+	// ENVELOPE: head (≤ cap + one overshoot doc) + capped tail + notices — bounded,
+	// NOT the ~46 KB an uncapped 200-long-path tail would produce.
+	const envelope = maxContextResponseBytes + maxTailStubBytes + 8*1024
+	if len(text) > envelope {
+		t.Errorf("response %d bytes exceeds bounded envelope %d — stub tail not byte-capped", len(text), envelope)
+	}
+}
+
+// TestHandleContext_PayloadOverflowOversizedStubBounded pins the Codex re-review
+// finding: a SINGLE tail stub can exceed maxTailStubBytes if FilePath/Name is long
+// (untrusted — a malicious heading). The cap must be enforced BEFORE appending each
+// stub, so one oversized stub is counted, not written, and the envelope still holds.
+//
+// Fixture: 40 strong-match filler docs fill the head; 1 weak-match doc with a 24 KB
+// Name (> maxContextResponseBytes) ranks last → lands in the tail. With the
+// before-append cap it is skipped (disclosed in the count); with the old
+// check-at-start cap it is written whole and the response blows past the envelope.
+func TestHandleContext_PayloadOverflowOversizedStubBounded(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	bigExcerpt := strings.Repeat("authentication access control token credential session bearer oauth ", 7)
+	nodes := make([]store.Node, 41)
+	for i := range 40 {
+		nodes[i] = store.Node{
+			ID:            fmt.Sprintf("filler%02d.md", i),
+			Kind:          "document",
+			Name:          fmt.Sprintf("Auth Filler %02d", i),
+			QualifiedName: fmt.Sprintf("filler%02d.md", i),
+			FilePath:      fmt.Sprintf("filler%02d.md", i),
+			StartLine:     1, EndLine: 50,
+			BodyExcerpt: bigExcerpt,
+			UpdatedAt:   1,
+		}
+	}
+	// Weak match (one term, once) so it ranks LAST → tail; Name alone exceeds the cap.
+	nodes[40] = store.Node{
+		ID:            "oversized-name-doc.md",
+		Kind:          "document",
+		Name:          strings.Repeat("Z", 24*1024),
+		QualifiedName: "oversized-name-doc.md",
+		FilePath:      "oversized-name-doc.md",
+		StartLine:     1, EndLine: 50,
+		BodyExcerpt: "authentication",
+		UpdatedAt:   1,
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleContext, map[string]any{
+		"task":     "authentication access control token credential session bearer oauth",
+		"maxNodes": float64(41),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+	t.Logf("oversized-stub test: output size = %d bytes", len(text))
+
+	if !strings.Contains(text, "Response budget reached") {
+		t.Errorf("expected overflow notice; got %d bytes", len(text))
+	}
+	// The oversized stub must NOT have been written whole, so the response stays
+	// within the envelope. The before-append cap guarantees this; the old
+	// check-at-start cap writes the 24 KB stub and FAILS here.
+	const envelope = maxContextResponseBytes + maxTailStubBytes + 8*1024
+	if len(text) > envelope {
+		t.Errorf("response %d bytes exceeds envelope %d — a single oversized stub overshot the tail cap", len(text), envelope)
 	}
 }
 

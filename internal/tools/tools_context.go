@@ -57,6 +57,18 @@ func headingNames(headings []store.Node) string {
 // 20 KB sits strictly between those bands — below broad queries, above focused ones.
 const maxContextResponseBytes = 20 * 1024
 
+// maxTailStubBytes bounds the overflow stub-tail — the path+refs list emitted
+// after maxContextResponseBytes is hit. It caps the stub LIST only, NOT the whole
+// response: a single huge-heading document can already overshoot the head budget
+// on its own (the separate structure-outline follow-on). The reported overflow
+// was 11 docs and the default maxNodes is 10, so the tail is normally listed in
+// full; even 2 KB covers every realistic overflow. 4 KB (~30–50 stubs) only
+// truncates pathological large-maxNodes (≤200) cross-workspace sweeps — and the
+// un-listed remainder is then disclosed as a trailing count, never silently
+// dropped. Capping by bytes (not stub count) also bounds the getEdgeCounts calls
+// to the listed stubs, so a 200-doc tail cannot fan out 200 edge lookups.
+const maxTailStubBytes = 4 * 1024
+
 func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	task := getStringArg(args, "task", "")
@@ -204,11 +216,35 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 			}
 		}
 
-		// Check payload budget after rendering each document.
+		// Check payload budget after rendering each document. P-v6-2 originally
+		// dropped the remaining documents entirely (count-only notice), erasing
+		// their paths and forfeiting recall on the first call. Degrade the tail
+		// instead: list the remaining documents as stubs (path + refs only) so the
+		// set stays visible. The stub list is byte-capped (maxTailStubBytes) so a
+		// large maxNodes cannot ~double the payload; stubs past the cap are disclosed
+		// as a trailing count, never silently dropped.
 		if sb.Len() >= maxContextResponseBytes && i < len(deduped)-1 {
-			omitted := len(deduped) - i - 1
-			fmt.Fprintf(&sb, "\n---\n> ⚠ Response budget reached — showing %d of %d documents (%d omitted). Set includeContent=false, reduce maxNodes, or add project=<name> to scope to one project.\n",
-				i+1, len(deduped), omitted)
+			tail := deduped[i+1:]
+			fmt.Fprintf(&sb, "\n---\n> ⚠ Response budget reached — showing full content for %d of %d documents; the remaining %d follow as stubs (path + refs only, capped). Set includeContent=false, reduce maxNodes, or add project=<name> for their content.\n",
+				i+1, len(deduped), len(tail))
+			tailStart := sb.Len()
+			listed := 0
+			for _, rest := range tail {
+				rn := rest.sr.Node
+				inC, outC := h.getEdgeCounts(&rn)
+				// Build the stub, then enforce the cap BEFORE appending it — so a single
+				// untrusted FilePath/Name long enough to exceed the whole tail budget on
+				// its own cannot overshoot. Such a stub is counted (below), never written.
+				stub := fmt.Sprintf("> - %s — %s (%d in / %d out)\n", rn.FilePath, rn.Name, inC, outC)
+				if sb.Len()-tailStart+len(stub) > maxTailStubBytes {
+					break
+				}
+				sb.WriteString(stub)
+				listed++
+			}
+			if remaining := len(tail) - listed; remaining > 0 {
+				fmt.Fprintf(&sb, "> …and %d more not listed — narrow with project=<name> or a smaller maxNodes.\n", remaining)
+			}
 			break
 		}
 	}
