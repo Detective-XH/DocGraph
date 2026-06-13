@@ -43,7 +43,7 @@ Feature release: PDF CJK text extraction, workspace per-project filtering, and a
 
 ### Security
 
-- Context-pack integer args clamped at retrieval (H-24); content-trust test guard (S-1); supply-chain hardening (S-6) with `govulncheck` + SBOM CI gates.
+- Context-pack integer args clamped at retrieval; content-trust test guard; supply-chain hardening with `govulncheck` + SBOM CI gates.
 
 ---
 
