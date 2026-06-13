@@ -17,11 +17,11 @@ import (
 
 const maxInstructionsBytes = 4400 // bumped from 4000: earned by P-v5-3 + P-v5-4 drift_audit trigger + enumerate recall note (~303 bytes)
 
-// Suite A — default (no flags): 10 tools
+// Suite A — default (no flags): 8 tools
 func TestToolSurfaceRegistryDefault(t *testing.T) {
 	expected := []string{
-		"docgraph_context", "docgraph_explore", "docgraph_files",
-		"docgraph_graph", "docgraph_history", "docgraph_node",
+		"docgraph_context", "docgraph_files",
+		"docgraph_graph", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
 	actual := registeredToolNames(t, tools.RegisterOpts{})
@@ -31,11 +31,11 @@ func TestToolSurfaceRegistryDefault(t *testing.T) {
 	}
 }
 
-// Suite B — embeddings only: 11 tools
+// Suite B — embeddings only: 9 tools
 func TestToolSurfaceRegistryEmbeddingsOnly(t *testing.T) {
 	expected := []string{
-		"docgraph_context", "docgraph_embeddings", "docgraph_explore", "docgraph_files",
-		"docgraph_graph", "docgraph_history", "docgraph_node",
+		"docgraph_context", "docgraph_embeddings", "docgraph_files",
+		"docgraph_graph", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
 	actual := registeredToolNames(t, tools.RegisterOpts{EnableEmbeddings: true})
@@ -45,11 +45,11 @@ func TestToolSurfaceRegistryEmbeddingsOnly(t *testing.T) {
 	}
 }
 
-// Suite C — enrichment only: 11 tools
+// Suite C — enrichment only: 9 tools
 func TestToolSurfaceRegistryEnrichmentOnly(t *testing.T) {
 	expected := []string{
-		"docgraph_context", "docgraph_enrichment", "docgraph_explore", "docgraph_files",
-		"docgraph_graph", "docgraph_history", "docgraph_node",
+		"docgraph_context", "docgraph_enrichment", "docgraph_files",
+		"docgraph_graph", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
 	actual := registeredToolNames(t, tools.RegisterOpts{EnableEnrichment: true})
@@ -59,11 +59,11 @@ func TestToolSurfaceRegistryEnrichmentOnly(t *testing.T) {
 	}
 }
 
-// Suite D — both: 12 tools
+// Suite D — both: 10 tools
 func TestToolSurfaceRegistryBoth(t *testing.T) {
 	expected := []string{
-		"docgraph_context", "docgraph_embeddings", "docgraph_enrichment", "docgraph_explore",
-		"docgraph_files", "docgraph_graph", "docgraph_history", "docgraph_node",
+		"docgraph_context", "docgraph_embeddings", "docgraph_enrichment",
+		"docgraph_files", "docgraph_graph", "docgraph_node",
 		"docgraph_search", "docgraph_similar", "docgraph_status", "docgraph_tags",
 	}
 	actual := registeredToolNames(t, tools.RegisterOpts{EnableEmbeddings: true, EnableEnrichment: true})
@@ -86,7 +86,7 @@ func TestToolSurfaceInstructionsStayCompact(t *testing.T) {
 	if section == "" {
 		t.Fatal("server instructions must include a Tool selection section before Reducing noise")
 	}
-	for _, hidden := range []string{"docgraph_references", "docgraph_links", "docgraph_impact", "docgraph_trace", "docgraph_embeddings_pending", "docgraph_embeddings_store", "docgraph_embeddings_clear"} {
+	for _, hidden := range []string{"docgraph_references", "docgraph_links", "docgraph_impact", "docgraph_trace", "docgraph_embeddings_pending", "docgraph_embeddings_store", "docgraph_embeddings_clear", "docgraph_explore", "docgraph_history"} {
 		if strings.Contains(section, hidden) {
 			t.Fatalf("server instructions must not name hidden tool %s", hidden)
 		}

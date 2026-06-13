@@ -15,10 +15,8 @@ func registerCompactTools(s *server.MCPServer, h *handler, opts RegisterOpts) {
 	s.AddTool(statusTool, h.handleStatus) // not guarded: status remains available during cold start.
 	s.AddTool(contextTool, g(h.handleContext))
 	s.AddTool(nodeTool, g(h.handleNode))
-	s.AddTool(exploreTool, g(h.handleExplore))
 	s.AddTool(similarTool, g(h.handleSimilar))
 	s.AddTool(tagsTool, g(h.handleTags))
-	s.AddTool(historyTool, g(h.handleHistory))
 	registerGraphFacadeTool(s, h)
 	if opts.EnableEmbeddings {
 		registerEmbeddingsFacadeTool(s, h)

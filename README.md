@@ -79,7 +79,7 @@ The LLM-facing fit guide — when DocGraph helps a project and when to use your 
 |--------|-------|
 | Language | Go 1.25+ |
 | Binary size | ~13 MB |
-| Codebase | ~22,160 lines of Go (+ ~26,950 lines of tests) |
+| Codebase | ~22,010 lines of Go (+ ~26,750 lines of tests) |
 | Index speed | 70–700 files per project in 2–6s (full rebuild; `--force`) |
 | Typical graph | ~950 nodes and ~670 edges per 100 indexed files |
 
@@ -175,14 +175,12 @@ Available skills bundled in the binary:
 | 2 | `docgraph_context` | **Primary entry point** -- task context with related docs, structure, cross-refs, and bounded source content. Use `format=context_pack` for reviewable evidence packs; `format=drift_audit` for policy/process, research, and (when `code_doc` is enabled) docs-code drift audit reports |
 | 3 | `docgraph_graph` | Graph traversal facade. `operation=incoming` (who references this doc), `operation=outgoing` (what this doc links to), `operation=impact` (blast radius, configurable depth), `operation=trace` (shortest path between two docs). Use `document=` for incoming/outgoing/impact; `from=` and `to=` for trace |
 | 4 | `docgraph_node` | Single document details with metadata, structure, and edges |
-| 5 | `docgraph_explore` | Survey multiple related documents in one call |
-| 6 | `docgraph_files` | Indexed file tree |
-| 7 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags; `engine=auto/tfidf/neural`) |
-| 8 | `docgraph_status` | Index health (files/nodes/edges/unresolved/DB size), per-project stats, neural embedding model totals, domain packs, metadata quality, enrichment coverage, LLM callout tool state (embeddings/enrichment enabled/disabled + required flags), and compact drift audit summary when policy/research findings exist |
-| 9 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
-| 10 | `docgraph_history` | Git commit history for a document: amendment count, authors, dates. Collected by default during indexing; `--no-history` opts out. |
-| 11 | `docgraph_enrichment` | **Opt-in** (`--enable-enrichment`). Pull or store inferred summaries and metadata for documents without frontmatter. Facade: `action=pending\|process` |
-| 12 | `docgraph_embeddings` | **Opt-in** (`--enable-embeddings`). Neural embedding workflow facade. `action=pending` lists docs needing embeddings; `action=store` saves a vector and recomputes neural similarity; `action=clear` deletes all embeddings for a model |
+| 5 | `docgraph_files` | Indexed file tree |
+| 6 | `docgraph_similar` | Find topically similar documents (TF-IDF + shared refs + tags; `engine=auto/tfidf/neural`) |
+| 7 | `docgraph_status` | Index health (files/nodes/edges/unresolved/DB size), per-project stats, neural embedding model totals, domain packs, metadata quality, enrichment coverage, LLM callout tool state (embeddings/enrichment enabled/disabled + required flags), and compact drift audit summary when policy/research findings exist |
+| 8 | `docgraph_tags` | List all tags with doc counts, or filter documents by tag |
+| 9 | `docgraph_enrichment` | **Opt-in** (`--enable-enrichment`). Pull or store inferred summaries and metadata for documents without frontmatter. Facade: `action=pending\|process` |
+| 10 | `docgraph_embeddings` | **Opt-in** (`--enable-embeddings`). Neural embedding workflow facade. `action=pending` lists docs needing embeddings; `action=store` saves a vector and recomputes neural similarity; `action=clear` deletes all embeddings for a model |
 
 Start with `docgraph_context` for any research question. It composes search,
 structure, and cross-references into a single result. Use the other tools
@@ -655,7 +653,7 @@ and SQLite. DocGraph adopts the same core design:
 - **Two-phase resolution**: raw links are extracted during parsing, then
   resolved in a separate pass after all files are indexed — identical to
   CodeGraph's `UnresolvedReference` → `ReferenceResolver` pattern.
-- **MCP tool surface**: 10 default tools with CodeGraph-compatible naming for context, search, node, explore, similar, files, status, tags, history, plus graph traversal (`docgraph_graph`); 2 additional LLM-callout tools (`docgraph_embeddings`, `docgraph_enrichment`) register only when their `--enable-*` flags are set. Graph traversal, embeddings, and enrichment are facade tools that group fine-grained operations behind a single dispatch parameter, keeping agent-facing instructions compact.
+- **MCP tool surface**: 8 default tools with CodeGraph-compatible naming for context, search, node, similar, files, status, tags, plus graph traversal (`docgraph_graph`); 2 additional LLM-callout tools (`docgraph_embeddings`, `docgraph_enrichment`) register only when their `--enable-*` flags are set. Graph traversal, embeddings, and enrichment are facade tools that group fine-grained operations behind a single dispatch parameter, keeping agent-facing instructions compact.
 
 Where they diverge: DocGraph is written in Go (single binary, no Node.js
 runtime), uses the trigram tokenizer for CJK support, and adds workspace

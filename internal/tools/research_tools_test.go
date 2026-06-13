@@ -304,3 +304,44 @@ func TestHandleNodeResearchSection(t *testing.T) {
 		}
 	}
 }
+
+func TestHandleNodeRendersGitHistory(t *testing.T) {
+	h, st := newTestHandler(t)
+
+	node := store.Node{
+		ID: "hist-node.md", Kind: "document", Name: "Hist Node",
+		QualifiedName: "hist-node.md", FilePath: "hist-node.md",
+		StartLine: 1, EndLine: 10, BodyExcerpt: "body", UpdatedAt: 1,
+	}
+	if err := st.InsertNodes([]store.Node{node}); err != nil {
+		t.Fatalf("InsertNodes: %v", err)
+	}
+	if err := st.UpsertFileHistory(store.FileHistory{
+		Path: "hist-node.md", CommitCount: 3, AuthorCount: 2,
+		LastAuthor: "Ada", LastSubject: "tidy up",
+		FirstCommitAt: 1700000000, LastCommitAt: 1710000000,
+	}); err != nil {
+		t.Fatalf("UpsertFileHistory: %v", err)
+	}
+
+	res, err := callTool(h, h.handleNode, map[string]any{"document": "hist-node.md"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error result: %v", res.Content)
+	}
+
+	text := extractText(res)
+	for _, want := range []string{
+		"### History",
+		"**Amended:** 3 times by 2 authors",
+		"**Last author:** Ada",
+		"**First changed:** 2023-11-14",
+		"**Last changed:** 2024-03-09",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("expected %q in node history output, got:\n%s", want, text)
+		}
+	}
+}
