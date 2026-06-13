@@ -128,7 +128,16 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 					_ = addRecursive(w, event.Name, budget)
 				}
 			}
-			if !docformat.SupportedExt(strings.ToLower(filepath.Ext(event.Name))) {
+			// Ignore-rule files have no supported extension, so the check below would
+			// drop them — but editing one changes which files are in scope. Let their
+			// events through (as a reindex trigger; the rel path is forwarded to
+			// onChange, which re-scans the whole project and runs the ignore-aware
+			// reconcile that prunes any newly-excluded files). Without this, an agent
+			// writing a .docgraphignore exclusion on a live server would see no effect
+			// until some other file happened to change.
+			base := filepath.Base(event.Name)
+			isIgnoreRuleFile := base == ".docgraphignore" || base == ".gitignore"
+			if !isIgnoreRuleFile && !docformat.SupportedExt(strings.ToLower(filepath.Ext(event.Name))) {
 				continue
 			}
 			root := findProjectRoot(event.Name, roots)

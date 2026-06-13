@@ -324,6 +324,9 @@ func appendMetadataQualitySection(q *store.MetadataQualityRecord) string {
 	limit := min(len(q.Issues), 6)
 	for _, issue := range q.Issues[:limit] {
 		fmt.Fprintf(&sb, "- `%s` (%s, -%d): %s\n", issue.Code, issue.Severity, issue.Penalty, issue.Message)
+		if issue.Remediation != "" {
+			fmt.Fprintf(&sb, "  - Fix: %s\n", issue.Remediation)
+		}
 	}
 	if len(q.Issues) > limit {
 		fmt.Fprintf(&sb, "- ... %d more issues omitted\n", len(q.Issues)-limit)

@@ -22,10 +22,13 @@ func Register(s *server.MCPServer, st *store.Store, projectRoot string) func(boo
 }
 
 // RegisterOpts configures which opt-in LLM callout tools are registered.
-// Both default to false — tools are not registered unless explicitly enabled.
+// EnableEmbeddings/EnableEnrichment default to false — tools are not registered
+// unless explicitly enabled. NoGitignore mirrors the serve flag so docgraph_status
+// can report which ignore sources are active.
 type RegisterOpts struct {
 	EnableEmbeddings bool
 	EnableEnrichment bool
+	NoGitignore      bool
 }
 
 // RegisterWithOpts registers the MCP tools with opt-in LLM callout flags and
@@ -36,6 +39,7 @@ func RegisterWithOpts(s *server.MCPServer, st *store.Store, projectRoot string, 
 		projectRoot:      projectRoot,
 		enableEmbeddings: opts.EnableEmbeddings,
 		enableEnrichment: opts.EnableEnrichment,
+		noGitignore:      opts.NoGitignore,
 	}
 	registerTools(s, h, opts)
 	return h.indexing.Store
@@ -48,6 +52,7 @@ func RegisterWorkspaceWithOpts(s *server.MCPServer, w *workspace.Workspace, opts
 		workspace:        w,
 		enableEmbeddings: opts.EnableEmbeddings,
 		enableEnrichment: opts.EnableEnrichment,
+		noGitignore:      opts.NoGitignore,
 	}
 	registerTools(s, h, opts)
 	return h.indexing.Store
@@ -85,6 +90,7 @@ type handler struct {
 
 	enableEmbeddings bool
 	enableEnrichment bool
+	noGitignore      bool // mirrors the serve --no-gitignore flag (for docgraph_status)
 
 	// Separate maps prevent cross-tool token reuse — a shared map would allow a token from one tool's pending to authorize the other's processing step.
 	embeddingsPendingTokens sync.Map // map[string]*pendingToken

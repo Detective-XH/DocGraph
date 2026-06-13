@@ -206,7 +206,7 @@ func TestReconcileDeletedFiles_GapCloser(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pruned := reconcileDeletedFiles(dir, st)
+	pruned := reconcileDeletedFiles(dir, st, nil)
 	if pruned != 1 {
 		t.Fatalf("expected reconcile to prune 1 file, got %d", pruned)
 	}
@@ -239,7 +239,7 @@ func TestReconcileDeletedFiles_BlastRadius(t *testing.T) {
 		}
 	}
 
-	pruned := reconcileDeletedFiles(dir, st)
+	pruned := reconcileDeletedFiles(dir, st, nil)
 	if pruned != 0 {
 		t.Fatalf("expected reconcile to REFUSE (return 0) above blast radius, got %d", pruned)
 	}
@@ -266,7 +266,7 @@ func TestReconcileDeletedFiles_TreeGone(t *testing.T) {
 	}
 
 	bogusRoot := filepath.Join(dir, "does", "not", "exist")
-	pruned := reconcileDeletedFiles(bogusRoot, st)
+	pruned := reconcileDeletedFiles(bogusRoot, st, nil)
 	if pruned != 0 {
 		t.Fatalf("expected reconcile to skip (return 0) for inaccessible root, got %d", pruned)
 	}
@@ -284,7 +284,7 @@ func TestReconcileDeletedFiles_PresentFileKept(t *testing.T) {
 	const relPath = "kept.md"
 	indexPruneTestFile(t, dir, st, relPath, "# Kept\n\npresent-file marker.\n")
 
-	pruned := reconcileDeletedFiles(dir, st)
+	pruned := reconcileDeletedFiles(dir, st, nil)
 	if pruned != 0 {
 		t.Fatalf("expected reconcile to prune nothing for a present file, got %d", pruned)
 	}
@@ -317,7 +317,7 @@ func TestReconcileDeletedFiles_BelowFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pruned := reconcileDeletedFiles(dir, st)
+	pruned := reconcileDeletedFiles(dir, st, nil)
 	if pruned != 2 {
 		t.Fatalf("expected reconcile to prune both files below the floor, got %d", pruned)
 	}
@@ -350,7 +350,7 @@ func TestReconcileWorkspaceProjects_PerProjectIsolation(t *testing.T) {
 		{Path: dirA, Store: stA},
 		{Path: dirB, Store: stB},
 	}
-	if pruned := reconcileWorkspaceProjects(projects); pruned != 1 {
+	if pruned := reconcileWorkspaceProjects(projects, false); pruned != 1 {
 		t.Fatalf("expected exactly 1 pruned (a.md in project A), got %d", pruned)
 	}
 	if n := nodeCountSQL(t, dirA, "a.md"); n != 0 {

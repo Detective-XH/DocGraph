@@ -131,6 +131,81 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 	return entries, err
 }
 
+// NewIgnoreMatcher returns a predicate reporting whether a project-relative path
+// would be EXCLUDED by the active ignore rules — the same rules ScanDirOpts
+// applies: .docgraphignore always, and .gitignore unless opts.NoGitignore, at the
+// root and in every nested directory. It collects the ignore files once (a cheap
+// walk that reads only ignore files, skipping the usual vendored/VCS dirs); the
+// returned closure then classifies any number of paths.
+//
+// This is the safe signal for the serve-time delete-reconcile: a file that is
+// still on disk but now matches an ignore rule is unambiguously meant to be
+// excluded, so pruning it is correct. That is strictly narrower than raw
+// scan-set membership (which also drops too-big / unreadable / transiently-absent
+// files) and so cannot mass-delete the index when a scan momentarily returns few
+// or no files.
+func NewIgnoreMatcher(root string, opts ScanOptions) (func(relPath string) bool, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+
+	var ignores []*gitignore
+	if !opts.NoGitignore {
+		if gi := loadGitignore(filepath.Join(root, ".gitignore")); gi != nil {
+			ignores = append(ignores, gi)
+		}
+	}
+	if gi := loadGitignore(filepath.Join(root, ".docgraphignore")); gi != nil {
+		ignores = append(ignores, gi)
+	}
+
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !d.IsDir() {
+			return nil
+		}
+		if skipDirs[d.Name()] {
+			return filepath.SkipDir
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return filepath.SkipDir
+		}
+		dirRel, _ := filepath.Rel(root, path)
+		if dirRel == filepath.Join(".claude", "worktrees") {
+			return filepath.SkipDir
+		}
+		if dirRel == "." {
+			return nil // root ignore files already loaded above (baseDir "")
+		}
+		if !opts.NoGitignore {
+			if nested := loadGitignore(filepath.Join(path, ".gitignore")); nested != nil {
+				nested.baseDir = dirRel
+				ignores = append(ignores, nested)
+			}
+		}
+		if nested := loadGitignore(filepath.Join(path, ".docgraphignore")); nested != nil {
+			nested.baseDir = dirRel
+			ignores = append(ignores, nested)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return nil, walkErr
+	}
+
+	return func(relPath string) bool {
+		for _, gi := range ignores {
+			if gi.matches(relPath) {
+				return true
+			}
+		}
+		return false
+	}, nil
+}
+
 // ---------------------------------------------------------------------------
 // Minimal stdlib .gitignore matcher (replaces github.com/sabhiram/go-gitignore)
 // ---------------------------------------------------------------------------

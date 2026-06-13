@@ -115,7 +115,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		})), nil
 	}
 	if format == "drift_audit" {
-		return mcp.NewToolResultText(h.renderDriftAudit(task)), nil
+		return mcp.NewToolResultText(h.renderDriftAudit(task, opts.ProjectFilter)), nil
 	}
 
 	// P-v3-1: docgraph_context frames results as "documents", but the ranked

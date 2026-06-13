@@ -3,6 +3,8 @@ package tools
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -78,6 +80,7 @@ func appendWorkspaceStatus(sb *strings.Builder, h *handler) *mcp.CallToolResult 
 		appendEntityGraph(sb, es.TotalEntities, es.TotalMentions)
 	}
 	appendWorkspaceDriftAudit(sb, h)
+	appendIgnoreConfig(sb, h)
 	appendLLMCalloutState(sb, h)
 	return nil
 }
@@ -134,8 +137,49 @@ func appendSingleStoreStatus(sb *strings.Builder, h *handler) *mcp.CallToolResul
 	}
 
 	appendDriftAuditStats(sb, h.store)
+	appendIgnoreConfig(sb, h)
 	appendLLMCalloutState(sb, h)
 	return nil
+}
+
+// appendIgnoreConfig reports which ignore sources are active and how to exclude
+// files from the index — the only place the MCP surface surfaces the
+// .docgraphignore mechanism, so an agent can discover and complete an exclusion
+// without reading the README or grepping the serve invocation.
+func appendIgnoreConfig(sb *strings.Builder, h *handler) {
+	sb.WriteString("\n### Index Configuration\n")
+	if h.noGitignore {
+		sb.WriteString("- `.gitignore`: not applied (`--no-gitignore`)\n")
+	} else {
+		sb.WriteString("- `.gitignore`: applied\n")
+	}
+	fmt.Fprintf(sb, "- `.docgraphignore`: always applied (even under `--no-gitignore`)%s\n", docgraphIgnorePresence(h))
+	sb.WriteString("- Exclude files by adding glob patterns to `.docgraphignore` at the project root (e.g. `*.pdf`). A running server applies the change on save (the affected nodes are pruned); otherwise rebuild with `docgraph index --force <path>`.\n")
+}
+
+// docgraphIgnorePresence reports whether a .docgraphignore file is present, so the
+// status output distinguishes "no exclusions configured" from "exclusions active".
+func docgraphIgnorePresence(h *handler) string {
+	exists := func(root string) bool {
+		if root == "" {
+			return false
+		}
+		_, err := os.Stat(filepath.Join(root, ".docgraphignore"))
+		return err == nil
+	}
+	if h.workspace != nil {
+		present := 0
+		for _, p := range h.workspace.Projects {
+			if exists(p.Path) {
+				present++
+			}
+		}
+		return fmt.Sprintf(" (present in %d/%d projects)", present, len(h.workspace.Projects))
+	}
+	if exists(h.projectRoot) {
+		return " (present at project root)"
+	}
+	return " (none at project root)"
 }
 
 // appendEntityGraph writes the compact Entity Graph section.

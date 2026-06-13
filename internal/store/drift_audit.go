@@ -15,6 +15,7 @@ type DriftFinding struct {
 	Severity      string // "error" | "warning" | "info"
 	Message       string
 	Evidence      string // brief supporting detail
+	Remediation   string // actionable fix; "" when none applies
 }
 
 // DriftAuditOpts configures a drift audit query. Zero value is safe to use;
@@ -186,6 +187,14 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 
 	if len(all) > opts.Limit {
 		all = all[:opts.Limit]
+	}
+	// Attach the actionable fix for each finding at this single chokepoint, so
+	// every finder stays focused on detection and remediation text lives in one
+	// place (remediation.go). Finders may pre-set Remediation; respect that.
+	for i := range all {
+		if all[i].Remediation == "" {
+			all[i].Remediation = remediationFor(all[i].Code, all[i].FilePath)
+		}
 	}
 	return all, nil
 }

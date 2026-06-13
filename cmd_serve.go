@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/Detective-XH/docgraph/internal/scanner"
 	"github.com/Detective-XH/docgraph/internal/tools"
 	"github.com/Detective-XH/docgraph/internal/watcher"
 	"github.com/Detective-XH/docgraph/internal/workspace"
@@ -61,6 +62,7 @@ func cmdServe(args []string) {
 	regOpts := tools.RegisterOpts{
 		EnableEmbeddings: *enableEmbeddings,
 		EnableEnrichment: *enableEnrichment,
+		NoGitignore:      noGitignore,
 	}
 
 	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
@@ -82,10 +84,11 @@ func cmdServe(args []string) {
 				log.Printf("[serve] IndexAll: %v", err)
 			}
 			// Always reconcile on a warm start (no opt-out): an LLM-first guarantee that a
-			// restart never serves nodes for files deleted while serve was down. A cold start
-			// ⟹ fresh DB ⟹ nothing absent, so `warm` is a pure no-op skip, not a behavioral knob.
+			// restart never serves nodes for files deleted — or newly .docgraphignore'd —
+			// while serve was down. A cold start ⟹ fresh DB ⟹ nothing to reconcile, so
+			// `warm` is a pure no-op skip, not a behavioral knob.
 			if warm {
-				reconcileWorkspaceProjects(w.Projects) // PARITY: single --path branch calls reconcileDeletedFiles directly
+				reconcileWorkspaceProjects(w.Projects, w.NoGitignore) // PARITY: single --path branch calls reconcileDeletedFiles directly
 			}
 		}
 		if !warm {
@@ -103,6 +106,13 @@ func cmdServe(args []string) {
 						fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
 						pruneDeletedFiles(proj.Path, proj.Store, files)
 						workspace.ReindexProject(proj)
+						// An edited .docgraphignore/.gitignore changes which files are in
+						// scope; prune any now-excluded files via the ignore-aware reconcile.
+						if containsIgnoreRuleFile(files) {
+							if m, mErr := scanner.NewIgnoreMatcher(proj.Path, scanner.ScanOptions{NoGitignore: w.NoGitignore}); mErr == nil {
+								reconcileDeletedFiles(proj.Path, proj.Store, m)
+							}
+						}
 						break
 					}
 				}
@@ -133,7 +143,8 @@ func cmdServe(args []string) {
 			}
 			// Always reconcile on a warm start (no opt-out — see the --workspace branch note).
 			if warm {
-				reconcileDeletedFiles(absRoot, st) // PARITY: keep in sync with the --workspace branch
+				m, _ := scanner.NewIgnoreMatcher(absRoot, scanner.ScanOptions{NoGitignore: noGitignore})
+				reconcileDeletedFiles(absRoot, st, m) // PARITY: keep in sync with the --workspace branch
 			}
 		}
 		if !warm {
@@ -147,6 +158,13 @@ func cmdServe(args []string) {
 				// force=false: incremental re-index of changed files; deletes stay.
 				if err := indexStore(projectPath, st, false); err != nil {
 					fmt.Fprintf(os.Stderr, "[watcher] re-index %s: %v\n", projectPath, err)
+				}
+				// An edited .docgraphignore/.gitignore changes which files are in scope;
+				// prune any now-excluded files via the ignore-aware reconcile.
+				if containsIgnoreRuleFile(files) {
+					if m, mErr := scanner.NewIgnoreMatcher(projectPath, scanner.ScanOptions{NoGitignore: noGitignore}); mErr == nil {
+						reconcileDeletedFiles(projectPath, st, m)
+					}
 				}
 			})
 			if err != nil {
