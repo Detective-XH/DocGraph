@@ -108,6 +108,20 @@ func main() {
 		fatalf("A1 pre-flight: %v", err)
 	}
 
+	// A11 needs a doc whose outgoing link edges outnumber its distinct other-document
+	// targets (a same-document link or an external URL), so the "all edges resolve to N
+	// distinct other documents" footer fires (links.go: total == len(edges) && distinct
+	// != total). Lead with committed testdata fixtures — stable across machines/CI —
+	// because a hardcoded plans/ doc's edge count drifts and silently stops firing it.
+	a11doc, err := findDocWithOutgoingFooter(r, []string{
+		"testdata/links/hub.md",
+		"testdata/governance/policy.md",
+		"plans/PERF-METHODOLOGY.md",
+	})
+	if err != nil {
+		fatalf("A11 pre-flight: %v", err)
+	}
+
 	type assertion struct {
 		id   string
 		tool string
@@ -173,7 +187,7 @@ func main() {
 		{
 			id:   "A11",
 			tool: "docgraph_graph",
-			args: map[string]any{"operation": "outgoing", "document": "plans/PERF-METHODOLOGY.md", "limit": 15},
+			args: map[string]any{"operation": "outgoing", "document": a11doc, "limit": 50},
 			must: []string{"report the distinct-document count, not the edge-row count"},
 		},
 		{
@@ -272,6 +286,26 @@ func findDocWithBothEdges(st *store.Store, candidates []string) (string, error) 
 		return doc, nil
 	}
 	return "", fmt.Errorf("no candidate document has both incoming and outgoing edges (tried %v) — ensure the index is built with --no-gitignore", candidates)
+}
+
+// findDocWithOutgoingFooter probes each candidate via docgraph_graph outgoing (a high
+// limit so no truncation) and returns the first whose output contains the all-shown
+// "report the distinct-document count, not the edge-row count" footer. That footer fires
+// only when the doc's outgoing link-edge count differs from its distinct other-document
+// count (links.go), which depends on GetOutgoingEdges' link-edge filtering — so it is
+// probed through the tool, not derived from raw edge rows.
+func findDocWithOutgoingFooter(r *runner, candidates []string) (string, error) {
+	const footer = "report the distinct-document count, not the edge-row count"
+	for _, doc := range candidates {
+		text, err := r.call("docgraph_graph", map[string]any{"operation": "outgoing", "document": doc, "limit": 50})
+		if err != nil {
+			continue
+		}
+		if strings.Contains(text, footer) {
+			return doc, nil
+		}
+	}
+	return "", fmt.Errorf("no candidate renders the all-shown distinct-count footer (tried %v) — needs a doc whose outgoing link edges exceed its distinct other-document count", candidates)
 }
 
 // runner holds a persistent in-process MCP stdio connection to the tool server.
