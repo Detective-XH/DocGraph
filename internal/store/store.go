@@ -84,7 +84,10 @@ type SearchResult struct {
 // operate on one connection and one mutex — IndexMu MUST stay shared to serialise
 // whole-store reindexing. This is the foundation of the Step 2 sub-store split:
 // methods move from (s *Store) to their domain sub-store but keep reaching the DB
-// via the embedded baseDB, so sub-stores never need to reference one another.
+// via the embedded baseDB, so sub-stores rarely need to reference one another. The
+// lone exception is searchStore's entity-filter path, which reads the entity graph
+// by constructing a throwaway entityStore over the same shared baseDB rather than
+// reaching Store.Entity — behaviour-identical, since both wrap one base.
 type baseDB struct {
 	db      *sql.DB
 	IndexMu sync.Mutex // serialises concurrent index/reindex calls on the same store
@@ -92,7 +95,9 @@ type baseDB struct {
 
 type Store struct {
 	*baseDB
-	Entity *entityStore // entity graph: entities + entity_mentions
+	Entity   *entityStore // entity graph: entities + entity_mentions
+	Searcher *searchStore // search/retrieval: FTS, LIKE, ranking, metadata filters
+	Fts      *ftsStore    // FTS5 index lifecycle: empty-probes, triggers, rebuild
 }
 
 func Open(dbPath string) (*Store, error) {
@@ -121,7 +126,12 @@ func Open(dbPath string) (*Store, error) {
 	}
 
 	base := &baseDB{db: db}
-	st := &Store{baseDB: base, Entity: &entityStore{baseDB: base}}
+	st := &Store{
+		baseDB:   base,
+		Entity:   &entityStore{baseDB: base},
+		Searcher: &searchStore{baseDB: base},
+		Fts:      &ftsStore{baseDB: base},
+	}
 	if err := st.SyncDomainPacks(domainpacks.Packs()); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("sync domain packs: %w", err)

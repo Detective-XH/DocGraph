@@ -251,7 +251,7 @@ func TestCollectEntityFilteredCandidates_ByID(t *testing.T) {
 		t.Fatalf("InsertEntityMentions: %v", err)
 	}
 
-	results, err := st.SearchWithOptions(SearchOptions{
+	results, err := st.Searcher.SearchWithOptions(SearchOptions{
 		Query:  "EntitySearch Document",
 		Limit:  10,
 		Entity: EntitySearchOptions{EntityID: entityID},
@@ -296,7 +296,7 @@ func TestCollectEntityFilteredCandidates_ByType(t *testing.T) {
 		t.Fatalf("InsertEntityMentions: %v", err)
 	}
 
-	results, err := st.SearchWithOptions(SearchOptions{
+	results, err := st.Searcher.SearchWithOptions(SearchOptions{
 		Query:  "TypeSearch Document",
 		Limit:  10,
 		Entity: EntitySearchOptions{EntityType: "technology"},

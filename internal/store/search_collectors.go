@@ -2,12 +2,12 @@ package store
 
 import "strings"
 
-func (s *Store) collectExactCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectExactCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	if req.Intent != SearchIntentExact && req.Intent != SearchIntentSection {
 		return nil
 	}
 	q := strings.Trim(req.Query, `"`)
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
 		FROM nodes
 		WHERE (id = ? OR file_path = ? OR qualified_name = ? OR lower(name) = lower(?))
@@ -28,15 +28,15 @@ func (s *Store) collectExactCandidates(req searchRequest, candidates map[string]
 	return rows.Err()
 }
 
-func (s *Store) collectNodeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectNodeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	if req.Short {
-		return s.collectNodeLikeCandidates(req, candidates)
+		return se.collectNodeLikeCandidates(req, candidates)
 	}
 	ftsQuery := buildFTSQuery(append(req.Terms, req.ExpandedTerms...))
 	if ftsQuery == "" {
 		return nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
 		       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at,
 		       bm25(nodes_fts, 8.0, 5.0, 2.0, 3.0) AS rank
@@ -62,7 +62,7 @@ func (s *Store) collectNodeCandidates(req searchRequest, candidates map[string]*
 	return rows.Err()
 }
 
-func (s *Store) collectNodeLikeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectNodeLikeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	matchClause, args := likeTermClauses(req.Terms, []string{"name", "qualified_name", "body_excerpt", "metadata"})
 	if matchClause == "" {
 		// No usable terms (e.g. punctuation-only query) — fall back to a raw
@@ -72,7 +72,7 @@ func (s *Store) collectNodeLikeCandidates(req searchRequest, candidates map[stri
 		args = []any{pattern, pattern, pattern, pattern}
 	}
 	args = append(args, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
 		FROM nodes
 		WHERE `+matchClause+`
@@ -94,15 +94,15 @@ func (s *Store) collectNodeLikeCandidates(req searchRequest, candidates map[stri
 	return rows.Err()
 }
 
-func (s *Store) collectSectionCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectSectionCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	if req.Short {
-		return s.collectSectionLikeCandidates(req, candidates)
+		return se.collectSectionLikeCandidates(req, candidates)
 	}
 	ftsQuery := buildFTSQuery(append(req.Terms, req.ExpandedTerms...))
 	if ftsQuery == "" {
 		return nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
 		       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at,
 		       sc.heading_path, sc.text,
@@ -132,7 +132,7 @@ func (s *Store) collectSectionCandidates(req searchRequest, candidates map[strin
 	return rows.Err()
 }
 
-func (s *Store) collectSectionLikeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectSectionLikeCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	matchClause, args := likeTermClauses(req.Terms, []string{"sc.heading_path", "sc.text"})
 	if matchClause == "" {
 		pattern := "%" + escapeLike(req.Query) + "%"
@@ -140,7 +140,7 @@ func (s *Store) collectSectionLikeCandidates(req searchRequest, candidates map[s
 		args = []any{pattern, pattern}
 	}
 	args = append(args, req.Kind, req.Kind, req.IncludeCode, req.CandidateLimit)
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
 		       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at,
 		       sc.heading_path, sc.text
@@ -168,12 +168,12 @@ func (s *Store) collectSectionLikeCandidates(req searchRequest, candidates map[s
 	return rows.Err()
 }
 
-func (s *Store) collectTagCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectTagCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	if req.Kind != "" && req.Kind != "document" {
 		return nil
 	}
 	for _, term := range append(req.Terms, req.ExpandedTerms...) {
-		rows, err := s.db.Query(`
+		rows, err := se.db.Query(`
 			SELECT DISTINCT n.id, n.kind, n.name, n.qualified_name, n.file_path,
 			       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at
 			FROM nodes t
@@ -203,13 +203,13 @@ func (s *Store) collectTagCandidates(req searchRequest, candidates map[string]*s
 	return nil
 }
 
-func (s *Store) collectDefinitionContextCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectDefinitionContextCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	if req.Kind != "" && req.Kind != "definition" && req.Kind != "heading" && req.Kind != "document" {
 		return nil
 	}
 	for _, term := range req.Terms {
 		pattern := "%" + escapeLike(term) + "%"
-		rows, err := s.db.Query(`
+		rows, err := se.db.Query(`
 			SELECT DISTINCT n.id, n.kind, n.name, n.qualified_name, n.file_path,
 			       n.start_line, n.end_line, n.level, n.metadata, n.body_excerpt, n.updated_at
 			FROM nodes d
@@ -244,13 +244,13 @@ func (s *Store) collectDefinitionContextCandidates(req searchRequest, candidates
 	return nil
 }
 
-func (s *Store) collectMetadataFilteredCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
-	nodes, err := s.getNodesByRetrievalFilters(req)
+func (se *searchStore) collectMetadataFilteredCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+	nodes, err := se.getNodesByRetrievalFilters(req)
 	if err != nil {
 		return err
 	}
 	for _, n := range nodes {
-		matches, headingPath, sectionText, err := s.nodeMatchesRetrievalQuery(req, n)
+		matches, headingPath, sectionText, err := se.nodeMatchesRetrievalQuery(req, n)
 		if err != nil {
 			return err
 		}
@@ -265,7 +265,7 @@ func (s *Store) collectMetadataFilteredCandidates(req searchRequest, candidates 
 	return nil
 }
 
-func (s *Store) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
+func (se *searchStore) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
 	args := []any{}
 	where := []string{"n.kind = 'document'"}
 	if req.Governance.Status != "" ||
@@ -323,7 +323,7 @@ func (s *Store) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
 		LEFT JOIN research_metadata rm ON rm.node_id = n.id
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY n.id` // #nosec G202 -- structural SQL: column names are compile-time constants; where clauses are built from constant strings, all user values bound via ? parameters, never interpolated
-	rows, err := s.db.Query(q, args...)
+	rows, err := se.db.Query(q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -340,7 +340,7 @@ func (s *Store) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) nodeMatchesRetrievalQuery(req searchRequest, n Node) (bool, string, string, error) {
+func (se *searchStore) nodeMatchesRetrievalQuery(req searchRequest, n Node) (bool, string, string, error) {
 	if req.Kind != "" && n.Kind != req.Kind {
 		return false, "", "", nil
 	}
@@ -348,7 +348,7 @@ func (s *Store) nodeMatchesRetrievalQuery(req searchRequest, n Node) (bool, stri
 	if queryMatchesText(req, text) {
 		return true, "", "", nil
 	}
-	chunk, ok, err := s.GetSectionChunk(n.ID)
+	chunk, ok, err := se.GetSectionChunk(n.ID)
 	if err != nil {
 		return false, "", "", err
 	}

@@ -1006,7 +1006,7 @@ func TestSectionContent(t *testing.T) {
 // ftsSearchFinds reports whether a Search for term returns a result in wantFile.
 func ftsSearchFinds(t *testing.T, st *store.Store, term, wantFile string) bool {
 	t.Helper()
-	res, err := st.Search(term, "", 20)
+	res, err := st.Searcher.Search(term, "", 20)
 	if err != nil {
 		t.Fatalf("search %q: %v", term, err)
 	}
@@ -1101,13 +1101,13 @@ func TestIndexFTSSelfHealsEmptyFTS(t *testing.T) {
 		t.Fatal("setup: term not indexed by full build")
 	}
 	// Simulate the crash window: base rows intact, FTS emptied, triggers dropped.
-	if err := st.DropSectionFTSTriggers(); err != nil {
+	if err := st.Fts.DropSectionFTSTriggers(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DeleteAllSectionFTS(); err != nil {
+	if err := st.Fts.DeleteAllSectionFTS(); err != nil {
 		t.Fatal(err)
 	}
-	if empty, _ := st.SectionFTSIsEmpty(); !empty {
+	if empty, _ := st.Fts.SectionFTSIsEmpty(); !empty {
 		t.Fatal("setup: FTS should be empty after delete-all")
 	}
 	if ftsSearchFinds(t, st, "zebracrossing", "a.md") {

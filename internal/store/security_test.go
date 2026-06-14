@@ -51,7 +51,7 @@ func TestSQLInjectionSearch(t *testing.T) {
 
 	for _, p := range payloads {
 		t.Run(p.name, func(t *testing.T) {
-			results, err := st.Search(p.query, "", 10)
+			results, err := st.Searcher.Search(p.query, "", 10)
 			// FTS5 may return a syntax error for some payloads — acceptable.
 			// The critical thing: no panic, no data loss.
 			_ = results
@@ -225,7 +225,7 @@ func TestSearchQueryLengthCap(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		results, err := st.Search(longQuery, "", 10)
+		results, err := st.Searcher.Search(longQuery, "", 10)
 		_ = err
 		_ = results
 	}()
@@ -303,7 +303,7 @@ func TestManyNodesPerformance(t *testing.T) {
 	}
 
 	// Search still works after mass insert.
-	results, err := st.Search("Performance Node 42", "", 10)
+	results, err := st.Searcher.Search("Performance Node 42", "", 10)
 	if err != nil {
 		t.Fatalf("Search after mass insert failed: %v", err)
 	}
@@ -357,7 +357,7 @@ func TestUnicodeExtremes(t *testing.T) {
 	// Each text must be searchable (at least: no crash; ideally finds itself).
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			results, err := st.Search(c.text, "", 10)
+			results, err := st.Searcher.Search(c.text, "", 10)
 			if err != nil {
 				// FTS5 trigram may struggle with some Unicode — acceptable.
 				t.Logf("Search(%q) returned error (acceptable): %v", c.text, err)
@@ -414,7 +414,7 @@ func TestConcurrentReads(t *testing.T) {
 			// Mix of Search and GetStats calls.
 			for j := 0; j < 10; j++ {
 				query := fmt.Sprintf("Concurrent Doc %d", (id+j)%20)
-				results, err := st.Search(query, "", 5)
+				results, err := st.Searcher.Search(query, "", 5)
 				if err != nil {
 					t.Errorf("goroutine %d: Search(%q) error: %v", id, query, err)
 					return

@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-func (s *Store) applyFieldRanking(req searchRequest, c *searchCandidate) {
+func (se *searchStore) applyFieldRanking(req searchRequest, c *searchCandidate) {
 	c.Score += weightedTextScore(req.Query, req.Terms, c.Node.Name, 12)
 	c.Score += weightedTextScore(req.Query, req.Terms, c.HeadingPath, 10)
 	c.Score += weightedTextScore(req.Query, req.Terms, c.Node.QualifiedName, 6)
@@ -51,7 +51,7 @@ func applyGraphScore(c *searchCandidate, incoming, outgoing, tagMatches int) {
 	c.Score += float64(tagMatches) * 8
 }
 
-func (s *Store) applyMetadataReranking(req searchRequest, c *searchCandidate) {
+func (se *searchStore) applyMetadataReranking(req searchRequest, c *searchCandidate) {
 	if c.Governance != nil {
 		c.Score += governanceRetrievalScore(c.Governance, req.Governance.AllowedAudience, req.AsOf)
 	}
@@ -82,7 +82,7 @@ func (s *Store) applyMetadataReranking(req searchRequest, c *searchCandidate) {
 // guard drops such a row, and math.Max(0,...) clamps the author term so a
 // negative author_count can never reach Log1p. Cheap, removes the NaN class
 // entirely; not a reachable exploit on real git data.
-func (s *Store) applyHistoryReranking(req searchRequest, c *searchCandidate) {
+func (se *searchStore) applyHistoryReranking(req searchRequest, c *searchCandidate) {
 	h := c.History
 	if h == nil || h.CommitCount <= 0 {
 		return
@@ -96,20 +96,20 @@ func (s *Store) applyHistoryReranking(req searchRequest, c *searchCandidate) {
 // graphSignalsBatch does the whole candidate set in a few set-based queries — but
 // it is retained as the readable per-candidate definition and as the oracle that
 // TestSearchBatchEquivalence asserts graphSignalsBatch against.
-func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tagMatches int, err error) {
+func (se *searchStore) graphSignals(req searchRequest, n Node) (incoming, outgoing, tagMatches int, err error) {
 	refKinds := "('references','wikilinks_to','related_to','embeds')"
 	if n.Kind == "document" {
-		if err = s.db.QueryRow(`SELECT COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target WHERE t.file_path = ? AND e.kind IN `+refKinds, n.FilePath).Scan(&incoming); err != nil {
+		if err = se.db.QueryRow(`SELECT COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target WHERE t.file_path = ? AND e.kind IN `+refKinds, n.FilePath).Scan(&incoming); err != nil {
 			return
 		}
-		if err = s.db.QueryRow(`SELECT COUNT(*) FROM edges e JOIN nodes src ON src.id = e.source WHERE src.file_path = ? AND e.kind IN `+refKinds, n.FilePath).Scan(&outgoing); err != nil {
+		if err = se.db.QueryRow(`SELECT COUNT(*) FROM edges e JOIN nodes src ON src.id = e.source WHERE src.file_path = ? AND e.kind IN `+refKinds, n.FilePath).Scan(&outgoing); err != nil {
 			return
 		}
 	} else {
-		if err = s.db.QueryRow(`SELECT COUNT(*) FROM edges WHERE target = ? AND kind IN `+refKinds, n.ID).Scan(&incoming); err != nil {
+		if err = se.db.QueryRow(`SELECT COUNT(*) FROM edges WHERE target = ? AND kind IN `+refKinds, n.ID).Scan(&incoming); err != nil {
 			return
 		}
-		if err = s.db.QueryRow(`SELECT COUNT(*) FROM edges WHERE source = ? AND kind IN `+refKinds, n.ID).Scan(&outgoing); err != nil {
+		if err = se.db.QueryRow(`SELECT COUNT(*) FROM edges WHERE source = ? AND kind IN `+refKinds, n.ID).Scan(&outgoing); err != nil {
 			return
 		}
 	}
@@ -120,7 +120,7 @@ func (s *Store) graphSignals(req searchRequest, n Node) (incoming, outgoing, tag
 			sourceID = n.FilePath
 		}
 		var count int
-		if scanErr := s.db.QueryRow(`
+		if scanErr := se.db.QueryRow(`
 			SELECT COUNT(*)
 			FROM edges e
 			JOIN nodes t ON t.id = e.target

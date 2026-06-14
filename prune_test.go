@@ -75,7 +75,7 @@ func TestPruneDeletedFiles_RemovesVanishedFile(t *testing.T) {
 	indexPruneTestFile(t, dir, st, relPath, content)
 
 	// (a) Before prune: Search returns >= 1 result for the unique token.
-	before, err := st.Search(uniqueToken, "", 10)
+	before, err := st.Searcher.Search(uniqueToken, "", 10)
 	if err != nil {
 		t.Fatalf("Search before prune: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestPruneDeletedFiles_RemovesVanishedFile(t *testing.T) {
 	}
 
 	// (a) After prune: Search returns 0 results for the unique token from that file.
-	after, err := st.Search(uniqueToken, "", 10)
+	after, err := st.Searcher.Search(uniqueToken, "", 10)
 	if err != nil {
 		t.Fatalf("Search after prune: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestPruneDeletedFiles_SkipsExistingFile(t *testing.T) {
 	}
 
 	// (b) Search still finds the file.
-	results, err := st.Search(uniqueToken, "", 10)
+	results, err := st.Searcher.Search(uniqueToken, "", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

@@ -35,13 +35,13 @@ func TestNodesFTSTriggersMatchSchema(t *testing.T) {
 
 func TestNodesFTSIsEmpty(t *testing.T) {
 	st := tempStore(t)
-	if empty, err := st.NodesFTSIsEmpty(); err != nil || !empty {
+	if empty, err := st.Fts.NodesFTSIsEmpty(); err != nil || !empty {
 		t.Fatalf("fresh store: empty=%v err=%v, want empty=true", empty, err)
 	}
 	if err := st.InsertNodes([]Node{testNode("a.md", "document", "Doc A", "a.md")}); err != nil {
 		t.Fatal(err)
 	}
-	if empty, err := st.NodesFTSIsEmpty(); err != nil || empty {
+	if empty, err := st.Fts.NodesFTSIsEmpty(); err != nil || empty {
 		t.Fatalf("after insert: empty=%v err=%v, want empty=false", empty, err)
 	}
 }
@@ -83,7 +83,7 @@ func TestRebuildNodesFTS_EquivalentAndSearchable(t *testing.T) {
 
 	// Rebuild path: drop triggers, bulk-load, recreate triggers, rebuild.
 	st := tempStore(t)
-	if err := st.DropNodesFTSTriggers(); err != nil {
+	if err := st.Fts.DropNodesFTSTriggers(); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.InsertNodes(nodes); err != nil {
@@ -92,10 +92,10 @@ func TestRebuildNodesFTS_EquivalentAndSearchable(t *testing.T) {
 	// Production order: recreate triggers FIRST (FTS still empty), then rebuild as
 	// the last write. A live AFTER INSERT trigger must NOT double-index during the
 	// FTS-only 'rebuild'.
-	if err := st.CreateNodesFTSTriggers(); err != nil {
+	if err := st.Fts.CreateNodesFTSTriggers(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RebuildNodesFTS(); err != nil {
+	if err := st.Fts.RebuildNodesFTS(); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestRebuildNodesFTS_EquivalentAndSearchable(t *testing.T) {
 	}
 
 	// Rebuild is idempotent — a second pass must not change counts.
-	if err := st.RebuildNodesFTS(); err != nil {
+	if err := st.Fts.RebuildNodesFTS(); err != nil {
 		t.Fatalf("second rebuild: %v", err)
 	}
 	if got := nodesFTSMatchCount(t, st, "searchterm"); got != wantBody {
@@ -137,23 +137,23 @@ func TestRebuildNodesFTS_SelfHealsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Simulate the crash state: empty the FTS index, base rows intact.
-	if err := st.DeleteAllNodesFTS(); err != nil {
+	if err := st.Fts.DeleteAllNodesFTS(); err != nil {
 		t.Fatal(err)
 	}
-	if empty, err := st.NodesFTSIsEmpty(); err != nil || !empty {
+	if empty, err := st.Fts.NodesFTSIsEmpty(); err != nil || !empty {
 		t.Fatalf("after delete-all: empty=%v err=%v, want empty=true (gate must see the empty index)", empty, err)
 	}
 	if got := nodesFTSMatchCount(t, st, "searchterm"); got != 0 {
 		t.Fatalf("after delete-all 'searchterm' = %d, want 0", got)
 	}
 	// Self-heal: rebuild from the intact base table.
-	if err := st.RebuildNodesFTS(); err != nil {
+	if err := st.Fts.RebuildNodesFTS(); err != nil {
 		t.Fatalf("self-heal rebuild: %v", err)
 	}
 	if got := nodesFTSMatchCount(t, st, "searchterm"); got != 2 {
 		t.Errorf("after self-heal 'searchterm' = %d, want 2", got)
 	}
-	if empty, err := st.NodesFTSIsEmpty(); err != nil || empty {
+	if empty, err := st.Fts.NodesFTSIsEmpty(); err != nil || empty {
 		t.Fatalf("after self-heal: empty=%v err=%v, want empty=false", empty, err)
 	}
 }

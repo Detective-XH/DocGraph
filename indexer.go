@@ -159,22 +159,22 @@ func indexStore(root string, st *store.Store, force bool) error {
 	// fires _update via UpsertSectionChunks' ON CONFLICT DO UPDATE on duplicate section
 	// node_ids; nodes uses INSERT OR IGNORE (no UPDATE) so only _insert would fire, but
 	// all three are dropped for symmetry and safety.
-	sectionEmpty, ftsErr := st.SectionFTSIsEmpty()
+	sectionEmpty, ftsErr := st.Fts.SectionFTSIsEmpty()
 	if ftsErr != nil {
 		fmt.Fprintf(os.Stderr, "section FTS probe: %v\n", ftsErr)
 		sectionEmpty = false // safe fallback: keep the trigger-driven path
 	}
-	nodesEmpty, nftsErr := st.NodesFTSIsEmpty()
+	nodesEmpty, nftsErr := st.Fts.NodesFTSIsEmpty()
 	if nftsErr != nil {
 		fmt.Fprintf(os.Stderr, "nodes FTS probe: %v\n", nftsErr)
 		nodesEmpty = false // safe fallback: keep the trigger-driven path
 	}
 	fullBuild := sectionEmpty || nodesEmpty
 	if fullBuild {
-		if err := st.DropSectionFTSTriggers(); err != nil {
+		if err := st.Fts.DropSectionFTSTriggers(); err != nil {
 			return err
 		}
-		if err := st.DropNodesFTSTriggers(); err != nil {
+		if err := st.Fts.DropNodesFTSTriggers(); err != nil {
 			return err
 		}
 	}
@@ -333,16 +333,16 @@ func indexStore(root string, st *store.Store, force bool) error {
 		// FTS-only command (no INSERT into the base tables), so the live triggers
 		// can't double-index during it. nodes_fts requires the renamed `metadata`
 		// column (schema.go) for content reconstruction — see nodesFTSTriggersSQL.
-		if err := st.CreateSectionFTSTriggers(); err != nil {
+		if err := st.Fts.CreateSectionFTSTriggers(); err != nil {
 			return err
 		}
-		if err := st.CreateNodesFTSTriggers(); err != nil {
+		if err := st.Fts.CreateNodesFTSTriggers(); err != nil {
 			return err
 		}
-		if err := st.RebuildSectionFTS(); err != nil {
+		if err := st.Fts.RebuildSectionFTS(); err != nil {
 			return err
 		}
-		if err := st.RebuildNodesFTS(); err != nil {
+		if err := st.Fts.RebuildNodesFTS(); err != nil {
 			return err
 		}
 	}

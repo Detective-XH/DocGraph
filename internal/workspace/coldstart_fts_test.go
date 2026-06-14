@@ -103,13 +103,13 @@ func TestColdStartWorkspaceFTSCrashRecovery(t *testing.T) {
 	if p == nil {
 		t.Fatal("project 'proj' not found")
 	}
-	if err := p.Store.DeleteAllSectionFTS(); err != nil {
+	if err := p.Store.Fts.DeleteAllSectionFTS(); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Store.DeleteAllNodesFTS(); err != nil {
+	if err := p.Store.Fts.DeleteAllNodesFTS(); err != nil {
 		t.Fatal(err)
 	}
-	if empty, _ := p.Store.NodesFTSIsEmpty(); !empty {
+	if empty, _ := p.Store.Fts.NodesFTSIsEmpty(); !empty {
 		t.Fatal("setup: nodes_fts not empty after DeleteAllNodesFTS")
 	}
 	if empty, _ := p.Store.NodesIsEmpty(); empty {

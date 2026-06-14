@@ -146,7 +146,7 @@ func normalizeSearchTerm(term string) string {
 
 // expandQueryTermsLike is the reference LIKE-based implementation kept for
 // differential calibration testing. Not used in production; called only by tests.
-func (s *Store) expandQueryTermsLike(req searchRequest) []string {
+func (se *searchStore) expandQueryTermsLike(req searchRequest) []string {
 	if len(req.Terms) == 0 {
 		return nil
 	}
@@ -169,7 +169,7 @@ func (s *Store) expandQueryTermsLike(req searchRequest) []string {
 			break
 		}
 		pattern := "%" + escapeLike(term) + "%"
-		rows, err := s.db.Query(`
+		rows, err := se.db.Query(`
 			SELECT DISTINCT name
 			FROM nodes
 			WHERE kind IN ('heading','definition','tag')
@@ -202,7 +202,7 @@ func (s *Store) expandQueryTermsLike(req searchRequest) []string {
 	return out
 }
 
-func (s *Store) expandQueryTerms(req searchRequest) []string {
+func (se *searchStore) expandQueryTerms(req searchRequest) []string {
 	if len(req.Terms) == 0 {
 		return nil
 	}
@@ -229,7 +229,7 @@ func (s *Store) expandQueryTerms(req searchRequest) []string {
 		if len([]rune(term)) < 3 {
 			// FTS5 trigram requires ≥3 runes; fall back to LIKE for sub-trigram terms.
 			pattern := "%" + escapeLike(term) + "%"
-			rows, err = s.db.Query(`
+			rows, err = se.db.Query(`
 				SELECT DISTINCT name
 				FROM nodes
 				WHERE kind IN ('heading','definition','tag')
@@ -241,7 +241,7 @@ func (s *Store) expandQueryTerms(req searchRequest) []string {
 			if ftsArg == "" {
 				continue
 			}
-			rows, err = s.db.Query(`
+			rows, err = se.db.Query(`
 				SELECT DISTINCT n.name
 				FROM nodes_fts
 				JOIN nodes n ON n.rowid = nodes_fts.rowid

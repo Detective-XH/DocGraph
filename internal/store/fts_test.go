@@ -35,7 +35,7 @@ func TestSectionFTSTriggersMatchSchema(t *testing.T) {
 
 func TestSectionFTSIsEmpty(t *testing.T) {
 	st := tempStore(t)
-	if empty, err := st.SectionFTSIsEmpty(); err != nil || !empty {
+	if empty, err := st.Fts.SectionFTSIsEmpty(); err != nil || !empty {
 		t.Fatalf("fresh store: empty=%v err=%v, want empty=true", empty, err)
 	}
 	if err := st.InsertNodes([]Node{testNode("a.md", "document", "Doc A", "a.md")}); err != nil {
@@ -46,7 +46,7 @@ func TestSectionFTSIsEmpty(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if empty, err := st.SectionFTSIsEmpty(); err != nil || empty {
+	if empty, err := st.Fts.SectionFTSIsEmpty(); err != nil || empty {
 		t.Fatalf("after insert: empty=%v err=%v, want empty=false", empty, err)
 	}
 }
@@ -86,7 +86,7 @@ func TestRebuildSectionFTS_EquivalentAndUpdateSafe(t *testing.T) {
 	if err := st.InsertNodes(nodes); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.DropSectionFTSTriggers(); err != nil {
+	if err := st.Fts.DropSectionFTSTriggers(); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.UpsertSectionChunks(chunks); err != nil {
@@ -100,10 +100,10 @@ func TestRebuildSectionFTS_EquivalentAndUpdateSafe(t *testing.T) {
 	// Production order: recreate triggers FIRST (FTS still empty), then rebuild as
 	// the last write. A live AFTER INSERT trigger must NOT double-index during the
 	// FTS-only 'rebuild'.
-	if err := st.CreateSectionFTSTriggers(); err != nil {
+	if err := st.Fts.CreateSectionFTSTriggers(); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RebuildSectionFTS(); err != nil {
+	if err := st.Fts.RebuildSectionFTS(); err != nil {
 		t.Fatalf("rebuild: %v", err)
 	}
 

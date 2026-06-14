@@ -90,7 +90,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	if h.workspace != nil {
 		results, err = h.workspace.SearchWithOptions(opts)
 	} else {
-		results, err = h.store.SearchWithOptions(opts)
+		results, err = h.store.Searcher.SearchWithOptions(opts)
 	}
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil

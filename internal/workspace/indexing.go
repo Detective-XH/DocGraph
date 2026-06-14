@@ -123,22 +123,22 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	// INSERT OR IGNORE (only _insert), but all three drop for symmetry with section_chunks.
 	// nodes_fts 'rebuild' requires the renamed `metadata` column (schema.go) for content
 	// reconstruction (workspace DBs were migrated; fresh DBs bootstrap the current schema).
-	sectionEmpty, sErr := p.Store.SectionFTSIsEmpty()
+	sectionEmpty, sErr := p.Store.Fts.SectionFTSIsEmpty()
 	if sErr != nil {
 		fmt.Fprintf(os.Stderr, "[%s] section FTS probe: %v\n", p.Name, sErr)
 		sectionEmpty = false // safe fallback: keep the trigger-driven path
 	}
-	nodesEmpty, nErr := p.Store.NodesFTSIsEmpty()
+	nodesEmpty, nErr := p.Store.Fts.NodesFTSIsEmpty()
 	if nErr != nil {
 		fmt.Fprintf(os.Stderr, "[%s] nodes FTS probe: %v\n", p.Name, nErr)
 		nodesEmpty = false // safe fallback: keep the trigger-driven path
 	}
 	fullBuild := sectionEmpty || nodesEmpty
 	if fullBuild {
-		if err := p.Store.DropSectionFTSTriggers(); err != nil {
+		if err := p.Store.Fts.DropSectionFTSTriggers(); err != nil {
 			return err
 		}
-		if err := p.Store.DropNodesFTSTriggers(); err != nil {
+		if err := p.Store.Fts.DropNodesFTSTriggers(); err != nil {
 			return err
 		}
 	}
@@ -272,16 +272,16 @@ func indexProjectOpts(p *Project, noGitignore bool, threshold float64) error {
 	// regardless. 'rebuild' is FTS-only (no base INSERT) so live triggers can't
 	// double-index during it.
 	if fullBuild {
-		if err := p.Store.CreateSectionFTSTriggers(); err != nil {
+		if err := p.Store.Fts.CreateSectionFTSTriggers(); err != nil {
 			return err
 		}
-		if err := p.Store.CreateNodesFTSTriggers(); err != nil {
+		if err := p.Store.Fts.CreateNodesFTSTriggers(); err != nil {
 			return err
 		}
-		if err := p.Store.RebuildSectionFTS(); err != nil {
+		if err := p.Store.Fts.RebuildSectionFTS(); err != nil {
 			return err
 		}
-		if err := p.Store.RebuildNodesFTS(); err != nil {
+		if err := p.Store.Fts.RebuildNodesFTS(); err != nil {
 			return err
 		}
 	}

@@ -83,6 +83,14 @@ func (opts SearchOptions) HasMetadataFilters() bool {
 		opts.Research.AnalystStatus != ""
 }
 
+// searchStore owns the search/retrieval domain (FTS, LIKE, ranking, and
+// metadata-filtered candidate collection over nodes/section_chunks). It shares
+// Store's *baseDB, so every method reaches the DB via se.db exactly as the former
+// (s *Store) receivers did. Reached through Store.Searcher.
+type searchStore struct {
+	*baseDB
+}
+
 type searchCandidate struct {
 	Node        Node
 	Score       float64
@@ -98,11 +106,11 @@ type searchCandidate struct {
 	Filename bool
 }
 
-func (s *Store) Search(query string, kind string, limit int) ([]SearchResult, error) {
-	return s.SearchWithOptions(SearchOptions{Query: query, Kind: kind, Limit: limit})
+func (se *searchStore) Search(query string, kind string, limit int) ([]SearchResult, error) {
+	return se.SearchWithOptions(SearchOptions{Query: query, Kind: kind, Limit: limit})
 }
 
-func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
+func (se *searchStore) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 	req := newSearchRequest(opts)
 	if req.Query == "" {
 		return nil, nil
@@ -119,34 +127,39 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 	if req.Intent == "" {
 		req.Intent = inferSearchIntent(req.Query, req.Kind)
 	}
-	req.ExpandedTerms = s.expandQueryTerms(req)
+	req.ExpandedTerms = se.expandQueryTerms(req)
 
 	candidates := make(map[string]*searchCandidate)
-	if err := s.collectExactCandidates(req, candidates); err != nil {
+	if err := se.collectExactCandidates(req, candidates); err != nil {
 		return nil, err
 	}
-	if err := s.collectFilenameCandidates(req, candidates); err != nil {
+	if err := se.collectFilenameCandidates(req, candidates); err != nil {
 		return nil, err
 	}
-	if err := s.collectNodeCandidates(req, candidates); err != nil {
+	if err := se.collectNodeCandidates(req, candidates); err != nil {
 		return nil, err
 	}
-	if err := s.collectSectionCandidates(req, candidates); err != nil {
+	if err := se.collectSectionCandidates(req, candidates); err != nil {
 		return nil, err
 	}
-	if err := s.collectTagCandidates(req, candidates); err != nil {
+	if err := se.collectTagCandidates(req, candidates); err != nil {
 		return nil, err
 	}
-	if err := s.collectDefinitionContextCandidates(req, candidates); err != nil {
+	if err := se.collectDefinitionContextCandidates(req, candidates); err != nil {
 		return nil, err
 	}
 	if req.HasFilters {
-		if err := s.collectMetadataFilteredCandidates(req, candidates); err != nil {
+		if err := se.collectMetadataFilteredCandidates(req, candidates); err != nil {
 			return nil, err
 		}
 	}
 	if req.Entity.EntityType != "" || req.Entity.EntityID != "" {
-		if err := s.Entity.collectEntityFilteredCandidates(req, candidates); err != nil {
+		// Cross-domain read into the entity graph. searchStore embeds *baseDB only
+		// (not *Store), so it cannot reach Store.Entity. Construct a throwaway
+		// entityStore over the SAME shared baseDB — behaviour-identical to the
+		// former s.Entity.collectEntityFilteredCandidates, since Open() wires both
+		// sub-stores from one base and this collector touches only es.db.
+		if err := (&entityStore{baseDB: se.baseDB}).collectEntityFilteredCandidates(req, candidates); err != nil {
 			return nil, err
 		}
 	}
@@ -168,19 +181,19 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		pathSet[c.Node.FilePath] = struct{}{}
 	}
 	metaIDs := setKeys(metaIDSet)
-	govByID, err := s.getGovernanceMetadataBatch(metaIDs)
+	govByID, err := se.getGovernanceMetadataBatch(metaIDs)
 	if err != nil {
 		return nil, err
 	}
-	researchByID, err := s.getResearchMetadataBatch(metaIDs)
+	researchByID, err := se.getResearchMetadataBatch(metaIDs)
 	if err != nil {
 		return nil, err
 	}
-	histByPath, err := s.getFileHistoryBatch(setKeys(pathSet))
+	histByPath, err := se.getFileHistoryBatch(setKeys(pathSet))
 	if err != nil {
 		return nil, err
 	}
-	graphByID, err := s.graphSignalsBatch(req, cands)
+	graphByID, err := se.graphSignalsBatch(req, cands)
 	if err != nil {
 		return nil, err
 	}
@@ -194,11 +207,11 @@ func (s *Store) SearchWithOptions(opts SearchOptions) ([]SearchResult, error) {
 		if !metadataMatchesRequest(req, c) {
 			continue
 		}
-		s.applyFieldRanking(req, c)
+		se.applyFieldRanking(req, c)
 		sig := graphByID[c.Node.ID]
 		applyGraphScore(c, sig.incoming, sig.outgoing, sig.tagMatches)
-		s.applyMetadataReranking(req, c)
-		s.applyHistoryReranking(req, c)
+		se.applyMetadataReranking(req, c)
+		se.applyHistoryReranking(req, c)
 		scored = append(scored, c)
 	}
 
