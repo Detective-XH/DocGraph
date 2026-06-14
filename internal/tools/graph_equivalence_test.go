@@ -16,14 +16,31 @@ import (
 	"github.com/Detective-XH/docgraph/internal/workspace"
 )
 
+// clampDepth returns d clamped to [lo, hi].
+func clampDepth(d, lo, hi int) int {
+	if d < lo {
+		return lo
+	}
+	if d > hi {
+		return hi
+	}
+	return d
+}
+
+// contextPackSrcID returns the doc-ID for a BFS source edge.
+// Mirrors the inline logic of appendContextPackImpactSerialRef: use contextPackDocID
+// when the node lookup succeeds; fall back to the raw edge.Source ID otherwise.
+func contextPackSrcID(n *store.Node, err error, fallback string) string {
+	if err != nil || n == nil {
+		return fallback
+	}
+	return contextPackDocID(*n)
+}
+
 // renderImpactSerialRef is the pre-batch serial implementation of renderImpact.
 // Permanent test oracle for TestGraphImpactBatchEquivalence. DO NOT DELETE.
 func (h *handler) renderImpactSerialRef(doc string, depth int) (string, error) {
-	if depth < 1 {
-		depth = 1
-	} else if depth > 5 {
-		depth = 5
-	}
+	depth = clampDepth(depth, 1, 5)
 	node, e := h.resolveOrErr(doc)
 	if e != nil {
 		return "", fmt.Errorf("resolveOrErr: %v", e)
@@ -104,12 +121,7 @@ func (h *handler) appendContextPackImpactSerialRef(sb *strings.Builder, st *stor
 			}
 			for _, edge := range edges {
 				n, err2 := st.GetNodeByID(edge.Source)
-				var src string
-				if err2 != nil || n == nil {
-					src = edge.Source
-				} else {
-					src = contextPackDocID(*n)
-				}
+				src := contextPackSrcID(n, err2, edge.Source)
 				if visited[src] {
 					continue
 				}

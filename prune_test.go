@@ -329,6 +329,59 @@ func TestReconcileDeletedFiles_BelowFloor(t *testing.T) {
 	}
 }
 
+// TestClassifyOutOfScope is a direct table-driven unit test for the classifyOutOfScope
+// helper. Each case exercises one classification outcome independently of the DB.
+func TestClassifyOutOfScope(t *testing.T) {
+	dir := t.TempDir()
+
+	// Write two real files; others will be absent or transient-error-simulated.
+	presentPath := "present.md"
+	ignoredPath := "ignored.md"
+	for _, rel := range []string{presentPath, ignoredPath} {
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte("# doc\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// absentPath — no file on disk → absent
+	absentPath := "absent.md"
+
+	// unsupportedPath — extension not in docformat.SupportedExt → skipped entirely
+	unsupportedPath := "skip.xyz"
+	if err := os.WriteFile(filepath.Join(dir, unsupportedPath), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dbFiles := []store.FileInfo{
+		{Path: presentPath},
+		{Path: ignoredPath},
+		{Path: absentPath},
+		{Path: unsupportedPath},
+	}
+
+	ignoreRule := func(p string) bool { return p == ignoredPath }
+
+	gotAbsent, gotIgnored := classifyOutOfScope(dir, dbFiles, ignoreRule)
+
+	// absent must contain exactly absentPath
+	if len(gotAbsent) != 1 || gotAbsent[0] != absentPath {
+		t.Errorf("absent: want [%s], got %v", absentPath, gotAbsent)
+	}
+	// ignored must contain exactly ignoredPath
+	if len(gotIgnored) != 1 || gotIgnored[0] != ignoredPath {
+		t.Errorf("ignored: want [%s], got %v", ignoredPath, gotIgnored)
+	}
+
+	// nil ignoreMatch: ignored bucket must be empty even for an ignore-matched path
+	gotAbsent2, gotIgnored2 := classifyOutOfScope(dir, dbFiles, nil)
+	if len(gotIgnored2) != 0 {
+		t.Errorf("nil ignoreMatch: expected empty ignored bucket, got %v", gotIgnored2)
+	}
+	if len(gotAbsent2) != 1 || gotAbsent2[0] != absentPath {
+		t.Errorf("nil ignoreMatch: absent want [%s], got %v", absentPath, gotAbsent2)
+	}
+}
+
 // TestReconcileWorkspaceProjects_PerProjectIsolation covers the --workspace reconcile path
 // the single-store tests never exercise: the per-project loop, project-relative paths
 // (filepath.Join(proj.Path, f.Path)), and cross-project isolation. Deleting a file in

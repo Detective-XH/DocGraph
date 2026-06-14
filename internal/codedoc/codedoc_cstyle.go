@@ -16,6 +16,7 @@ import (
 // ──────────────────────────────────────────────────────────────────────────────
 
 func init() {
+	initLangConfigs()
 	RegisterExtractor("rust", makeExtractor("rust"), ".rs")
 	RegisterExtractor("c", makeExtractor("c"), ".c", ".cc", ".h")
 	RegisterExtractor("cpp", makeExtractor("cpp"), ".cpp", ".cxx", ".hpp", ".hh")
@@ -71,49 +72,70 @@ type cStyleConfig struct {
 
 	// phpTestTag: language uses /** @test */ annotation (PHP).
 	phpTestTag bool
+
+	// symbolFuncRe is the regex used to extract function/method names from a
+	// declaration line. nil means this language has no function-level declarations
+	// recognised by extractSymbol (class-level fallback still applies via classRe).
+	symbolFuncRe *regexp.Regexp
 }
 
-var langConfigs = map[string]cStyleConfig{
-	"rust": {
-		useTripleSlash:   true,
-		testFileSuffixes: []string{"_test.rs"},
-	},
-	"c": {
-		testFileSuffixes: []string{},
-	},
-	"cpp": {
-		testFileSuffixes: []string{},
-	},
-	"java": {
-		useDoubleStarBlock:    true,
-		testAttrs:             []string{"@Test", "@ParameterizedTest", "@RepeatedTest"},
-		testDirSegments:       []string{"src/test/"},
-		classNameTestSuffixes: []string{"Test"},
-	},
-	"swift": {
-		testFuncPrefixes: []string{"test"},
-		testFileSuffixes: []string{"tests.swift"},
-	},
-	"csharp": {
-		testAttrs:        []string{"[Test]", "[Fact]", "[Theory]", "[TestMethod]"},
-		testFileSuffixes: []string{"tests.cs"},
-	},
-	"php": {
-		phpTestTag:       true,
-		testFuncPrefixes: []string{"test"},
-		testFileSuffixes: []string{"test.php"},
-	},
-	"kotlin": {
-		useDoubleStarBlock:    true,
-		testAttrs:             []string{"@Test"},
-		classNameTestSuffixes: []string{"Test", "Spec"},
-	},
-	"dart": {
-		useDoubleStarBlock: true,
-		dartTestCall:       true,
-		testFileSuffixes:   []string{"_test.dart"},
-		testDirSegments:    []string{"test/"},
-	},
+// langConfigs is initialised in initLangConfigs() (called from init()) so that
+// symbolFuncRe fields can reference the package-level regexp variables, which
+// are themselves package-level vars initialised before init() runs.
+var langConfigs map[string]cStyleConfig
+
+func initLangConfigs() {
+	langConfigs = map[string]cStyleConfig{
+		"rust": {
+			useTripleSlash:   true,
+			testFileSuffixes: []string{"_test.rs"},
+			symbolFuncRe:     rustFuncRe,
+		},
+		"c": {
+			testFileSuffixes: []string{},
+			symbolFuncRe:     cFuncRe,
+		},
+		"cpp": {
+			testFileSuffixes: []string{},
+			symbolFuncRe:     cFuncRe,
+		},
+		"java": {
+			useDoubleStarBlock:    true,
+			testAttrs:             []string{"@Test", "@ParameterizedTest", "@RepeatedTest"},
+			testDirSegments:       []string{"src/test/"},
+			classNameTestSuffixes: []string{"Test"},
+			symbolFuncRe:          javaMethodRe,
+		},
+		"swift": {
+			testFuncPrefixes: []string{"test"},
+			testFileSuffixes: []string{"tests.swift"},
+			symbolFuncRe:     funcRe,
+		},
+		"csharp": {
+			testAttrs:        []string{"[Test]", "[Fact]", "[Theory]", "[TestMethod]"},
+			testFileSuffixes: []string{"tests.cs"},
+			symbolFuncRe:     javaMethodRe,
+		},
+		"php": {
+			phpTestTag:       true,
+			testFuncPrefixes: []string{"test"},
+			testFileSuffixes: []string{"test.php"},
+			symbolFuncRe:     phpFuncRe,
+		},
+		"kotlin": {
+			useDoubleStarBlock:    true,
+			testAttrs:             []string{"@Test"},
+			classNameTestSuffixes: []string{"Test", "Spec"},
+			symbolFuncRe:          kotlinFuncRe,
+		},
+		"dart": {
+			useDoubleStarBlock: true,
+			dartTestCall:       true,
+			testFileSuffixes:   []string{"_test.dart"},
+			testDirSegments:    []string{"test/"},
+			symbolFuncRe:       funcRe,
+		},
+	}
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -300,15 +322,7 @@ func extractCStyle(lang, relPath string, src []byte) ([]CodeDocEntry, error) {
 		}
 
 		// ── PHP @test in /** @test */ ──────────────────────────────────────────
-		phpHasTestTag := false
-		if cfg.phpTestTag && len(commentBuf) > 0 {
-			for _, cl := range commentBuf {
-				if strings.Contains(cl, "@test") {
-					phpHasTestTag = true
-					break
-				}
-			}
-		}
+		phpHasTestTag := scanPhpTestTag(commentBuf, cfg)
 
 		// ── Empty or blank line: flush pending only if no comment was active ───
 		if trimmed == "" {
@@ -443,29 +457,44 @@ func detectFileType(lang, relPath string, lines []string, cfg cStyleConfig) stri
 		}
 	}
 
-	if len(cfg.classNameTestSuffixes) > 0 {
-		for _, line := range lines {
-			if m := classRe.FindStringSubmatch(line); m != nil {
-				className := m[1]
-				for _, suf := range cfg.classNameTestSuffixes {
-					if strings.HasSuffix(className, suf) {
-						return FileTypeTest
-					}
+	if matchesClassSuffix(lines, cfg.classNameTestSuffixes) {
+		return FileTypeTest
+	}
+
+	if lang == "csharp" && matchesCSharpFixture(lines) {
+		return FileTypeTest
+	}
+
+	return FileTypeSource
+}
+
+// matchesClassSuffix reports whether any class declaration in lines has a name
+// ending with one of the given suffixes. Returns false when suffixes is empty.
+func matchesClassSuffix(lines []string, suffixes []string) bool {
+	if len(suffixes) == 0 {
+		return false
+	}
+	for _, line := range lines {
+		if m := classRe.FindStringSubmatch(line); m != nil {
+			className := m[1]
+			for _, suf := range suffixes {
+				if strings.HasSuffix(className, suf) {
+					return true
 				}
 			}
 		}
 	}
+	return false
+}
 
-	// C# [TestFixture]
-	if lang == "csharp" {
-		for _, line := range lines {
-			if strings.Contains(strings.TrimSpace(line), "[TestFixture]") {
-				return FileTypeTest
-			}
+// matchesCSharpFixture reports whether any line in lines contains [TestFixture].
+func matchesCSharpFixture(lines []string) bool {
+	for _, line := range lines {
+		if strings.Contains(strings.TrimSpace(line), "[TestFixture]") {
+			return true
 		}
 	}
-
-	return FileTypeSource
+	return false
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -492,7 +521,7 @@ func extractFileHeader(lang string, lines []string, cfg cStyleConfig) (commentSp
 
 	trimmed := strings.TrimSpace(lines[i])
 
-	// PHP: skip <?php line.
+	// PHP: skip <?php line, then skip any new blank lines.
 	if lang == "php" && (strings.HasPrefix(trimmed, "<?php") || strings.HasPrefix(trimmed, "<?")) {
 		i++
 		for i < len(lines) && strings.TrimSpace(lines[i]) == "" {
@@ -506,85 +535,100 @@ func extractFileHeader(lang string, lines []string, cfg cStyleConfig) (commentSp
 
 	startLine := i + 1 // 1-based
 
-	// Case 1: block comment /* ... */
 	if isBlockCommentOpen(trimmed) {
-		var buf []string
-		commentEnd := i
-		inner := strings.TrimPrefix(trimmed, "/*")
-		inner = strings.TrimPrefix(inner, "*")
-		inner = strings.TrimSpace(inner)
-		// Check same-line close.
-		if idx := strings.Index(trimmed, "*/"); idx >= 2 {
-			// single-line block comment
-			inner = extractBlockCommentSingleLine(trimmed)
-			if inner != "" {
-				buf = append(buf, inner)
-			}
-			commentEnd = i
-			return commentSpan{
-				text:  strings.Join(buf, "\n"),
-				start: startLine,
-				end:   commentEnd + 1,
-			}, commentEnd + 1
-		}
+		return parseBlockCommentHeader(lines, i, startLine)
+	}
+
+	if strings.HasPrefix(trimmed, "//") {
+		return parseLineCommentHeader(lines, i, startLine, lang)
+	}
+
+	return commentSpan{}, i
+}
+
+// parseBlockCommentHeader scans a /* … */ block comment starting at line index
+// start (0-based). startLine is the 1-based line number for the span.
+func parseBlockCommentHeader(lines []string, start, startLine int) (commentSpan, int) {
+	i := start
+	trimmed := strings.TrimSpace(lines[i])
+	var buf []string
+	commentEnd := i
+
+	inner := strings.TrimPrefix(trimmed, "/*")
+	inner = strings.TrimPrefix(inner, "*")
+	inner = strings.TrimSpace(inner)
+
+	// Same-line close: /* text */
+	if idx := strings.Index(trimmed, "*/"); idx >= 2 {
+		inner = extractBlockCommentSingleLine(trimmed)
 		if inner != "" {
 			buf = append(buf, inner)
 		}
-		i++
-		for i < len(lines) {
-			raw := strings.TrimSpace(lines[i])
-			commentEnd = i
-			// Strip leading * decoration.
-			stripped := strings.TrimPrefix(raw, "*")
-			stripped = strings.TrimSpace(stripped)
-			if strings.HasSuffix(raw, "*/") {
-				// Remove trailing */
-				stripped = strings.TrimSuffix(stripped, "*/")
-				stripped = strings.TrimSpace(stripped)
-				if stripped != "" {
-					buf = append(buf, stripped)
-				}
-				i++
-				break
-			}
-			buf = append(buf, stripped)
-			i++
-		}
-		text := strings.TrimSpace(strings.Join(buf, "\n"))
-		return commentSpan{text: text, start: startLine, end: commentEnd + 1}, i
-	}
-
-	// Case 2: run of // lines.
-	// For Rust: only plain // (not ///) counts as a file header.
-	// /// is always a doc comment for the next item (not a file-level comment).
-	if strings.HasPrefix(trimmed, "//") {
-		// Rust: a leading /// block is NOT a file header — skip.
-		if lang == "rust" && strings.HasPrefix(trimmed, "///") {
-			return commentSpan{}, i
-		}
-		var buf []string
-		commentEnd := i
-		for i < len(lines) {
-			t := strings.TrimSpace(lines[i])
-			if !strings.HasPrefix(t, "//") {
-				break
-			}
-			// Rust: stop at /// — it belongs to the following declaration.
-			if lang == "rust" && strings.HasPrefix(t, "///") {
-				break
-			}
-			buf = append(buf, strings.TrimSpace(strings.TrimPrefix(t, "//")))
-			commentEnd = i
-			i++
-		}
+		commentEnd = i
 		return commentSpan{
 			text:  strings.Join(buf, "\n"),
 			start: startLine,
 			end:   commentEnd + 1,
-		}, i
+		}, commentEnd + 1
 	}
 
-	return commentSpan{}, i
+	if inner != "" {
+		buf = append(buf, inner)
+	}
+	i++
+	for i < len(lines) {
+		raw := strings.TrimSpace(lines[i])
+		commentEnd = i
+		stripped := strings.TrimPrefix(raw, "*")
+		stripped = strings.TrimSpace(stripped)
+		if strings.HasSuffix(raw, "*/") {
+			stripped = strings.TrimSuffix(stripped, "*/")
+			stripped = strings.TrimSpace(stripped)
+			if stripped != "" {
+				buf = append(buf, stripped)
+			}
+			i++
+			break
+		}
+		buf = append(buf, stripped)
+		i++
+	}
+	text := strings.TrimSpace(strings.Join(buf, "\n"))
+	return commentSpan{text: text, start: startLine, end: commentEnd + 1}, i
+}
+
+// parseLineCommentHeader scans a run of // lines starting at line index start
+// (0-based). startLine is the 1-based line number for the span.
+// For Rust, a leading /// block is not a file header — returns empty span.
+func parseLineCommentHeader(lines []string, start, startLine int, lang string) (commentSpan, int) {
+	i := start
+	trimmed := strings.TrimSpace(lines[i])
+
+	// Rust: a leading /// block belongs to the next declaration, not the file.
+	if lang == "rust" && strings.HasPrefix(trimmed, "///") {
+		return commentSpan{}, i
+	}
+
+	var buf []string
+	commentEnd := i
+	for i < len(lines) {
+		t := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(t, "//") {
+			break
+		}
+		// Rust: stop at /// — it belongs to the following declaration.
+		if lang == "rust" && strings.HasPrefix(t, "///") {
+			break
+		}
+		buf = append(buf, strings.TrimSpace(strings.TrimPrefix(t, "//")))
+		commentEnd = i
+		i++
+	}
+	return commentSpan{
+		text:  strings.Join(buf, "\n"),
+		start: startLine,
+		end:   commentEnd + 1,
+	}, i
 }
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -634,67 +678,37 @@ func isTestAttr(lang, trimmed string, cfg cStyleConfig) bool {
 	return false
 }
 
+// scanPhpTestTag reports whether the pending comment buffer contains a PHP
+// "@test" annotation tag. It is pure: it reads commentBuf and cfg without
+// mutating any scan state.
+func scanPhpTestTag(commentBuf []string, cfg cStyleConfig) bool {
+	if !cfg.phpTestTag || len(commentBuf) == 0 {
+		return false
+	}
+	for _, cl := range commentBuf {
+		if strings.Contains(cl, "@test") {
+			return true
+		}
+	}
+	return false
+}
+
 // extractSymbol returns the primary symbol name from a declaration line.
 // Returns "" if the line does not look like a top-level declaration.
+// Dispatch is config-driven via cStyleConfig.symbolFuncRe; classRe is the
+// unconditional fallback for all registered languages.
 func extractSymbol(lang, trimmed string) string {
-	switch lang {
-	case "rust":
-		if m := rustFuncRe.FindStringSubmatch(trimmed); m != nil {
+	cfg, ok := langConfigs[lang]
+	if !ok {
+		return ""
+	}
+	if cfg.symbolFuncRe != nil {
+		if m := cfg.symbolFuncRe.FindStringSubmatch(trimmed); m != nil {
 			return m[1]
 		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "swift":
-		if m := funcRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "kotlin":
-		if m := kotlinFuncRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "java":
-		// Prefer javaMethodRe for typed methods; fallback to func patterns.
-		if m := javaMethodRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "csharp":
-		if m := javaMethodRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "php":
-		if m := phpFuncRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "dart":
-		if m := funcRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-	case "c", "cpp":
-		if m := cFuncRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
-		if m := classRe.FindStringSubmatch(trimmed); m != nil {
-			return m[1]
-		}
+	}
+	if m := classRe.FindStringSubmatch(trimmed); m != nil {
+		return m[1]
 	}
 	return ""
 }
