@@ -17,6 +17,81 @@ type ProjectRef struct {
 	Store *store.Store
 }
 
+// buildProjectIndex builds a per-project basename→nodeID lookup from all
+// projects. Only the first document matching a basename is stored (first-writer
+// wins), mirroring the disambiguation heuristic in fuzzyResolve.
+func buildProjectIndex(projects []ProjectRef) (map[string]map[string]string, error) {
+	byProject := make(map[string]map[string]string, len(projects))
+	for _, p := range projects {
+		docs, err := p.Store.GetAllDocumentNodes()
+		if err != nil {
+			return nil, fmt.Errorf("load docs for project %q: %w", p.Name, err)
+		}
+		m := make(map[string]string, len(docs))
+		for _, d := range docs {
+			base := strings.ToLower(strings.TrimSuffix(filepath.Base(d.FilePath), ".md"))
+			if _, exists := m[base]; !exists {
+				m[base] = d.ID
+			}
+		}
+		byProject[p.Name] = m
+	}
+	return byProject, nil
+}
+
+// classifyWorkspaceRefs splits refs into resolved cross-project wikilink edges
+// and those that still need intra-project resolution. Only [[project/doc]]
+// wikilinks with a valid slash are resolved here.
+func classifyWorkspaceRefs(refs []store.UnresolvedRef, byProject map[string]map[string]string) ([]store.Edge, []store.UnresolvedRef) {
+	var edges []store.Edge
+	var stillUnresolved []store.UnresolvedRef
+	for _, ref := range refs {
+		if ref.ReferenceKind != "wikilink" {
+			stillUnresolved = append(stillUnresolved, ref)
+			continue
+		}
+		target := ref.ReferenceText
+		if idx := strings.Index(target, "|"); idx >= 0 {
+			target = target[:idx]
+		}
+		if idx := strings.Index(target, "#"); idx >= 0 {
+			target = target[:idx]
+		}
+		target = strings.TrimSpace(target)
+		slashIdx := strings.Index(target, "/")
+		if slashIdx < 0 || slashIdx == 0 || slashIdx == len(target)-1 {
+			stillUnresolved = append(stillUnresolved, ref)
+			continue
+		}
+		parts := strings.SplitN(target, "/", 2)
+		targetProject := parts[0]
+		docName := strings.ToLower(strings.TrimSuffix(parts[1], ".md"))
+		projectDocs, ok := byProject[targetProject]
+		if !ok {
+			stillUnresolved = append(stillUnresolved, ref)
+			continue
+		}
+		targetNodeID, ok := projectDocs[docName]
+		if !ok {
+			stillUnresolved = append(stillUnresolved, ref)
+			continue
+		}
+		meta, _ := json.Marshal(map[string]string{
+			"cross_project":  "true",
+			"target_project": targetProject,
+			"target_node_id": targetNodeID,
+		})
+		edges = append(edges, store.Edge{
+			Source:   ref.FromNodeID,
+			Target:   ref.FromNodeID,
+			Kind:     "wikilinks_to",
+			Metadata: string(meta),
+			Line:     ref.Line,
+		})
+	}
+	return edges, stillUnresolved
+}
+
 // ResolveWorkspace performs a second-pass cross-project wikilink resolution
 // after all per-project Resolve() calls have completed.
 // It handles [[project/doc-name]] formatted wikilinks that could not be
@@ -27,24 +102,9 @@ type ProjectRef struct {
 // {"cross_project": true, "target_project": "...", "target_node_id": "..."}
 // stored in Metadata.
 func ResolveWorkspace(projects []ProjectRef) error {
-	// Build global lookup: byProject[projectName][basename] = nodeID
-	type byBasenameMap = map[string]string
-	byProject := make(map[string]byBasenameMap, len(projects))
-
-	for _, p := range projects {
-		docs, err := p.Store.GetAllDocumentNodes()
-		if err != nil {
-			return fmt.Errorf("load docs for project %q: %w", p.Name, err)
-		}
-		m := make(byBasenameMap, len(docs))
-		for _, d := range docs {
-			base := strings.ToLower(strings.TrimSuffix(filepath.Base(d.FilePath), ".md"))
-			// Last writer wins on collision — same disambiguation heuristic as fuzzyResolve
-			if _, exists := m[base]; !exists {
-				m[base] = d.ID
-			}
-		}
-		byProject[p.Name] = m
+	byProject, err := buildProjectIndex(projects)
+	if err != nil {
+		return err
 	}
 
 	var totalResolved int
@@ -55,64 +115,7 @@ func ResolveWorkspace(projects []ProjectRef) error {
 			return fmt.Errorf("get unresolved refs for project %q: %w", p.Name, err)
 		}
 
-		var edges []store.Edge
-		var stillUnresolved []store.UnresolvedRef
-
-		for _, ref := range refs {
-			// Only handle cross-project wikilinks (contain a slash after pipe/anchor stripping)
-			if ref.ReferenceKind != "wikilink" {
-				stillUnresolved = append(stillUnresolved, ref)
-				continue
-			}
-
-			target := ref.ReferenceText
-			// Strip pipe alias and anchor
-			if idx := strings.Index(target, "|"); idx >= 0 {
-				target = target[:idx]
-			}
-			if idx := strings.Index(target, "#"); idx >= 0 {
-				target = target[:idx]
-			}
-			target = strings.TrimSpace(target)
-
-			slashIdx := strings.Index(target, "/")
-			if slashIdx < 0 || slashIdx == 0 || slashIdx == len(target)-1 {
-				// Not a cross-project reference — leave for intra-project pass
-				stillUnresolved = append(stillUnresolved, ref)
-				continue
-			}
-
-			parts := strings.SplitN(target, "/", 2)
-			targetProject := parts[0]
-			docName := strings.ToLower(strings.TrimSuffix(parts[1], ".md"))
-
-			projectDocs, ok := byProject[targetProject]
-			if !ok {
-				// Referenced project doesn't exist
-				stillUnresolved = append(stillUnresolved, ref)
-				continue
-			}
-
-			targetNodeID, ok := projectDocs[docName]
-			if !ok {
-				// Document not found in target project
-				stillUnresolved = append(stillUnresolved, ref)
-				continue
-			}
-
-			meta, _ := json.Marshal(map[string]string{
-				"cross_project":  "true",
-				"target_project": targetProject,
-				"target_node_id": targetNodeID,
-			})
-			edges = append(edges, store.Edge{
-				Source:   ref.FromNodeID,
-				Target:   ref.FromNodeID,
-				Kind:     "wikilinks_to",
-				Metadata: string(meta),
-				Line:     ref.Line,
-			})
-		}
+		edges, stillUnresolved := classifyWorkspaceRefs(refs, byProject)
 
 		if len(edges) > 0 {
 			if err := p.Store.InsertEdges(edges); err != nil {
@@ -120,8 +123,7 @@ func ResolveWorkspace(projects []ProjectRef) error {
 			}
 		}
 
-		resolved := len(refs) - len(stillUnresolved)
-		totalResolved += resolved
+		totalResolved += len(refs) - len(stillUnresolved)
 
 		if err := p.Store.DeleteAllUnresolvedRefs(); err != nil {
 			return fmt.Errorf("delete unresolved refs for project %q: %w", p.Name, err)
@@ -137,72 +139,64 @@ func ResolveWorkspace(projects []ProjectRef) error {
 	return nil
 }
 
-func Resolve(st RefResolver) error {
-	docs, err := st.GetAllDocumentNodes()
-	if err != nil {
-		return fmt.Errorf("load document nodes: %w", err)
-	}
+// resolverIndex holds the four lookup maps built from the document set.
+type resolverIndex struct {
+	byPath     map[string]string
+	byBasename map[string][]string
+	byName     map[string][]string
+	nodeDir    map[string]string
+}
 
-	byPath := make(map[string]string)
-	byBasename := make(map[string][]string)
-	byName := make(map[string][]string)
-
+// buildResolverIndex constructs the four lookup maps used by the ref-dispatch
+// loop: path→id, basename→ids, name→ids, and nodeID→dir.
+func buildResolverIndex(docs []store.Node) resolverIndex {
+	byPath := make(map[string]string, len(docs))
+	byBasename := make(map[string][]string, len(docs))
+	byName := make(map[string][]string, len(docs))
+	nodeDir := make(map[string]string, len(docs))
 	for _, d := range docs {
-		lowerPath := strings.ToLower(d.FilePath)
-		byPath[lowerPath] = d.ID
-
+		byPath[strings.ToLower(d.FilePath)] = d.ID
 		base := strings.ToLower(strings.TrimSuffix(filepath.Base(d.FilePath), ".md"))
 		byBasename[base] = append(byBasename[base], d.ID)
-
-		name := strings.ToLower(d.Name)
-		byName[name] = append(byName[name], d.ID)
-	}
-
-	nodeDir := make(map[string]string)
-	for _, d := range docs {
+		byName[strings.ToLower(d.Name)] = append(byName[strings.ToLower(d.Name)], d.ID)
 		nodeDir[d.ID] = filepath.Dir(d.FilePath)
 	}
+	return resolverIndex{byPath: byPath, byBasename: byBasename, byName: byName, nodeDir: nodeDir}
+}
 
-	refs, err := st.GetUnresolvedRefs()
-	if err != nil {
-		return fmt.Errorf("load unresolved refs: %w", err)
-	}
-
+// classifyRefs routes each unresolved reference through the appropriate
+// resolver and partitions results into matched edges and still-unresolved refs.
+func classifyRefs(refs []store.UnresolvedRef, idx resolverIndex, st RefResolver) ([]store.Edge, []store.UnresolvedRef) {
 	var edges []store.Edge
 	var stillUnresolved []store.UnresolvedRef
-
 	for _, ref := range refs {
 		target := strings.TrimSpace(ref.ReferenceText)
 		if target == "" {
 			stillUnresolved = append(stillUnresolved, ref)
 			continue
 		}
-
 		switch ref.ReferenceKind {
 		case "markdown_link":
-			edge := resolveMarkdownLink(ref, target, byPath, st)
+			edge := resolveMarkdownLink(ref, target, idx.byPath, st)
 			if edge != nil {
 				edges = append(edges, *edge)
 			} else {
 				stillUnresolved = append(stillUnresolved, ref)
 			}
-
 		case "wikilink":
-			edge := resolveWikilink(ref, target, byBasename, byName, nodeDir)
+			edge := resolveWikilink(ref, target, idx.byBasename, idx.byName, idx.nodeDir)
 			if edge != nil {
 				edges = append(edges, *edge)
 			} else {
 				stillUnresolved = append(stillUnresolved, ref)
 			}
-
 		case "embed":
-			edge := resolveEmbed(ref, target, byBasename, byName, nodeDir)
+			edge := resolveEmbed(ref, target, idx.byBasename, idx.byName, idx.nodeDir)
 			if edge != nil {
 				edges = append(edges, *edge)
 			} else {
 				stillUnresolved = append(stillUnresolved, ref)
 			}
-
 		case "external":
 			meta, _ := json.Marshal(map[string]string{"url": target})
 			edges = append(edges, store.Edge{
@@ -212,11 +206,27 @@ func Resolve(st RefResolver) error {
 				Metadata: string(meta),
 				Line:     ref.Line,
 			})
-
 		default:
 			stillUnresolved = append(stillUnresolved, ref)
 		}
 	}
+	return edges, stillUnresolved
+}
+
+func Resolve(st RefResolver) error {
+	docs, err := st.GetAllDocumentNodes()
+	if err != nil {
+		return fmt.Errorf("load document nodes: %w", err)
+	}
+
+	idx := buildResolverIndex(docs)
+
+	refs, err := st.GetUnresolvedRefs()
+	if err != nil {
+		return fmt.Errorf("load unresolved refs: %w", err)
+	}
+
+	edges, stillUnresolved := classifyRefs(refs, idx, st)
 
 	if len(edges) > 0 {
 		if err := st.InsertEdges(edges); err != nil {

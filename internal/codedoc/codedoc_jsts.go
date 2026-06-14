@@ -86,67 +86,134 @@ func truncate60(s string) string {
 	return s[:60]
 }
 
+// jsdocBlock accumulates lines within a /** ... */ block.
+type jsdocBlock struct {
+	lines     []string
+	startLine int // 1-based, absolute
+}
+
+// jsScanner holds the mutable state shared across the per-line handler methods.
+type jsScanner struct {
+	lang     string
+	fileType string
+	entries  []CodeDocEntry
+
+	firstJSDocSeen bool
+	inJSDoc        bool
+	cur            jsdocBlock
+	pending        *jsdocBlock
+}
+
+func (s *jsScanner) emit(e CodeDocEntry) {
+	e.Lang = s.lang
+	e.FileType = s.fileType
+	s.entries = append(s.entries, e)
+}
+
+// onJSDocClose finalises a completed JSDoc block (multi- or single-line).
+func (s *jsScanner) onJSDocClose(absLine int) {
+	if !s.firstJSDocSeen {
+		s.firstJSDocSeen = true
+		s.emit(CodeDocEntry{
+			CommentKind: KindFileHeader,
+			HeadingPath: "File Header",
+			Text:        cleanJSDoc(s.cur.lines),
+			StartLine:   s.cur.startLine,
+			EndLine:     absLine,
+		})
+		s.cur = jsdocBlock{}
+		return
+	}
+	s.pending = &jsdocBlock{lines: s.cur.lines, startLine: s.cur.startLine}
+	s.cur = jsdocBlock{}
+}
+
+// onTestLine attempts to match line against re (a test regex with a
+// quote-capture group). Emits a KindTestFunc entry and returns true on match.
+func (s *jsScanner) onTestLine(re *regexp.Regexp, line string, absLine int) bool {
+	loc := re.FindStringSubmatchIndex(line)
+	if len(loc) < 4 {
+		return false
+	}
+	quoteChar := line[loc[2]:loc[3]]
+	name := extractStringUntilClose(line[loc[3]:], quoteChar)
+	if name != "" {
+		s.emit(CodeDocEntry{
+			SymbolName:  name,
+			CommentKind: KindTestFunc,
+			HeadingPath: "Tests > " + truncate60(name),
+			Text:        name,
+			StartLine:   absLine,
+			EndLine:     absLine,
+		})
+	}
+	s.pending = nil
+	return true
+}
+
+// onDeclLine processes a non-JSDoc, non-test line that may be a symbol
+// declaration (consuming a pending JSDoc) or a substantive code line
+// (advancing the firstJSDocSeen heuristic). Returns true when the line was
+// consumed as a declaration.
+func (s *jsScanner) onDeclLine(line, trimmed string, absLine int) bool {
+	if s.pending != nil {
+		return s.onPendingLine(line, trimmed, absLine)
+	}
+	// No pending JSDoc — advance firstJSDocSeen past any substantive code line.
+	if !s.firstJSDocSeen && jsSubstantiveLine(trimmed) {
+		s.firstJSDocSeen = true
+	}
+	return false
+}
+
+// onPendingLine handles a line when there is a pending JSDoc block.
+func (s *jsScanner) onPendingLine(line, trimmed string, absLine int) bool {
+	if sym := jsDeclSymbol(line); sym != "" {
+		s.emit(CodeDocEntry{
+			SymbolName:  sym,
+			CommentKind: KindDocComment,
+			HeadingPath: "DocComment > " + sym,
+			Text:        cleanJSDoc(s.pending.lines),
+			StartLine:   s.pending.startLine,
+			EndLine:     absLine,
+		})
+		s.pending = nil
+		return true
+	}
+	// Non-empty, non-declaration line — discard pending if it's code.
+	if trimmed != "" && !strings.HasPrefix(trimmed, "//") {
+		s.pending = nil
+	}
+	return false
+}
+
+// jsSubstantiveLine reports whether trimmed is a non-blank, non-comment line
+// that marks the end of the file-header window.
+func jsSubstantiveLine(trimmed string) bool {
+	return trimmed != "" &&
+		!strings.HasPrefix(trimmed, "//") &&
+		!strings.HasPrefix(trimmed, "/*") &&
+		!strings.HasPrefix(trimmed, "*")
+}
+
 // extractFromJSBlock scans a JS/TS source buffer and returns CodeDocEntry values.
 // lineOffset is the 0-based number of lines before this buffer in the original file
 // (used for Svelte/Vue where we pass only the <script> content).
 // lang and fileType are set on every returned entry.
 func extractFromJSBlock(src []byte, lineOffset int, relPath, lang, fileType string) []CodeDocEntry {
 	lines := bytes.Split(src, []byte("\n"))
-	var entries []CodeDocEntry
-
-	// firstJSDocSeen tracks whether we have emitted a KindFileHeader yet.
-	firstJSDocSeen := false
-
-	// jsdocBuf accumulates lines within a /** ... */ block.
-	type jsdocBlock struct {
-		lines     []string
-		startLine int // 1-based, absolute
-	}
-
-	var pending *jsdocBlock // JSDoc block waiting for the next declaration
-	inJSDoc := false
-	var cur jsdocBlock
-
-	emit := func(e CodeDocEntry) {
-		e.Lang = lang
-		e.FileType = fileType
-		entries = append(entries, e)
-	}
-
-	flushPending := func() {
-		// Discard a pending JSDoc that had no following declaration.
-		pending = nil
-	}
+	sc := &jsScanner{lang: lang, fileType: fileType}
 
 	for i, rawLine := range lines {
 		absLine := lineOffset + i + 1 // 1-based absolute line number
 		line := string(rawLine)
 
 		// -- Inside a JSDoc block --
-		if inJSDoc {
-			cur.lines = append(cur.lines, line)
+		if sc.inJSDoc {
+			sc.cur.lines = append(sc.cur.lines, line)
 			if jsdocCloseLine.MatchString(line) {
-				inJSDoc = false
-				// Determine if this is a file header (first JSDoc, near top of block).
-				if !firstJSDocSeen {
-					firstJSDocSeen = true
-					emit(CodeDocEntry{
-						CommentKind: KindFileHeader,
-						HeadingPath: "File Header",
-						Text:        cleanJSDoc(cur.lines),
-						StartLine:   cur.startLine,
-						EndLine:     absLine,
-					})
-					cur = jsdocBlock{}
-					continue
-				}
-				// Otherwise store as pending for the next declaration.
-				// Text is computed from pending.lines when the declaration is matched.
-				pending = &jsdocBlock{
-					lines:     cur.lines,
-					startLine: cur.startLine,
-				}
-				cur = jsdocBlock{}
+				sc.inJSDoc = false
+				sc.onJSDocClose(absLine)
 			}
 			continue
 		}
@@ -154,133 +221,50 @@ func extractFromJSBlock(src []byte, lineOffset int, relPath, lang, fileType stri
 		// -- Check for JSDoc open --
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "/**") {
-			// Ensure it really is JSDoc (double asterisk), not a block comment "/*".
 			// "/**" followed by more content, or just "/**" alone on the line.
-			inJSDoc = true
-			cur = jsdocBlock{startLine: absLine}
-			cur.lines = append(cur.lines, line)
+			sc.inJSDoc = true
+			sc.cur = jsdocBlock{startLine: absLine}
+			sc.cur.lines = append(sc.cur.lines, line)
 			// If the open and close are on the same line: "/** text */"
 			if strings.Contains(trimmed[3:], "*/") {
-				inJSDoc = false
-				text := cleanJSDoc(cur.lines)
-				if !firstJSDocSeen {
-					firstJSDocSeen = true
-					emit(CodeDocEntry{
-						CommentKind: KindFileHeader,
-						HeadingPath: "File Header",
-						Text:        text,
-						StartLine:   cur.startLine,
-						EndLine:     absLine,
-					})
-					cur = jsdocBlock{}
-					continue
-				}
-				pending = &jsdocBlock{lines: cur.lines, startLine: cur.startLine}
-				cur = jsdocBlock{}
+				sc.inJSDoc = false
+				sc.onJSDocClose(absLine)
 			}
 			continue
 		}
 
 		// -- Test calls --
 		// Try the chained .each(table)('name') pattern first (more specific).
-		if loc := testEachRe.FindStringSubmatchIndex(line); len(loc) >= 4 {
-			quoteChar := line[loc[2]:loc[3]]
-			rest := line[loc[3]:]
-			name := extractStringUntilClose(rest, quoteChar)
-			if name != "" {
-				emit(CodeDocEntry{
-					SymbolName:  name,
-					CommentKind: KindTestFunc,
-					HeadingPath: "Tests > " + truncate60(name),
-					Text:        name,
-					StartLine:   absLine,
-					EndLine:     absLine,
-				})
-			}
-			flushPending()
+		if sc.onTestLine(testEachRe, line, absLine) {
 			continue
 		}
 		// Multi-line test.each continuation: ])('name', ...) on its own line.
-		if loc := testEachContinuationRe.FindStringSubmatchIndex(line); len(loc) >= 4 {
-			quoteChar := line[loc[2]:loc[3]]
-			rest := line[loc[3]:]
-			name := extractStringUntilClose(rest, quoteChar)
-			if name != "" {
-				emit(CodeDocEntry{
-					SymbolName:  name,
-					CommentKind: KindTestFunc,
-					HeadingPath: "Tests > " + truncate60(name),
-					Text:        name,
-					StartLine:   absLine,
-					EndLine:     absLine,
-				})
-			}
-			flushPending()
+		if sc.onTestLine(testEachContinuationRe, line, absLine) {
 			continue
 		}
-		if m := testCallRe.FindStringIndex(line); m != nil {
-			// Find the opening quote
-			loc := testCallRe.FindStringSubmatchIndex(line)
-			if len(loc) >= 4 {
-				quoteChar := line[loc[2]:loc[3]] // the captured quote character
-				rest := line[loc[3]:]            // everything after the opening quote
-				name := extractStringUntilClose(rest, quoteChar)
-				if name != "" {
-					sym := name
-					emit(CodeDocEntry{
-						SymbolName:  sym,
-						CommentKind: KindTestFunc,
-						HeadingPath: "Tests > " + truncate60(sym),
-						Text:        name,
-						StartLine:   absLine,
-						EndLine:     absLine,
-					})
-				}
-			}
-			flushPending()
+		if sc.onTestLine(testCallRe, line, absLine) {
 			continue
 		}
 
 		// -- Symbol declarations (may consume pending JSDoc) --
-		if pending != nil {
-			sym := ""
-			// Try symbolDecl
-			if m := symbolDeclRe.FindStringSubmatch(line); m != nil {
-				sym = m[2]
-			} else if m := arrowFuncRe.FindStringSubmatch(line); m != nil {
-				sym = m[1]
-			}
-
-			if sym != "" {
-				text := cleanJSDoc(pending.lines)
-				emit(CodeDocEntry{
-					SymbolName:  sym,
-					CommentKind: KindDocComment,
-					HeadingPath: "DocComment > " + sym,
-					Text:        text,
-					StartLine:   pending.startLine,
-					EndLine:     absLine,
-				})
-				pending = nil
-				continue
-			}
-
-			// Non-empty, non-declaration line — discard pending if it's code.
-			if trimmed != "" && !strings.HasPrefix(trimmed, "//") {
-				flushPending()
-			}
-		} else {
-			// No pending JSDoc — still check for declarations to advance firstJSDocSeen
-			// heuristic: any non-blank, non-comment line means we're past the file top.
-			if !firstJSDocSeen && trimmed != "" && !strings.HasPrefix(trimmed, "//") &&
-				!strings.HasPrefix(trimmed, "/*") && !strings.HasPrefix(trimmed, "*") {
-				// Any substantive code line: file header window has passed.
-				firstJSDocSeen = true
-			}
+		if sc.onDeclLine(line, trimmed, absLine) {
+			continue
 		}
 	}
 
-	return entries
+	return sc.entries
+}
+
+// jsDeclSymbol returns the symbol name matched by symbolDeclRe or arrowFuncRe,
+// or "" if neither matches.
+func jsDeclSymbol(line string) string {
+	if m := symbolDeclRe.FindStringSubmatch(line); m != nil {
+		return m[2]
+	}
+	if m := arrowFuncRe.FindStringSubmatch(line); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 // cleanJSDoc strips JSDoc formatting from a block of lines and returns plain text.

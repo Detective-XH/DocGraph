@@ -47,13 +47,21 @@ func cmdInit(args []string) {
 	if err := initProject(root); err != nil {
 		log.Fatal(err)
 	}
-	if *withSkills {
+	cmdInitApplySkills(root, *installClients, *workspaceMode, *scope, *withSkills, *updateSkills)
+}
+
+// cmdInitApplySkills runs the post-project-init steps: install skills (if --with-skills),
+// apply MCP client config (if --install-clients), auto-install skills when Claude was
+// configured, and re-install skills (if --update-skills). Fatal/warning semantics match
+// the original inline code: claudeInstalled-triggered install is non-fatal (log.Printf).
+func cmdInitApplySkills(root, installClients string, workspaceMode bool, scope string, withSkills, updateSkills bool) {
+	if withSkills {
 		if err := installSkills(root, false); err != nil {
 			log.Fatal(err)
 		}
 	}
-	if *installClients != "" {
-		results, err := install.Apply(root, install.Options{Clients: *installClients, Workspace: *workspaceMode, Scope: *scope})
+	if installClients != "" {
+		results, err := install.Apply(root, install.Options{Clients: installClients, Workspace: workspaceMode, Scope: scope})
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -64,7 +72,7 @@ func cmdInit(args []string) {
 			}
 		}
 	}
-	if *updateSkills {
+	if updateSkills {
 		if err := installSkills(root, true); err != nil {
 			log.Fatal(err)
 		}

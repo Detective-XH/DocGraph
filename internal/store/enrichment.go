@@ -119,40 +119,15 @@ func (s *Store) GetPendingEnrichments(limit int) ([]EnrichmentCandidate, error) 
 // an external agent. content_hash is checked before every write so stale agent
 // output cannot be applied after the source document changes.
 func (s *Store) UpsertAgentEnrichment(e AgentEnrichment) error {
-	if e.DocID == "" {
-		return fmt.Errorf("doc_id is required")
-	}
-	if e.ContentHash == "" {
-		return fmt.Errorf("content_hash is required")
-	}
+	// Trim ModelID in-place before validation so the trimmed value propagates to
+	// all downstream uses (runID, DB insert). validateAgentEnrichment receives the
+	// already-trimmed copy.
 	e.ModelID = strings.TrimSpace(e.ModelID)
-	if e.ModelID == "" {
-		return fmt.Errorf("model_id is required")
-	}
-	if e.Summary == "" && len(e.Metadata) == 0 {
-		return fmt.Errorf("summary or metadata is required")
-	}
-	if len(e.Summary) > maxAgentSummaryBytes {
-		return fmt.Errorf("summary exceeds %d bytes", maxAgentSummaryBytes)
-	}
-	if len(e.Metadata) > maxAgentMetadataTuples {
-		return fmt.Errorf("metadata tuple count %d exceeds cap of %d", len(e.Metadata), maxAgentMetadataTuples)
-	}
-
-	var currentHash string
-	err := s.db.QueryRow(`
-		SELECT COALESCE(f.content_hash, '')
-		FROM nodes n
-		LEFT JOIN files f ON f.path = n.file_path
-		WHERE n.id = ? AND n.kind = 'document'`, e.DocID).Scan(&currentHash)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("document node not found: %s", e.DocID)
-	}
-	if err != nil {
+	if err := validateAgentEnrichment(e); err != nil {
 		return err
 	}
-	if currentHash != e.ContentHash {
-		return fmt.Errorf("content_hash mismatch for %s: current %q, payload %q", e.DocID, currentHash, e.ContentHash)
+	if err := verifyContentHash(s.db, e.DocID, e.ContentHash); err != nil {
+		return err
 	}
 
 	now := time.Now().Unix()
@@ -182,6 +157,51 @@ func (s *Store) UpsertAgentEnrichment(e AgentEnrichment) error {
 		return err
 	}
 	return s.RefreshMetadataProjections(e.DocID)
+}
+
+// validateAgentEnrichment returns an error if any required field in e is missing
+// or out of range. Callers must trim e.ModelID before calling.
+func validateAgentEnrichment(e AgentEnrichment) error {
+	if e.DocID == "" {
+		return fmt.Errorf("doc_id is required")
+	}
+	if e.ContentHash == "" {
+		return fmt.Errorf("content_hash is required")
+	}
+	if e.ModelID == "" {
+		return fmt.Errorf("model_id is required")
+	}
+	if e.Summary == "" && len(e.Metadata) == 0 {
+		return fmt.Errorf("summary or metadata is required")
+	}
+	if len(e.Summary) > maxAgentSummaryBytes {
+		return fmt.Errorf("summary exceeds %d bytes", maxAgentSummaryBytes)
+	}
+	if len(e.Metadata) > maxAgentMetadataTuples {
+		return fmt.Errorf("metadata tuple count %d exceeds cap of %d", len(e.Metadata), maxAgentMetadataTuples)
+	}
+	return nil
+}
+
+// verifyContentHash checks that the stored content_hash for docID matches
+// providedHash. Returns a descriptive error on mismatch or a missing document.
+func verifyContentHash(db *sql.DB, docID, providedHash string) error {
+	var currentHash string
+	err := db.QueryRow(`
+		SELECT COALESCE(f.content_hash, '')
+		FROM nodes n
+		LEFT JOIN files f ON f.path = n.file_path
+		WHERE n.id = ? AND n.kind = 'document'`, docID).Scan(&currentHash)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("document node not found: %s", docID)
+	}
+	if err != nil {
+		return err
+	}
+	if currentHash != providedHash {
+		return fmt.Errorf("content_hash mismatch for %s: current %q, payload %q", docID, currentHash, providedHash)
+	}
+	return nil
 }
 
 // insertEnrichmentRunInTx appends one row to the append-only agent_enrichment_runs ledger.

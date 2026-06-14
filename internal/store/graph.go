@@ -66,55 +66,63 @@ func (s *Store) GetIncomingEdgesBatch(nodeIDs []string) (map[string][]Edge, erro
 		}
 	}
 
-	// Document-branch batch query.
-	// SELECT includes t.file_path so each row can be demuxed back to the frontier nodeID.
-	if len(docFilePaths) > 0 {
-		rows, err := s.db.Query(`SELECT e.source, e.target, e.kind, e.metadata, e.line, t.file_path
-			FROM edges e JOIN nodes t ON t.id = e.target
-			WHERE t.file_path IN (`+inPlaceholders(len(docFilePaths))+`)
-			  AND e.kind IN ('references','wikilinks_to','related_to','embeds')
-			ORDER BY e.source, e.kind, e.line, e.target`, toArgs(docFilePaths)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var e Edge
-			var fp string
-			if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line, &fp); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			nid := filePathToNodeID[fp]
-			result[nid] = append(result[nid], e)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
+	if err := loadDocIncomingEdges(s.db, docFilePaths, filePathToNodeID, result); err != nil {
+		return nil, err
 	}
-
-	// Non-document-branch batch query.
-	if len(nonDocIDs) > 0 {
-		rows, err := s.db.Query(`SELECT source, target, kind, metadata, line
-			FROM edges WHERE target IN (`+inPlaceholders(len(nonDocIDs))+`)
-			  AND kind IN ('references','wikilinks_to','related_to','embeds')
-			ORDER BY source, kind, line, target`, toArgs(nonDocIDs)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
-		if err != nil {
-			return nil, err
-		}
-		for rows.Next() {
-			var e Edge
-			if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line); err != nil {
-				rows.Close()
-				return nil, err
-			}
-			result[e.Target] = append(result[e.Target], e)
-		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
+	if err := loadNonDocIncomingEdges(s.db, nonDocIDs, result); err != nil {
+		return nil, err
 	}
-
 	return result, nil
+}
+
+// loadDocIncomingEdges fills result with incoming edges for document-kind nodes.
+// SELECT includes t.file_path so each row can be demuxed back to the frontier nodeID.
+func loadDocIncomingEdges(db *sql.DB, docFilePaths []string, filePathToNodeID map[string]string, result map[string][]Edge) error {
+	if len(docFilePaths) == 0 {
+		return nil
+	}
+	rows, err := db.Query(`SELECT e.source, e.target, e.kind, e.metadata, e.line, t.file_path
+		FROM edges e JOIN nodes t ON t.id = e.target
+		WHERE t.file_path IN (`+inPlaceholders(len(docFilePaths))+`)
+		  AND e.kind IN ('references','wikilinks_to','related_to','embeds')
+		ORDER BY e.source, e.kind, e.line, e.target`, toArgs(docFilePaths)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var e Edge
+		var fp string
+		if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line, &fp); err != nil {
+			rows.Close()
+			return err
+		}
+		nid := filePathToNodeID[fp]
+		result[nid] = append(result[nid], e)
+	}
+	return rows.Close()
+}
+
+// loadNonDocIncomingEdges fills result with incoming edges for non-document-kind nodes.
+func loadNonDocIncomingEdges(db *sql.DB, nonDocIDs []string, result map[string][]Edge) error {
+	if len(nonDocIDs) == 0 {
+		return nil
+	}
+	rows, err := db.Query(`SELECT source, target, kind, metadata, line
+		FROM edges WHERE target IN (`+inPlaceholders(len(nonDocIDs))+`)
+		  AND kind IN ('references','wikilinks_to','related_to','embeds')
+		ORDER BY source, kind, line, target`, toArgs(nonDocIDs)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var e Edge
+		if err := rows.Scan(&e.Source, &e.Target, &e.Kind, &e.Metadata, &e.Line); err != nil {
+			rows.Close()
+			return err
+		}
+		result[e.Target] = append(result[e.Target], e)
+	}
+	return rows.Close()
 }
 
 func (s *Store) GetOutgoingEdges(nodeID string) ([]Edge, error) {

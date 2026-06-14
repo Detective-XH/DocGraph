@@ -25,12 +25,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		return mcp.NewToolResultError("document parameter is required"), nil
 	}
 	document = sanitizeArg(document, maxArgLength)
-	includeBody := true // default
-	if v, ok := args["includeBody"]; ok {
-		if b, ok := v.(bool); ok {
-			includeBody = b
-		}
-	}
+	includeBody := getBoolArg(args, "includeBody", true)
 	section := getStringArg(args, "section", "")
 
 	node, err := h.resolveDoc(document)
@@ -64,47 +59,7 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		sb.WriteString(formatHeadingOutline(headings))
 	}
 
-	if len(inEdges) > 0 {
-		fmt.Fprintf(&sb, "\n### Incoming References (%d)\n", len(inEdges))
-		// Emit the same derived-count summary as docgraph_graph operation=incoming.
-		// handleNode never truncates inEdges, so the counts are honest over the full set.
-		inTotal, inDistinctOther, inSameDoc := h.incomingEdgeSummary(node, st, inEdges)
-		fmt.Fprintf(&sb, incomingSummaryFmt, inTotal, inDistinctOther, inSameDoc)
-		for _, e := range inEdges {
-			// Show the source's path (and flag same-document references) so a
-			// self-reference can be told apart from a cross-document citation
-			// without a follow-up docgraph_graph call — parity with the facade.
-			if src := h.getNodeByIDForNode(node, e.Source); src != nil {
-				if src.FilePath == node.FilePath {
-					fmt.Fprintf(&sb, "- %s -> (%s) [same-document]\n", src.Name, e.Kind)
-				} else {
-					fmt.Fprintf(&sb, "- %s -> (%s) [%s]\n", src.Name, e.Kind, src.FilePath)
-				}
-			} else {
-				fmt.Fprintf(&sb, "- %s -> (%s)\n", e.Source, e.Kind)
-			}
-		}
-	}
-	if len(outEdges) > 0 {
-		fmt.Fprintf(&sb, "\n### Outgoing Links (%d)\n", len(outEdges))
-		// Emit the same derived-count summary as docgraph_graph operation=outgoing.
-		// handleNode never truncates outEdges, so the counts are honest over the full set.
-		outTotal, outDistinctOther, outSameDoc, outExternal := h.outgoingEdgeSummary(node, st, outEdges)
-		fmt.Fprintf(&sb, outgoingSummaryFmt, outTotal, outDistinctOther, outSameDoc, outExternal)
-		for _, e := range outEdges {
-			if e.Kind == "links_external" {
-				fmt.Fprintf(&sb, "- %s -> (%s)\n", extractURL(e.Metadata), e.Kind)
-			} else if tgt := h.getNodeByIDForNode(node, e.Target); tgt != nil {
-				if tgt.FilePath == node.FilePath {
-					fmt.Fprintf(&sb, "- %s -> (%s) [same-document]\n", tgt.Name, e.Kind)
-				} else {
-					fmt.Fprintf(&sb, "- %s -> (%s) [%s]\n", tgt.Name, e.Kind, tgt.FilePath)
-				}
-			} else {
-				fmt.Fprintf(&sb, "- %s -> (%s)\n", e.Target, e.Kind)
-			}
-		}
-	}
+	h.renderNodeEdges(&sb, node, st, inEdges, outEdges)
 
 	if includeBody && node.BodyExcerpt != "" {
 		sb.WriteString("\n### Body Excerpt\n")
@@ -113,93 +68,156 @@ func (h *handler) handleNode(ctx context.Context, request mcp.CallToolRequest) (
 		}
 	}
 
-	// Governance metadata section.
-	if s := h.getStoreForResolvedNode(node); s != nil {
-		docID := contextPackDocID(*node)
-		if summary, err := s.GetAISummary(docID); err == nil && summary != nil {
-			sb.WriteString(appendAISummarySection(summary))
-		}
-		if gov, err := s.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
-			sb.WriteString(appendGovernanceSection(gov))
-		}
-		if research, err := s.GetResearchMetadata(docID); err == nil && !store.IsResearchEmpty(research) {
-			sb.WriteString(appendResearchSection(research))
-		}
-		if quality, err := s.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
-			sb.WriteString(appendMetadataQualitySection(quality))
-		}
-		if mentions, err := s.Entity.GetEntityMentions(node.ID); err == nil {
-			sb.WriteString(appendEntitySection(s.Entity, mentions))
-		}
-	}
-
-	if s := h.getStoreForResolvedNode(node); s != nil {
-		if hist, err := s.GetFileHistory(node.FilePath); err == nil {
-			sb.WriteString(appendHistorySection(hist))
-		}
-	}
+	h.appendNodeMetadataSections(&sb, node)
 
 	// Read full section content from source file when section is specified.
 	if section != "" {
-		var target *store.Node
-		for i := range headings {
-			if headings[i].Name == section {
-				target = &headings[i]
-				break
-			}
+		if result := h.appendSectionContent(&sb, node, section, headings); result != nil {
+			return result, nil
 		}
-		if target == nil {
-			// Fall back to the anchor slug shown in search results. Heading node
-			// IDs are relPath#slug (parser.Slugify of the heading text), so an
-			// agent that pastes the "#slug" suffix from a search hit — or the raw
-			// heading text in any casing — resolves via the same slug algorithm.
-			want := parser.Slugify(strings.TrimPrefix(section, "#"))
-			for i := range headings {
-				if _, slug, ok := strings.Cut(headings[i].ID, "#"); ok && slug == want {
-					target = &headings[i]
-					break
-				}
-			}
-		}
-		if target == nil {
-			return mcp.NewToolResultError(fmt.Sprintf("section %q not found in %s — available headings: %s",
-				section, node.Name, headingNames(headings))), nil
-		}
-		// Try indexed section chunk first (TOCTOU-safe).
-		const sectionMaxBytes = 2000
-		if st := h.getStoreForResolvedNode(target); st != nil {
-			if chunk, ok, err := st.GetSectionChunk(target.ID); err == nil && ok {
-				var rangeStr string
-				if chunk.StartLine != -1 {
-					rangeStr = fmt.Sprintf(", lines %d-%d", chunk.StartLine, chunk.EndLine)
-				}
-				text := chunk.Text
-				if len(text) > sectionMaxBytes {
-					text = text[:sectionMaxBytes] + fmt.Sprintf("\n[content truncated at %d bytes]", sectionMaxBytes)
-				}
-				fmt.Fprintf(&sb, "\n### Content (section %q, indexed snapshot%s)\n", section, rangeStr)
-				sb.WriteString(text)
-				sb.WriteString("\n")
-				return mcp.NewToolResultText(sb.String()), nil
-			}
-		}
-
-		// Fallback: live file read (chunk not yet indexed).
-		root := h.getProjectRootForResolvedNode(node)
-		if root == "" {
-			return mcp.NewToolResultError("cannot read section content: project root not available"), nil
-		}
-		content, err := store.ReadSectionContent(target.FilePath, target.StartLine, target.EndLine, root, sectionMaxBytes)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("read section content: %v", err)), nil
-		}
-		fmt.Fprintf(&sb, "\n### Content (section %q, lines %d-%d)\n", section, target.StartLine, target.EndLine)
-		sb.WriteString(content)
-		sb.WriteString("\n")
-		sb.WriteString("[live read — chunk not yet indexed; run docgraph index --force]\n")
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// renderNodeEdges appends the Incoming References and Outgoing Links sections.
+func (h *handler) renderNodeEdges(sb *strings.Builder, node *store.Node, st *store.Store, inEdges, outEdges []store.Edge) {
+	if len(inEdges) > 0 {
+		fmt.Fprintf(sb, "\n### Incoming References (%d)\n", len(inEdges))
+		// Emit the same derived-count summary as docgraph_graph operation=incoming.
+		// handleNode never truncates inEdges, so the counts are honest over the full set.
+		inTotal, inDistinctOther, inSameDoc := h.incomingEdgeSummary(node, st, inEdges)
+		fmt.Fprintf(sb, incomingSummaryFmt, inTotal, inDistinctOther, inSameDoc)
+		for _, e := range inEdges {
+			// Show the source's path (and flag same-document references) so a
+			// self-reference can be told apart from a cross-document citation
+			// without a follow-up docgraph_graph call — parity with the facade.
+			if src := h.getNodeByIDForNode(node, e.Source); src != nil {
+				if src.FilePath == node.FilePath {
+					fmt.Fprintf(sb, "- %s -> (%s) [same-document]\n", src.Name, e.Kind)
+				} else {
+					fmt.Fprintf(sb, "- %s -> (%s) [%s]\n", src.Name, e.Kind, src.FilePath)
+				}
+			} else {
+				fmt.Fprintf(sb, "- %s -> (%s)\n", e.Source, e.Kind)
+			}
+		}
+	}
+	if len(outEdges) > 0 {
+		fmt.Fprintf(sb, "\n### Outgoing Links (%d)\n", len(outEdges))
+		// Emit the same derived-count summary as docgraph_graph operation=outgoing.
+		// handleNode never truncates outEdges, so the counts are honest over the full set.
+		outTotal, outDistinctOther, outSameDoc, outExternal := h.outgoingEdgeSummary(node, st, outEdges)
+		fmt.Fprintf(sb, outgoingSummaryFmt, outTotal, outDistinctOther, outSameDoc, outExternal)
+		for _, e := range outEdges {
+			if e.Kind == "links_external" {
+				fmt.Fprintf(sb, "- %s -> (%s)\n", extractURL(e.Metadata), e.Kind)
+			} else if tgt := h.getNodeByIDForNode(node, e.Target); tgt != nil {
+				if tgt.FilePath == node.FilePath {
+					fmt.Fprintf(sb, "- %s -> (%s) [same-document]\n", tgt.Name, e.Kind)
+				} else {
+					fmt.Fprintf(sb, "- %s -> (%s) [%s]\n", tgt.Name, e.Kind, tgt.FilePath)
+				}
+			} else {
+				fmt.Fprintf(sb, "- %s -> (%s)\n", e.Target, e.Kind)
+			}
+		}
+	}
+}
+
+// appendNodeMetadataSections writes the AI-summary, governance, research,
+// quality, entity, and history sections. It calls getStoreForResolvedNode once
+// (caching the result in s) instead of three separate calls as in the original.
+func (h *handler) appendNodeMetadataSections(sb *strings.Builder, node *store.Node) {
+	s := h.getStoreForResolvedNode(node)
+	if s == nil {
+		return
+	}
+	docID := contextPackDocID(*node)
+	if summary, err := s.GetAISummary(docID); err == nil && summary != nil {
+		sb.WriteString(appendAISummarySection(summary))
+	}
+	if gov, err := s.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
+		sb.WriteString(appendGovernanceSection(gov))
+	}
+	if research, err := s.GetResearchMetadata(docID); err == nil && !store.IsResearchEmpty(research) {
+		sb.WriteString(appendResearchSection(research))
+	}
+	if quality, err := s.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
+		sb.WriteString(appendMetadataQualitySection(quality))
+	}
+	if mentions, err := s.Entity.GetEntityMentions(node.ID); err == nil {
+		sb.WriteString(appendEntitySection(s.Entity, mentions))
+	}
+	if hist, err := s.GetFileHistory(node.FilePath); err == nil {
+		sb.WriteString(appendHistorySection(hist))
+	}
+}
+
+// appendSectionContent resolves the requested section heading, reads its content
+// (indexed chunk first, live fallback), appends the result to sb, and returns a
+// non-nil *mcp.CallToolResult only on error or when the indexed snapshot path
+// short-circuits (returns early with the full response).
+// resolveHeading finds the heading node matching name by exact text match first,
+// then by anchor slug (parser.Slugify of heading text). Returns nil when not found.
+func resolveHeading(section string, headings []store.Node) *store.Node {
+	for i := range headings {
+		if headings[i].Name == section {
+			return &headings[i]
+		}
+	}
+	// Fall back to the anchor slug shown in search results. Heading node
+	// IDs are relPath#slug (parser.Slugify of the heading text), so an
+	// agent that pastes the "#slug" suffix from a search hit — or the raw
+	// heading text in any casing — resolves via the same slug algorithm.
+	want := parser.Slugify(strings.TrimPrefix(section, "#"))
+	for i := range headings {
+		if _, slug, ok := strings.Cut(headings[i].ID, "#"); ok && slug == want {
+			return &headings[i]
+		}
+	}
+	return nil
+}
+
+func (h *handler) appendSectionContent(sb *strings.Builder, node *store.Node, section string, headings []store.Node) *mcp.CallToolResult {
+	target := resolveHeading(section, headings)
+	if target == nil {
+		return mcp.NewToolResultError(fmt.Sprintf("section %q not found in %s — available headings: %s",
+			section, node.Name, headingNames(headings)))
+	}
+	// Try indexed section chunk first (TOCTOU-safe).
+	const sectionMaxBytes = 2000
+	if st := h.getStoreForResolvedNode(target); st != nil {
+		if chunk, ok, err := st.GetSectionChunk(target.ID); err == nil && ok {
+			var rangeStr string
+			if chunk.StartLine != -1 {
+				rangeStr = fmt.Sprintf(", lines %d-%d", chunk.StartLine, chunk.EndLine)
+			}
+			text := chunk.Text
+			if len(text) > sectionMaxBytes {
+				text = text[:sectionMaxBytes] + fmt.Sprintf("\n[content truncated at %d bytes]", sectionMaxBytes)
+			}
+			fmt.Fprintf(sb, "\n### Content (section %q, indexed snapshot%s)\n", section, rangeStr)
+			sb.WriteString(text)
+			sb.WriteString("\n")
+			return mcp.NewToolResultText(sb.String())
+		}
+	}
+
+	// Fallback: live file read (chunk not yet indexed).
+	root := h.getProjectRootForResolvedNode(node)
+	if root == "" {
+		return mcp.NewToolResultError("cannot read section content: project root not available")
+	}
+	content, err := store.ReadSectionContent(target.FilePath, target.StartLine, target.EndLine, root, sectionMaxBytes)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("read section content: %v", err))
+	}
+	fmt.Fprintf(sb, "\n### Content (section %q, lines %d-%d)\n", section, target.StartLine, target.EndLine)
+	sb.WriteString(content)
+	sb.WriteString("\n")
+	sb.WriteString("[live read — chunk not yet indexed; run docgraph index --force]\n")
+	return nil
 }
 
 // appendHistorySection formats per-document git history as a Markdown section string.

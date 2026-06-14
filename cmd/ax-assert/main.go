@@ -50,6 +50,15 @@ import (
 	mcpserver "github.com/mark3labs/mcp-go/server"
 )
 
+// assertion describes a single AX Layer-1b render check: call tool with args,
+// expect every string in must to appear in the output.
+type assertion struct {
+	id   string
+	tool string
+	args map[string]any
+	must []string
+}
+
 func main() {
 	checkModulePath()
 	projectRoot := flag.String("project-root", ".", "project root (directory containing .docgraph/)")
@@ -120,13 +129,6 @@ func main() {
 	})
 	if err != nil {
 		fatalf("A11 pre-flight: %v", err)
-	}
-
-	type assertion struct {
-		id   string
-		tool string
-		args map[string]any
-		must []string
 	}
 
 	assertions := []assertion{
@@ -210,9 +212,21 @@ func main() {
 		},
 	}
 
-	failed := 0
+	failed := runAssertions(r, assertions)
+	if !checkA5Determinism(r, a1doc) {
+		failed++
+	}
 	total := len(assertions) + 1 // +1 for A5
 
+	fmt.Printf("\n%d/%d passed\n", total-failed, total)
+	if failed > 0 {
+		os.Exit(1)
+	}
+}
+
+// runAssertions calls each assertion's tool, checks that all must-strings appear in
+// the output, prints PASS/FAIL per assertion, and returns the number of failures.
+func runAssertions(r *runner, assertions []assertion) (failed int) {
 	for _, a := range assertions {
 		text, err := r.call(a.tool, a.args)
 		if err != nil {
@@ -234,24 +248,25 @@ func main() {
 			failed++
 		}
 	}
+	return failed
+}
 
+// checkA5Determinism calls docgraph_similar twice for doc and verifies byte-identical
+// output. Prints PASS/FAIL and returns true on pass.
+func checkA5Determinism(r *runner, doc string) bool {
 	// A5: determinism — two identical calls must produce byte-identical output.
-	text1, err1 := r.call("docgraph_similar", map[string]any{"document": a1doc})
-	text2, err2 := r.call("docgraph_similar", map[string]any{"document": a1doc})
+	text1, err1 := r.call("docgraph_similar", map[string]any{"document": doc})
+	text2, err2 := r.call("docgraph_similar", map[string]any{"document": doc})
 	switch {
 	case err1 != nil || err2 != nil:
 		fmt.Printf("FAIL A5  (%d bytes) — error: %v / %v\n", 0, err1, err2)
-		failed++
+		return false
 	case text1 != text2:
 		fmt.Printf("FAIL A5  (%d/%d bytes) — outputs not byte-identical\n", len(text1), len(text2))
-		failed++
+		return false
 	default:
 		fmt.Printf("PASS A5  (%d bytes)\n", len(text1))
-	}
-
-	fmt.Printf("\n%d/%d passed\n", total-failed, total)
-	if failed > 0 {
-		os.Exit(1)
+		return true
 	}
 }
 

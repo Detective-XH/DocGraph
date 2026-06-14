@@ -4,12 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 
 	"github.com/Detective-XH/docgraph/internal/scanner"
+	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/Detective-XH/docgraph/internal/tools"
 	"github.com/Detective-XH/docgraph/internal/watcher"
 	"github.com/Detective-XH/docgraph/internal/workspace"
@@ -67,114 +69,135 @@ func cmdServe(args []string) {
 
 	srv := mcp.NewMCPServer("docgraph", "0.1.0", mcp.WithInstructions(serverInstructions))
 
+	var closer io.Closer
 	if *ws != "" {
-		warm := anyProjectDBExists(*ws)
-		w, err := workspace.Open(*ws)
-		if err != nil {
-			log.Fatal(err)
-		}
-		defer w.Close()
-		w.NoGitignore = noGitignore
-		w.NoHistory = noHistory
-		w.SimilarityThreshold = similarityThreshold
-		setIndexing := tools.RegisterWorkspaceWithOpts(srv, w, regOpts)
-		doSync := func() {
-			defer setIndexing(false)
-			if err := w.IndexAll(); err != nil {
-				log.Printf("[serve] IndexAll: %v", err)
-			}
-			// Always reconcile on a warm start (no opt-out): an LLM-first guarantee that a
-			// restart never serves nodes for files deleted — or newly .docgraphignore'd —
-			// while serve was down. A cold start ⟹ fresh DB ⟹ nothing to reconcile, so
-			// `warm` is a pure no-op skip, not a behavioral knob.
-			if warm {
-				reconcileWorkspaceProjects(w.Projects, w.NoGitignore) // PARITY: single --path branch calls reconcileDeletedFiles directly
-			}
-		}
-		if !warm {
-			setIndexing(true)
-		}
-		go doSync()
-		var paths []string
-		for _, proj := range w.Projects {
-			paths = append(paths, proj.Path)
-		}
-		go func() {
-			if err := watcher.WatchWithLimit(paths, *maxWatches, func(projectPath string, files []string) {
-				for _, proj := range w.Projects {
-					if proj.Path == projectPath {
-						fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
-						pruneDeletedFiles(proj.Path, proj.Store, files)
-						workspace.ReindexProject(proj)
-						// An edited .docgraphignore/.gitignore changes which files are in
-						// scope; prune any now-excluded files via the ignore-aware reconcile.
-						if containsIgnoreRuleFile(files) {
-							if m, mErr := scanner.NewIgnoreMatcher(proj.Path, scanner.ScanOptions{NoGitignore: w.NoGitignore}); mErr == nil {
-								reconcileDeletedFiles(proj.Path, proj.Store, m)
-							}
-						}
-						break
-					}
-				}
-			}); err != nil {
-				log.Printf("[serve] watcher: %v", err)
-			}
-		}()
+		closer = serveWorkspace(srv, *ws, *maxWatches, regOpts)
 	} else {
-		path := *p
-		if path == "" {
-			path = "."
-		}
-		absRoot, err := filepath.Abs(path)
-		if err != nil {
-			log.Fatal(err)
-		}
-		warm := dbExists(path)
-		st := openStore(path)
-		defer st.Close()
-		setIndexing := tools.RegisterWithOpts(srv, st, absRoot, regOpts)
-		doSync := func() {
-			defer setIndexing(false)
-			// force=false: incremental — the per-file stale-row deletes are
-			// load-bearing here (the DB is not freshly wiped). Only `index --force`
-			// (removeIndexDB) skips them.
-			if err := indexStore(absRoot, st, false); err != nil {
-				fmt.Fprintf(os.Stderr, "[sync] %v\n", err)
-			}
-			// Always reconcile on a warm start (no opt-out — see the --workspace branch note).
-			if warm {
-				m, _ := scanner.NewIgnoreMatcher(absRoot, scanner.ScanOptions{NoGitignore: noGitignore})
-				reconcileDeletedFiles(absRoot, st, m) // PARITY: keep in sync with the --workspace branch
-			}
-		}
-		if !warm {
-			setIndexing(true)
-		}
-		go doSync()
-		go func() {
-			err := watcher.WatchWithLimit([]string{absRoot}, *maxWatches, func(projectPath string, files []string) {
-				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
-				pruneDeletedFiles(projectPath, st, files)
-				// force=false: incremental re-index of changed files; deletes stay.
-				if err := indexStore(projectPath, st, false); err != nil {
-					fmt.Fprintf(os.Stderr, "[watcher] re-index %s: %v\n", projectPath, err)
-				}
-				// An edited .docgraphignore/.gitignore changes which files are in scope;
-				// prune any now-excluded files via the ignore-aware reconcile.
-				if containsIgnoreRuleFile(files) {
-					if m, mErr := scanner.NewIgnoreMatcher(projectPath, scanner.ScanOptions{NoGitignore: noGitignore}); mErr == nil {
-						reconcileDeletedFiles(projectPath, st, m)
-					}
-				}
-			})
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "[watcher] %v\n", err)
-			}
-		}()
+		closer = serveSinglePath(srv, *p, *maxWatches, regOpts)
 	}
+	defer closer.Close()
 
 	stdio := mcp.NewStdioServer(srv)
 	if err := stdio.Listen(context.Background(), os.Stdin, os.Stdout); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// serveWorkspace wires the --workspace arm: opens all child-project stores,
+// registers workspace tools on srv, starts background indexing and the watcher.
+// Returns a Closer that must be deferred by the caller (after stdio.Listen returns).
+func serveWorkspace(srv *mcp.MCPServer, wsRoot string, maxWatches int, regOpts tools.RegisterOpts) io.Closer {
+	warm := anyProjectDBExists(wsRoot)
+	w, err := workspace.Open(wsRoot)
+	if err != nil {
+		log.Fatal(err)
+	}
+	w.NoGitignore = noGitignore
+	w.NoHistory = noHistory
+	w.SimilarityThreshold = similarityThreshold
+	setIndexing := tools.RegisterWorkspaceWithOpts(srv, w, regOpts)
+	doSync := func() {
+		defer setIndexing(false)
+		if err := w.IndexAll(); err != nil {
+			log.Printf("[serve] IndexAll: %v", err)
+		}
+		// Always reconcile on a warm start (no opt-out): an LLM-first guarantee that a
+		// restart never serves nodes for files deleted — or newly .docgraphignore'd —
+		// while serve was down. A cold start ⟹ fresh DB ⟹ nothing to reconcile, so
+		// `warm` is a pure no-op skip, not a behavioral knob.
+		if warm {
+			reconcileWorkspaceProjects(w.Projects, w.NoGitignore) // PARITY: single --path branch calls reconcileDeletedFiles directly
+		}
+	}
+	if !warm {
+		setIndexing(true)
+	}
+	go doSync()
+	var paths []string
+	for _, proj := range w.Projects {
+		paths = append(paths, proj.Path)
+	}
+	go watchWorkspaceProjects(w, paths, maxWatches)
+	return w
+}
+
+// watchWorkspaceProjects runs the fsnotify loop for all workspace project paths.
+func watchWorkspaceProjects(w *workspace.Workspace, paths []string, maxWatches int) {
+	if err := watcher.WatchWithLimit(paths, maxWatches, func(projectPath string, files []string) {
+		for _, proj := range w.Projects {
+			if proj.Path == projectPath {
+				fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", proj.Name)
+				pruneDeletedFiles(proj.Path, proj.Store, files)
+				workspace.ReindexProject(proj)
+				// An edited .docgraphignore/.gitignore changes which files are in
+				// scope; prune any now-excluded files via the ignore-aware reconcile.
+				if containsIgnoreRuleFile(files) {
+					if m, mErr := scanner.NewIgnoreMatcher(proj.Path, scanner.ScanOptions{NoGitignore: w.NoGitignore}); mErr == nil {
+						reconcileDeletedFiles(proj.Path, proj.Store, m)
+					}
+				}
+				break
+			}
+		}
+	}); err != nil {
+		log.Printf("[serve] watcher: %v", err)
+	}
+}
+
+// serveSinglePath wires the --path (single-project) arm: opens the store,
+// registers single-project tools on srv, starts background indexing and the watcher.
+// Returns a Closer that must be deferred by the caller (after stdio.Listen returns).
+func serveSinglePath(srv *mcp.MCPServer, path string, maxWatches int, regOpts tools.RegisterOpts) io.Closer {
+	if path == "" {
+		path = "."
+	}
+	absRoot, err := filepath.Abs(path)
+	if err != nil {
+		log.Fatal(err)
+	}
+	warm := dbExists(path)
+	st := openStore(path)
+	setIndexing := tools.RegisterWithOpts(srv, st, absRoot, regOpts)
+	doSync := func() {
+		defer setIndexing(false)
+		// force=false: incremental — the per-file stale-row deletes are
+		// load-bearing here (the DB is not freshly wiped). Only `index --force`
+		// (removeIndexDB) skips them.
+		if err := indexStore(absRoot, st, false); err != nil {
+			fmt.Fprintf(os.Stderr, "[sync] %v\n", err)
+		}
+		// Always reconcile on a warm start (no opt-out — see the --workspace branch note).
+		if warm {
+			m, _ := scanner.NewIgnoreMatcher(absRoot, scanner.ScanOptions{NoGitignore: noGitignore})
+			reconcileDeletedFiles(absRoot, st, m) // PARITY: keep in sync with the --workspace branch
+		}
+	}
+	if !warm {
+		setIndexing(true)
+	}
+	go doSync()
+	go watchSinglePath(st, absRoot, maxWatches)
+	return st
+}
+
+// watchSinglePath runs the fsnotify loop for a single project path.
+func watchSinglePath(st *store.Store, absRoot string, maxWatches int) {
+	err := watcher.WatchWithLimit([]string{absRoot}, maxWatches, func(projectPath string, files []string) {
+		fmt.Fprintf(os.Stderr, "[watcher] re-indexing %s\n", projectPath)
+		pruneDeletedFiles(projectPath, st, files)
+		// force=false: incremental re-index of changed files; deletes stay.
+		if err := indexStore(projectPath, st, false); err != nil {
+			fmt.Fprintf(os.Stderr, "[watcher] re-index %s: %v\n", projectPath, err)
+		}
+		// An edited .docgraphignore/.gitignore changes which files are in scope;
+		// prune any now-excluded files via the ignore-aware reconcile.
+		if containsIgnoreRuleFile(files) {
+			if m, mErr := scanner.NewIgnoreMatcher(projectPath, scanner.ScanOptions{NoGitignore: noGitignore}); mErr == nil {
+				reconcileDeletedFiles(projectPath, st, m)
+			}
+		}
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[watcher] %v\n", err)
 	}
 }

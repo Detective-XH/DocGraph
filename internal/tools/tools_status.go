@@ -85,6 +85,24 @@ func appendWorkspaceStatus(sb *strings.Builder, h *handler) *mcp.CallToolResult 
 	return nil
 }
 
+// appendNodeEdgeKindTables appends the "Nodes by Kind" and "Edges by Kind"
+// markdown tables to sb when there are more than 2 entries in each map.
+// Extracted from appendSingleStoreStatus to reduce its cyclomatic complexity.
+func appendNodeEdgeKindTables(sb *strings.Builder, nodesByKind, edgesByKind map[string]int) {
+	if len(nodesByKind) > 2 {
+		sb.WriteString("### Nodes by Kind\n| Kind | Count |\n|------|-------|\n")
+		for kind, count := range nodesByKind {
+			fmt.Fprintf(sb, "| %s | %d |\n", kind, count)
+		}
+	}
+	if len(edgesByKind) > 2 {
+		sb.WriteString("\n### Edges by Kind\n| Kind | Count |\n|------|-------|\n")
+		for kind, count := range edgesByKind {
+			fmt.Fprintf(sb, "| %s | %d |\n", kind, count)
+		}
+	}
+}
+
 // appendSingleStoreStatus renders the single-store section of handleStatus output
 // into sb. Returns a non-nil *mcp.CallToolResult only on a fatal stats error.
 func appendSingleStoreStatus(sb *strings.Builder, h *handler) *mcp.CallToolResult {
@@ -94,18 +112,7 @@ func appendSingleStoreStatus(sb *strings.Builder, h *handler) *mcp.CallToolResul
 	}
 	fmt.Fprintf(sb, "Files: %d | Nodes: %d | Edges: %d | Unresolved: %d | DB: %s\n\n",
 		stats.FileCount, stats.NodeCount, stats.EdgeCount, stats.UnresolvedCount, formatSize(stats.DBSizeBytes))
-	if len(stats.NodesByKind) > 2 {
-		sb.WriteString("### Nodes by Kind\n| Kind | Count |\n|------|-------|\n")
-		for kind, count := range stats.NodesByKind {
-			fmt.Fprintf(sb, "| %s | %d |\n", kind, count)
-		}
-	}
-	if len(stats.EdgesByKind) > 2 {
-		sb.WriteString("\n### Edges by Kind\n| Kind | Count |\n|------|-------|\n")
-		for kind, count := range stats.EdgesByKind {
-			fmt.Fprintf(sb, "| %s | %d |\n", kind, count)
-		}
-	}
+	appendNodeEdgeKindTables(sb, stats.NodesByKind, stats.EdgesByKind)
 
 	embStats, err := h.store.GetEmbeddingModelStats()
 	if err == nil {
@@ -502,6 +509,61 @@ func appendWorkspaceDomainPacks(sb *strings.Builder, h *handler) {
 	}
 }
 
+// embeddingsVectorCount returns the total number of stored embedding vectors
+// across all projects (workspace) or the single store.
+func embeddingsVectorCount(h *handler) int {
+	var total int
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			if stats, err := p.Store.GetEmbeddingModelStats(); err == nil {
+				for _, s := range stats {
+					total += s.Total
+				}
+			}
+		}
+		return total
+	}
+	if h.store != nil {
+		if stats, err := h.store.GetEmbeddingModelStats(); err == nil {
+			for _, s := range stats {
+				total += s.Total
+			}
+		}
+	}
+	return total
+}
+
+// enrichmentCounts returns the number of enriched documents and pending
+// (eligible but not yet enriched) documents across all projects (workspace)
+// or the single store.
+func enrichmentCounts(h *handler) (enriched, pending int) {
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			if stats, err := p.Store.GetEnrichmentStats(); err == nil {
+				enriched += stats.EnrichedDocs
+				// Match pre-refactor semantics exactly: accumulate the raw
+				// (possibly negative) per-project delta into the running total,
+				// then clamp the total to ≥0 after each project. EnrichedDocs can
+				// exceed EligibleDocs (EligibleDocs excludes frontmatter docs), so
+				// a per-project negative delta must offset earlier positives, not
+				// be dropped.
+				pending += stats.EligibleDocs - stats.EnrichedDocs
+				if pending < 0 {
+					pending = 0
+				}
+			}
+		}
+		return enriched, pending
+	}
+	if h.store != nil {
+		if stats, err := h.store.GetEnrichmentStats(); err == nil {
+			enriched = stats.EnrichedDocs
+			pending = max(stats.EligibleDocs-stats.EnrichedDocs, 0)
+		}
+	}
+	return enriched, pending
+}
+
 // appendLLMCalloutState appends the LLM Callout Tools section to the status
 // output. When both tools are disabled (default), it shows a short opt-in
 // notice. When either is enabled, it shows real stats.
@@ -522,47 +584,14 @@ func appendLLMCalloutState(sb *strings.Builder, h *handler) {
 
 	// Embeddings line.
 	if embEnabled {
-		var totalVectors int
-		if h.workspace != nil {
-			for _, p := range h.workspace.Projects {
-				if stats, err := p.Store.GetEmbeddingModelStats(); err == nil {
-					for _, s := range stats {
-						totalVectors += s.Total
-					}
-				}
-			}
-		} else if h.store != nil {
-			if stats, err := h.store.GetEmbeddingModelStats(); err == nil {
-				for _, s := range stats {
-					totalVectors += s.Total
-				}
-			}
-		}
-		fmt.Fprintf(sb, "  docgraph_embeddings : enabled   — %d vectors stored\n", totalVectors)
+		fmt.Fprintf(sb, "  docgraph_embeddings : enabled   — %d vectors stored\n", embeddingsVectorCount(h))
 	} else {
 		sb.WriteString("  docgraph_embeddings : disabled  (--enable-embeddings to activate)\n")
 	}
 
 	// Enrichment line.
 	if enrichEnabled {
-		var enriched, pending int
-		if h.workspace != nil {
-			for _, p := range h.workspace.Projects {
-				if stats, err := p.Store.GetEnrichmentStats(); err == nil {
-					enriched += stats.EnrichedDocs
-					pending += stats.EligibleDocs - stats.EnrichedDocs
-					if pending < 0 {
-						pending = 0
-					}
-				}
-			}
-		} else if h.store != nil {
-			if stats, err := h.store.GetEnrichmentStats(); err == nil {
-				enriched = stats.EnrichedDocs
-				pending = stats.EligibleDocs - stats.EnrichedDocs
-				pending = max(pending, 0)
-			}
-		}
+		enriched, pending := enrichmentCounts(h)
 		fmt.Fprintf(sb, "  docgraph_enrichment : enabled   — %d enriched, %d pending\n", enriched, pending)
 	} else {
 		sb.WriteString("  docgraph_enrichment : disabled  (--enable-enrichment to activate)\n")
