@@ -54,53 +54,8 @@ func TestWorkspaceGitHistoryBench(t *testing.T) {
 	)
 	const iters = 5 // iter 0 is dropped as warmup
 
-	// Persistent shared corpus (two separately-compiled binaries measure
-	// byte-identical repos) vs single-binary temp mode.
-	root := os.Getenv("DG_WS_GIT_BENCH_CORPUS")
-	persistent := root != ""
-	if !persistent {
-		root = t.TempDir()
-	} else {
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			t.Fatalf("mkdir corpus root %s: %v", root, err)
-		}
-	}
-
-	// gitProjectNames are the project (subdir) names that are real git repos.
-	// nonGitName is the single plain-docs project.
-	gitProjectNames := make([]string, gitProjects)
-	for i := range gitProjectNames {
-		gitProjectNames[i] = fmt.Sprintf("gitproj%02d", i)
-	}
-	const nonGitName = "plaindocs"
-
-	// relPaths each project will contain (flat layout → relPath == filename).
-	gitRelPaths := make([]string, perGitProj)
-	for f := range gitRelPaths {
-		gitRelPaths[f] = fmt.Sprintf("doc_%03d.md", f)
-	}
-	nonGitRelPaths := make([]string, nonGitDocs)
-	for f := range nonGitRelPaths {
-		nonGitRelPaths[f] = fmt.Sprintf("doc_%03d.md", f)
-	}
-
-	sentinel := filepath.Join(root, ".generated")
-	if _, err := os.Stat(sentinel); err != nil {
-		// Generate (temp mode, or persistent mode on first run).
-		t.Logf("generating git-history corpus at %s (%d git projects x %d docs x %d sweeps, + non-git %d docs)",
-			root, gitProjects, perGitProj, sweeps, nonGitDocs)
-		genStart := time.Now()
-		for _, name := range gitProjectNames {
-			genGitProject(t, filepath.Join(root, name), perGitProj, sweeps)
-		}
-		genPlainProject(t, filepath.Join(root, nonGitName), nonGitDocs)
-		if err := os.WriteFile(sentinel, []byte("generated\n"), 0o644); err != nil {
-			t.Fatalf("write sentinel: %v", err)
-		}
-		t.Logf("corpus generated in %v", time.Since(genStart))
-	} else {
-		t.Logf("reusing existing corpus at %s (sentinel present)", root)
-	}
+	root, gitProjectNames, gitRelPaths, nonGitRelPaths, nonGitName :=
+		setupGitBenchCorpus(t, gitProjects, perGitProj, nonGitDocs, sweeps)
 
 	// Measurement loop: cold-start each iter (wipe every .docgraph), then time
 	// IndexAll. A heap sampler runs alongside IndexAll to capture peak HeapInuse.
@@ -138,41 +93,7 @@ func TestWorkspaceGitHistoryBench(t *testing.T) {
 		// contract (FHSHA per git project, INERT for the non-git project)
 		// against the OPEN workspace before closing.
 		if i == iters-1 {
-			for _, name := range gitProjectNames {
-				p := w.FindProject(name)
-				if p == nil {
-					t.Errorf("git project %q not found in workspace", name)
-					continue
-				}
-				sha, rows := fileHistorySHA(t, p, gitRelPaths)
-				if rows == 0 {
-					t.Errorf("FHSHA %s: zero history rows — git history was not collected", name)
-				}
-				t.Logf("FHSHA %s %s (%d rows)", name, sha, rows)
-			}
-			// Inert-path proof: the non-git project must have NO history rows.
-			pn := w.FindProject(nonGitName)
-			if pn == nil {
-				t.Errorf("non-git project %q not found in workspace", nonGitName)
-			} else {
-				bad := 0
-				for _, rp := range nonGitRelPaths {
-					h, err := pn.Store.GetFileHistory(rp)
-					if err != nil {
-						t.Errorf("GetFileHistory %s/%s: %v", nonGitName, rp, err)
-						break
-					}
-					if h != nil {
-						bad++
-					}
-				}
-				if bad != 0 {
-					t.Errorf("INERT %s FAIL: %d/%d files have a history row (gitEnabled should be false on a non-git tree)",
-						nonGitName, bad, len(nonGitRelPaths))
-				} else {
-					t.Logf("INERT %s OK (%d files, 0 history rows)", nonGitName, len(nonGitRelPaths))
-				}
-			}
+			verifyFileHistoryContract(t, w, gitProjectNames, gitRelPaths, nonGitName, nonGitRelPaths)
 		}
 
 		w.Close()
@@ -185,19 +106,130 @@ func TestWorkspaceGitHistoryBench(t *testing.T) {
 	if len(measured) == 0 {
 		t.Fatalf("no measured iterations (iters=%d)", iters)
 	}
-	var sum, min time.Duration
+	mean, minD := summarizeTimings(measured)
+	totalDocs := gitProjects*perGitProj + nonGitDocs
+	t.Logf("RESULT git-history cold-start IndexAll mean=%v min=%v peakHeapInuse=%s "+
+		"(%d measured iters, %d git projects x %d docs x %d sweeps + non-git %d docs = %d docs total)",
+		mean, minD, humanBytes(peakHeap),
+		len(measured), gitProjects, perGitProj, sweeps, nonGitDocs, totalDocs)
+}
+
+// setupGitBenchCorpus resolves or creates the bench corpus root and populates
+// it with git projects and a plain-docs project when the sentinel is absent.
+// Returns the root dir, git project names, git rel-paths, non-git rel-paths,
+// and the non-git project name.
+func setupGitBenchCorpus(t *testing.T, gitProjects, perGitProj, nonGitDocs, sweeps int) (
+	root string, gitProjectNames, gitRelPaths, nonGitRelPaths []string, nonGitName string,
+) {
+	t.Helper()
+
+	// Persistent shared corpus (two separately-compiled binaries measure
+	// byte-identical repos) vs single-binary temp mode.
+	root = os.Getenv("DG_WS_GIT_BENCH_CORPUS")
+	if root == "" {
+		root = t.TempDir()
+	} else {
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatalf("mkdir corpus root %s: %v", root, err)
+		}
+	}
+
+	// gitProjectNames are the project (subdir) names that are real git repos.
+	// nonGitName is the single plain-docs project.
+	gitProjectNames = make([]string, gitProjects)
+	for i := range gitProjectNames {
+		gitProjectNames[i] = fmt.Sprintf("gitproj%02d", i)
+	}
+	nonGitName = "plaindocs"
+
+	// relPaths each project will contain (flat layout → relPath == filename).
+	gitRelPaths = make([]string, perGitProj)
+	for f := range gitRelPaths {
+		gitRelPaths[f] = fmt.Sprintf("doc_%03d.md", f)
+	}
+	nonGitRelPaths = make([]string, nonGitDocs)
+	for f := range nonGitRelPaths {
+		nonGitRelPaths[f] = fmt.Sprintf("doc_%03d.md", f)
+	}
+
+	sentinel := filepath.Join(root, ".generated")
+	if _, err := os.Stat(sentinel); err != nil {
+		// Generate (temp mode, or persistent mode on first run).
+		t.Logf("generating git-history corpus at %s (%d git projects x %d docs x %d sweeps, + non-git %d docs)",
+			root, gitProjects, perGitProj, sweeps, nonGitDocs)
+		genStart := time.Now()
+		for _, name := range gitProjectNames {
+			genGitProject(t, filepath.Join(root, name), perGitProj, sweeps)
+		}
+		genPlainProject(t, filepath.Join(root, nonGitName), nonGitDocs)
+		if err := os.WriteFile(sentinel, []byte("generated\n"), 0o644); err != nil {
+			t.Fatalf("write sentinel: %v", err)
+		}
+		t.Logf("corpus generated in %v", time.Since(genStart))
+	} else {
+		t.Logf("reusing existing corpus at %s (sentinel present)", root)
+	}
+
+	return root, gitProjectNames, gitRelPaths, nonGitRelPaths, nonGitName
+}
+
+// verifyFileHistoryContract checks the file_history contract on the last benchmark
+// iteration: each git project must have non-zero FHSHA rows, and the non-git
+// project must have zero history rows (proving gitEnabled=false stays inert).
+func verifyFileHistoryContract(t *testing.T, w *Workspace,
+	gitProjectNames, gitRelPaths []string,
+	nonGitName string, nonGitRelPaths []string,
+) {
+	t.Helper()
+	for _, name := range gitProjectNames {
+		p := w.FindProject(name)
+		if p == nil {
+			t.Errorf("git project %q not found in workspace", name)
+			continue
+		}
+		sha, rows := fileHistorySHA(t, p, gitRelPaths)
+		if rows == 0 {
+			t.Errorf("FHSHA %s: zero history rows — git history was not collected", name)
+		}
+		t.Logf("FHSHA %s %s (%d rows)", name, sha, rows)
+	}
+	// Inert-path proof: the non-git project must have NO history rows.
+	pn := w.FindProject(nonGitName)
+	if pn == nil {
+		t.Errorf("non-git project %q not found in workspace", nonGitName)
+		return
+	}
+	bad := 0
+	for _, rp := range nonGitRelPaths {
+		h, err := pn.Store.GetFileHistory(rp)
+		if err != nil {
+			t.Errorf("GetFileHistory %s/%s: %v", nonGitName, rp, err)
+			break
+		}
+		if h != nil {
+			bad++
+		}
+	}
+	if bad != 0 {
+		t.Errorf("INERT %s FAIL: %d/%d files have a history row (gitEnabled should be false on a non-git tree)",
+			nonGitName, bad, len(nonGitRelPaths))
+	} else {
+		t.Logf("INERT %s OK (%d files, 0 history rows)", nonGitName, len(nonGitRelPaths))
+	}
+}
+
+// summarizeTimings returns the mean and minimum duration from a slice of
+// measured iteration times (caller has already dropped the warmup iter).
+func summarizeTimings(measured []time.Duration) (mean, min time.Duration) {
 	min = measured[0]
+	var sum time.Duration
 	for _, d := range measured {
 		sum += d
 		if d < min {
 			min = d
 		}
 	}
-	totalDocs := gitProjects*perGitProj + nonGitDocs
-	t.Logf("RESULT git-history cold-start IndexAll mean=%v min=%v peakHeapInuse=%s "+
-		"(%d measured iters, %d git projects x %d docs x %d sweeps + non-git %d docs = %d docs total)",
-		sum/time.Duration(len(measured)), min, humanBytes(peakHeap),
-		len(measured), gitProjects, perGitProj, sweeps, nonGitDocs, totalDocs)
+	return sum / time.Duration(len(measured)), min
 }
 
 // fileHistorySHA folds the stored file_history rows for relPaths (sorted) into a

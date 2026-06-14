@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -541,9 +542,7 @@ func TestEmbeddingsFacadePending_TokenBindsExactDocIDs(t *testing.T) {
 	// The token's docIDs set must contain exactly p.md and q.md.
 	storedToken.mu.Lock()
 	ids := make(map[string]struct{}, len(storedToken.docIDs))
-	for k, v := range storedToken.docIDs {
-		ids[k] = v
-	}
+	maps.Copy(ids, storedToken.docIDs)
 	storedToken.mu.Unlock()
 
 	for _, want := range []string{"p.md", "q.md"} {

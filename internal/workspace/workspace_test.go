@@ -47,33 +47,61 @@ Evidence text for workspace indexing.
 	if p == nil {
 		t.Fatal("project-a was not opened")
 	}
-	if chunk, ok, err := p.Store.GetSectionChunk("claim.md"); err != nil {
+
+	assertSectionChunkPopulated(t, p, "claim.md")
+	assertGovernanceMetadata(t, p, "claim.md", "approved", "internal")
+	assertResearchMetadata(t, p, "claim.md", "claim-workspace-001", "high")
+	assertReindexCleared(t, p)
+}
+
+// assertSectionChunkPopulated verifies that a document-level section chunk
+// exists for docPath and has non-empty Text and SectionHash fields.
+func assertSectionChunkPopulated(t *testing.T, p *Project, docPath string) {
+	t.Helper()
+	chunk, ok, err := p.Store.GetSectionChunk(docPath)
+	if err != nil {
 		t.Fatalf("GetSectionChunk: %v", err)
-	} else if !ok {
+	}
+	if !ok {
 		t.Fatal("expected document-level section chunk")
-	} else if chunk.Text == "" || chunk.SectionHash == "" {
+	}
+	if chunk.Text == "" || chunk.SectionHash == "" {
 		t.Fatalf("expected populated section chunk, got %#v", chunk)
 	}
+}
 
-	gov, err := p.Store.GetGovernanceMetadata("claim.md")
+// assertGovernanceMetadata verifies the governance fields for docPath.
+func assertGovernanceMetadata(t *testing.T, p *Project, docPath, wantStatus, wantSensitivity string) {
+	t.Helper()
+	gov, err := p.Store.GetGovernanceMetadata(docPath)
 	if err != nil {
 		t.Fatalf("GetGovernanceMetadata: %v", err)
 	}
-	if gov.Status != "approved" || gov.Sensitivity != "internal" {
+	if gov.Status != wantStatus || gov.Sensitivity != wantSensitivity {
 		t.Fatalf("unexpected governance metadata: %#v", gov)
 	}
+}
 
-	research, err := p.Store.GetResearchMetadata("claim.md")
+// assertResearchMetadata verifies the research fields for docPath.
+func assertResearchMetadata(t *testing.T, p *Project, docPath, wantClaimID, wantConfidence string) {
+	t.Helper()
+	research, err := p.Store.GetResearchMetadata(docPath)
 	if err != nil {
 		t.Fatalf("GetResearchMetadata: %v", err)
 	}
-	if research.ClaimID != "claim-workspace-001" || research.Confidence != "high" {
+	if research.ClaimID != wantClaimID || research.Confidence != wantConfidence {
 		t.Fatalf("unexpected research metadata: %#v", research)
 	}
+}
 
-	if required, found, err := p.Store.GetProjectMeta("reindex_required"); err != nil {
+// assertReindexCleared verifies the reindex_required project meta is not set to "true".
+func assertReindexCleared(t *testing.T, p *Project) {
+	t.Helper()
+	required, found, err := p.Store.GetProjectMeta("reindex_required")
+	if err != nil {
 		t.Fatalf("GetProjectMeta: %v", err)
-	} else if found && required == "true" {
+	}
+	if found && required == "true" {
 		t.Fatal("reindex marker should be cleared after full workspace index")
 	}
 }
@@ -105,11 +133,7 @@ func Handler() {}
 	if p == nil {
 		t.Fatal("project-a was not opened")
 	}
-	if nodes, err := p.Store.GetNodesByFile("service.go"); err != nil {
-		t.Fatalf("GetNodesByFile disabled: %v", err)
-	} else if len(nodes) != 0 {
-		t.Fatalf("code_doc disabled should skip code files, got nodes: %#v", nodes)
-	}
+	assertNoCodeNodes(t, p, "service.go")
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -128,19 +152,42 @@ func Handler() {}
 	if p == nil {
 		t.Fatal("project-a was not opened after enabling code_doc")
 	}
-	nodes, err := p.Store.GetNodesByFile("service.go")
+	assertCodeFileNode(t, p, "service.go")
+	assertDocCommentChunk(t, p, "service.go#doc_comment-3", "Handler handles workspace requests.")
+}
+
+// assertNoCodeNodes verifies that no nodes exist for a code file when code_doc is disabled.
+func assertNoCodeNodes(t *testing.T, p *Project, file string) {
+	t.Helper()
+	nodes, err := p.Store.GetNodesByFile(file)
+	if err != nil {
+		t.Fatalf("GetNodesByFile disabled: %v", err)
+	}
+	if len(nodes) != 0 {
+		t.Fatalf("code_doc disabled should skip code files, got nodes: %#v", nodes)
+	}
+}
+
+// assertCodeFileNode verifies that a code_file node exists for file.
+func assertCodeFileNode(t *testing.T, p *Project, file string) {
+	t.Helper()
+	nodes, err := p.Store.GetNodesByFile(file)
 	if err != nil {
 		t.Fatalf("GetNodesByFile enabled: %v", err)
 	}
 	if len(nodes) == 0 || nodes[0].Kind != "code_file" {
 		t.Fatalf("code_doc enabled should index a code_file node, got %#v", nodes)
 	}
+}
 
-	chunk, ok, err := p.Store.GetSectionChunk("service.go#doc_comment-3")
+// assertDocCommentChunk verifies that a section chunk for anchor contains wantSubstr.
+func assertDocCommentChunk(t *testing.T, p *Project, anchor, wantSubstr string) {
+	t.Helper()
+	chunk, ok, err := p.Store.GetSectionChunk(anchor)
 	if err != nil {
 		t.Fatalf("GetSectionChunk: %v", err)
 	}
-	if !ok || !strings.Contains(chunk.Text, "Handler handles workspace requests.") {
+	if !ok || !strings.Contains(chunk.Text, wantSubstr) {
 		t.Fatalf("expected Go doc comment section chunk, got ok=%v chunk=%#v", ok, chunk)
 	}
 }

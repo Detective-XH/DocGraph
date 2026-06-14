@@ -111,79 +111,30 @@ func (s *Store) GetDriftFindings(opts DriftAuditOpts) ([]DriftFinding, error) {
 		opts.StaleByGitAfterDays = 365
 	}
 
+	// Order is significant: findings are truncated to opts.Limit after the loop,
+	// so earlier finders take priority when the total exceeds the cap.
+	finders := []func(DriftAuditOpts) ([]DriftFinding, error){
+		s.findStaleReview,
+		s.findSupersededReferenced,
+		s.findDuplicatePolicies,
+		s.findNonCanonicalCopies,
+		s.findConflictingPolicies,
+		s.findStaleAssessment,
+		s.findUnverifiedEvidence,
+		s.findCompetingInterpretations,
+		s.findResearchSupersededClaim,
+		s.findImpactedDeliverable,
+		s.findDocsCodeDrift,
+		s.findStaleByGit,
+	}
 	var all []DriftFinding
-
-	stale, err := s.findStaleReview(opts)
-	if err != nil {
-		return nil, err
+	for _, find := range finders {
+		found, err := find(opts)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, found...)
 	}
-	all = append(all, stale...)
-
-	superseded, err := s.findSupersededReferenced(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, superseded...)
-
-	dups, err := s.findDuplicatePolicies(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, dups...)
-
-	nonCanon, err := s.findNonCanonicalCopies(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, nonCanon...)
-
-	conflicts, err := s.findConflictingPolicies(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, conflicts...)
-
-	staleAssess, err := s.findStaleAssessment(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, staleAssess...)
-
-	unverified, err := s.findUnverifiedEvidence(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, unverified...)
-
-	competing, err := s.findCompetingInterpretations(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, competing...)
-
-	supersededClaim, err := s.findResearchSupersededClaim(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, supersededClaim...)
-
-	impacted, err := s.findImpactedDeliverable(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, impacted...)
-
-	docsCode, err := s.findDocsCodeDrift(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, docsCode...)
-
-	staleByGit, err := s.findStaleByGit(opts)
-	if err != nil {
-		return nil, err
-	}
-	all = append(all, staleByGit...)
 
 	if len(all) > opts.Limit {
 		all = all[:opts.Limit]

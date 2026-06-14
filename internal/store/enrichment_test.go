@@ -39,6 +39,54 @@ func TestRefreshMetadataProjection_EmptyWinnersDeletesStaleRow(t *testing.T) {
 	}
 }
 
+// assertGovernanceFrontmatterWins checks that governance projection still reflects
+// the frontmatter values after an agent_inferred upsert that attempted to override them.
+func assertGovernanceFrontmatterWins(t *testing.T, st *Store, docID, wantStatus, wantOwner string) {
+	t.Helper()
+	gov, err := st.GetGovernanceMetadata(docID)
+	if err != nil {
+		t.Fatalf("GetGovernanceMetadata: %v", err)
+	}
+	if gov == nil {
+		t.Fatal("expected governance projection")
+	}
+	if gov.Status != wantStatus || gov.Owner != wantOwner {
+		t.Fatalf("frontmatter should win, got status=%q owner=%q", gov.Status, gov.Owner)
+	}
+}
+
+// assertAISummary checks that the AI summary for docID matches the expected
+// text and model.
+func assertAISummary(t *testing.T, st *Store, docID, wantSummary, wantModel string) {
+	t.Helper()
+	summary, err := st.GetAISummary(docID)
+	if err != nil {
+		t.Fatalf("GetAISummary: %v", err)
+	}
+	if summary == nil || summary.Summary != wantSummary || summary.ModelID != wantModel {
+		t.Fatalf("unexpected summary: %+v", summary)
+	}
+}
+
+// assertBothSourcesPresent checks that document_metadata for docID contains rows
+// from both "frontmatter" and "agent_inferred" sources for the given key.
+func assertBothSourcesPresent(t *testing.T, st *Store, docID, key string) {
+	t.Helper()
+	tuples, err := st.GetDocumentMetadata(docID)
+	if err != nil {
+		t.Fatalf("GetDocumentMetadata: %v", err)
+	}
+	sources := map[string]bool{}
+	for _, tuple := range tuples {
+		if tuple.Key == key {
+			sources[tuple.Source] = true
+		}
+	}
+	if !sources["frontmatter"] || !sources["agent_inferred"] {
+		t.Fatalf("expected frontmatter and agent_inferred audit rows, got %+v", sources)
+	}
+}
+
 func upsertTestFile(t *testing.T, st *Store, path, hash string, hasFrontmatter bool) {
 	t.Helper()
 	if err := st.UpsertFile(FileInfo{
@@ -143,38 +191,9 @@ func TestUpsertAgentEnrichment_AgentInferredDoesNotOverrideFrontmatter(t *testin
 		t.Fatalf("UpsertAgentEnrichment: %v", err)
 	}
 
-	gov, err := st.GetGovernanceMetadata("doc/policy.md")
-	if err != nil {
-		t.Fatalf("GetGovernanceMetadata: %v", err)
-	}
-	if gov == nil {
-		t.Fatal("expected governance projection")
-	}
-	if gov.Status != "approved" || gov.Owner != "human-owner" {
-		t.Fatalf("frontmatter should win, got status=%q owner=%q", gov.Status, gov.Owner)
-	}
-
-	summary, err := st.GetAISummary("doc/policy.md")
-	if err != nil {
-		t.Fatalf("GetAISummary: %v", err)
-	}
-	if summary == nil || summary.Summary != "Agent summary." || summary.ModelID != "test-model" {
-		t.Fatalf("unexpected summary: %+v", summary)
-	}
-
-	tuples, err := st.GetDocumentMetadata("doc/policy.md")
-	if err != nil {
-		t.Fatalf("GetDocumentMetadata: %v", err)
-	}
-	sources := map[string]bool{}
-	for _, tuple := range tuples {
-		if tuple.Key == "status" {
-			sources[tuple.Source] = true
-		}
-	}
-	if !sources["frontmatter"] || !sources["agent_inferred"] {
-		t.Fatalf("expected frontmatter and agent_inferred audit rows, got %+v", sources)
-	}
+	assertGovernanceFrontmatterWins(t, st, "doc/policy.md", "approved", "human-owner")
+	assertAISummary(t, st, "doc/policy.md", "Agent summary.", "test-model")
+	assertBothSourcesPresent(t, st, "doc/policy.md", "status")
 }
 
 func TestUpsertAgentEnrichment_ModelSwitchKeepsRunHistory(t *testing.T) {

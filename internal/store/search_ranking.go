@@ -82,7 +82,7 @@ func (se *searchStore) applyMetadataReranking(req searchRequest, c *searchCandid
 // guard drops such a row, and math.Max(0,...) clamps the author term so a
 // negative author_count can never reach Log1p. Cheap, removes the NaN class
 // entirely; not a reachable exploit on real git data.
-func (se *searchStore) applyHistoryReranking(req searchRequest, c *searchCandidate) {
+func (se *searchStore) applyHistoryReranking(_ searchRequest, c *searchCandidate) {
 	h := c.History
 	if h == nil || h.CommitCount <= 0 {
 		return

@@ -113,6 +113,52 @@ func TestComputeSimilarityCrossesBatchBoundary(t *testing.T) {
 	}
 }
 
+// collectSimilarEdges runs the pairwise pass with the given worker count,
+// changed filter, and postings (nil = full scan), then returns the resulting
+// similar_to edge set keyed by "source|target". It clears existing similar_to
+// edges first so successive calls to scorePairsToBatcher don't accumulate.
+func collectSimilarEdges(t *testing.T, st *store.Store, docs []store.Node, features []docFeatures, workers int, changed map[string]bool, postings *postingIndex) map[string]bool {
+	t.Helper()
+	if err := st.DeleteEdgesByKind("similar_to"); err != nil {
+		t.Fatal(err)
+	}
+	total, err := scorePairsToBatcher(st, docs, features, 0.25, changed, workers, postings)
+	if err != nil {
+		t.Fatalf("workers=%d pruned=%v: %v", workers, postings != nil, err)
+	}
+	// GetSimilarEdgesForDoc returns similar_to edges where the doc is source
+	// OR target; the canonical "source|target" key dedups that double-count.
+	// (GetEdgesBySource is deliberately not used — it returns reference-kind
+	// edges only, never similar_to.)
+	set := make(map[string]bool, total)
+	for i := range docs {
+		edges, err := st.GetSimilarEdgesForDoc(docs[i].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range edges {
+			set[e.Source+"|"+e.Target] = true
+		}
+	}
+	if len(set) != total {
+		t.Fatalf("workers=%d pruned=%v: batcher counted total=%d but store holds %d distinct edges", workers, postings != nil, total, len(set))
+	}
+	return set
+}
+
+// assertEdgeSetsEqual asserts that got and want contain the same edge keys.
+func assertEdgeSetsEqual(t *testing.T, name string, got, want map[string]bool) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s: edge-set size %d, want %d", name, len(got), len(want))
+	}
+	for k := range want {
+		if !got[k] {
+			t.Fatalf("%s: missing edge %q present in reference set", name, k)
+		}
+	}
+}
+
 // TestScorePairsToBatcherParallelEquivalence proves the pairwise pass yields one
 // identical similar_to edge set across every execution mode — serial vs
 // concurrent (workers 1 vs 4, forced regardless of host cores) and full-scan vs
@@ -161,47 +207,8 @@ func TestScorePairsToBatcherParallelEquivalence(t *testing.T) {
 	}
 
 	pi := buildPostingIndex(features)
-
-	// collect runs the pairwise pass with the given worker count, changed filter,
-	// and postings (nil = full scan) and returns the resulting similar_to edge set
-	// keyed by "source|target".
 	collect := func(workers int, changed map[string]bool, postings *postingIndex) map[string]bool {
-		if err := st.DeleteEdgesByKind("similar_to"); err != nil {
-			t.Fatal(err)
-		}
-		total, err := scorePairsToBatcher(st, docs, features, 0.25, changed, workers, postings)
-		if err != nil {
-			t.Fatalf("workers=%d pruned=%v: %v", workers, postings != nil, err)
-		}
-		// GetSimilarEdgesForDoc returns similar_to edges where the doc is source
-		// OR target; the canonical "source|target" key dedups that double-count.
-		// (GetEdgesBySource is deliberately not used — it returns reference-kind
-		// edges only, never similar_to.)
-		set := make(map[string]bool, total)
-		for i := range docs {
-			edges, err := st.GetSimilarEdgesForDoc(docs[i].ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, e := range edges {
-				set[e.Source+"|"+e.Target] = true
-			}
-		}
-		if len(set) != total {
-			t.Fatalf("workers=%d pruned=%v: batcher counted total=%d but store holds %d distinct edges", workers, postings != nil, total, len(set))
-		}
-		return set
-	}
-
-	mustEqual := func(name string, got, want map[string]bool) {
-		if len(got) != len(want) {
-			t.Fatalf("%s: edge-set size %d, want %d", name, len(got), len(want))
-		}
-		for k := range want {
-			if !got[k] {
-				t.Fatalf("%s: missing edge %q present in reference set", name, k)
-			}
-		}
+		return collectSimilarEdges(t, st, docs, features, workers, changed, postings)
 	}
 
 	// Reference: serial full scan. Exact analytic count, crosses the 10k boundary.
@@ -210,9 +217,9 @@ func TestScorePairsToBatcherParallelEquivalence(t *testing.T) {
 		t.Fatalf("reference full scan: %d distinct edges, want %d", len(ref), want)
 	}
 	// Every other mode — parallel, pruned, parallel+pruned — must reproduce it.
-	mustEqual("parallel full", collect(4, nil, nil), ref)
-	mustEqual("serial pruned", collect(1, nil, pi), ref)
-	mustEqual("parallel pruned", collect(4, nil, pi), ref)
+	assertEdgeSetsEqual(t, "parallel full", collect(4, nil, nil), ref)
+	assertEdgeSetsEqual(t, "serial pruned", collect(1, nil, pi), ref)
+	assertEdgeSetsEqual(t, "parallel pruned", collect(4, nil, pi), ref)
 
 	// Incremental (changed != nil): cluster "a" (even indices) changed → only
 	// even-even pairs are scored (odd-odd skipped, cross scores 0). The same edge
@@ -227,9 +234,32 @@ func TestScorePairsToBatcherParallelEquivalence(t *testing.T) {
 	if len(incRef) == 0 || len(incRef) >= want {
 		t.Fatalf("incremental: %d edges; changed filter should keep some but drop odd-odd pairs (want 0 < n < %d)", len(incRef), want)
 	}
-	mustEqual("incremental parallel", collect(4, changed, nil), incRef)
-	mustEqual("incremental serial pruned", collect(1, changed, pi), incRef)
-	mustEqual("incremental parallel pruned", collect(4, changed, pi), incRef)
+	assertEdgeSetsEqual(t, "incremental parallel", collect(4, changed, nil), incRef)
+	assertEdgeSetsEqual(t, "incremental serial pruned", collect(1, changed, pi), incRef)
+	assertEdgeSetsEqual(t, "incremental parallel pruned", collect(4, changed, pi), incRef)
+}
+
+// collectPrunedEdges is a thin collect helper for TestPrunedScanMatchesFullScanAcrossSignals:
+// it runs scorePairsToBatcher at threshold 0.05 and returns the "source|target" edge set.
+func collectPrunedEdges(t *testing.T, st *store.Store, docs []store.Node, features []docFeatures, workers int, postings *postingIndex) map[string]bool {
+	t.Helper()
+	if err := st.DeleteEdgesByKind("similar_to"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scorePairsToBatcher(st, docs, features, 0.05, nil, workers, postings); err != nil {
+		t.Fatalf("workers=%d pruned=%v: %v", workers, postings != nil, err)
+	}
+	out := make(map[string]bool)
+	for i := range docs {
+		edges, err := st.GetSimilarEdgesForDoc(docs[i].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range edges {
+			out[e.Source+"|"+e.Target] = true
+		}
+	}
+	return out
 }
 
 // TestPrunedScanMatchesFullScanAcrossSignals proves inverted-index pruning is
@@ -285,34 +315,15 @@ func TestPrunedScanMatchesFullScanAcrossSignals(t *testing.T) {
 	}
 
 	pi := buildPostingIndex(features)
-	collect := func(workers int, postings *postingIndex) map[string]bool {
-		if err := st.DeleteEdgesByKind("similar_to"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := scorePairsToBatcher(st, docs, features, 0.05, nil, workers, postings); err != nil {
-			t.Fatalf("workers=%d pruned=%v: %v", workers, postings != nil, err)
-		}
-		out := make(map[string]bool)
-		for i := range docs {
-			edges, err := st.GetSimilarEdgesForDoc(docs[i].ID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, e := range edges {
-				out[e.Source+"|"+e.Target] = true
-			}
-		}
-		return out
-	}
 
 	// Reference full scan: a-b (term+target+tag), a-c, b-c (target only), a-d,
 	// b-d (tag only) = 5 edges; c-d and anything with e score 0.
-	full := collect(1, nil)
+	full := collectPrunedEdges(t, st, docs, features, 1, nil)
 	if len(full) != 5 {
 		t.Fatalf("full scan: %d edges, want 5 (a-b, a-c, b-c, a-d, b-d)", len(full))
 	}
 	for _, workers := range []int{1, 4} {
-		got := collect(workers, pi)
+		got := collectPrunedEdges(t, st, docs, features, workers, pi)
 		if len(got) != len(full) {
 			t.Fatalf("pruned workers=%d: %d edges, full scan has %d", workers, len(got), len(full))
 		}

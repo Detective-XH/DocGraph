@@ -452,6 +452,45 @@ func assertJSONMCPArgs(t *testing.T, path string, want []string) {
 	}
 }
 
+// assertNodeKindCount asserts stats.NodesByKind[kind] == want.
+func assertNodeKindCount(t *testing.T, stats store.Stats, kind string, want int) {
+	t.Helper()
+	if got := stats.NodesByKind[kind]; got != want {
+		t.Errorf("expected %d %s nodes, got %d", want, kind, got)
+	}
+}
+
+// assertEdgeKindNonZero asserts that stats.EdgesByKind[kind] > 0.
+func assertEdgeKindNonZero(t *testing.T, stats store.Stats, kind string) {
+	t.Helper()
+	if stats.EdgesByKind[kind] == 0 {
+		t.Errorf("expected %s edges > 0, got 0", kind)
+	}
+}
+
+// assertIncomingEdge asserts that the node identified by nodePath has an
+// incoming edge of edgeKind whose Source satisfies matchFn.
+func assertIncomingEdge(t *testing.T, st *store.Store, nodePath, edgeKind string, matchFn func(src string) bool, failMsg string) {
+	t.Helper()
+	node, err := st.FindNodeByPath(nodePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if node == nil {
+		t.Fatalf("%s document node not found", nodePath)
+	}
+	edges, err := st.GetIncomingEdges(node.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range edges {
+		if e.Kind == edgeKind && matchFn(e.Source) {
+			return
+		}
+	}
+	t.Error(failMsg)
+}
+
 // ---------------------------------------------------------------------------
 // Test 1: Full pipeline single project
 // ---------------------------------------------------------------------------
@@ -476,27 +515,13 @@ func TestFullPipelineSingleProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Step 4: Verify 4 document nodes
-	docCount := stats.NodesByKind["document"]
-	if docCount != 4 {
-		t.Errorf("expected 4 document nodes, got %d", docCount)
-	}
-
-	// Verify headings > 0
-	headingCount := stats.NodesByKind["heading"]
-	if headingCount == 0 {
+	// Step 4: Verify node and edge counts
+	assertNodeKindCount(t, stats, "document", 4)
+	if stats.NodesByKind["heading"] == 0 {
 		t.Error("expected heading nodes > 0, got 0")
 	}
-
-	// Verify reference edges > 0 and wikilinks_to edges > 0
-	refEdges := stats.EdgesByKind["references"]
-	if refEdges == 0 {
-		t.Error("expected references edges > 0, got 0")
-	}
-	wikiEdges := stats.EdgesByKind["wikilinks_to"]
-	if wikiEdges == 0 {
-		t.Error("expected wikilinks_to edges > 0, got 0")
-	}
+	assertEdgeKindNonZero(t, stats, "references")
+	assertEdgeKindNonZero(t, stats, "wikilinks_to")
 
 	// Step 5: doc-a → doc-b wikilink edge exists
 	// [[doc-b]] appears on line 3 of doc-a.md, before any heading,
@@ -525,52 +550,14 @@ func TestFullPipelineSingleProject(t *testing.T) {
 	}
 
 	// Step 6: README → doc-a reference edge exists
-	// doc-a.md's H1 is "Document A"; the document node ID is "doc-a.md"
-	docANode, err := st.FindNodeByPath("doc-a.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if docANode == nil {
-		t.Fatal("doc-a.md document node not found")
-	}
-	docAInEdges, err := st.GetIncomingEdges(docANode.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundReadmeRef := false
-	for _, e := range docAInEdges {
-		// Source is a heading node inside README.md (e.g. "README.md#project-a")
-		if e.Kind == "references" && strings.HasPrefix(e.Source, "README.md") {
-			foundReadmeRef = true
-			break
-		}
-	}
-	if !foundReadmeRef {
-		t.Error("missing reference edge from README.md to doc-a.md")
-	}
+	assertIncomingEdge(t, st, "doc-a.md", "references",
+		func(src string) bool { return strings.HasPrefix(src, "README.md") },
+		"missing reference edge from README.md to doc-a.md")
 
 	// Step 7: nested → README reference edge (relative path ../README.md resolved)
-	readmeNode, err := st.FindNodeByPath("README.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if readmeNode == nil {
-		t.Fatal("README.md document node not found")
-	}
-	readmeInEdges, err := st.GetIncomingEdges(readmeNode.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	foundNestedRef := false
-	for _, e := range readmeInEdges {
-		if e.Kind == "references" && strings.Contains(e.Source, "nested") {
-			foundNestedRef = true
-			break
-		}
-	}
-	if !foundNestedRef {
-		t.Error("missing reference edge from subdir/nested.md to README.md")
-	}
+	assertIncomingEdge(t, st, "README.md", "references",
+		func(src string) bool { return strings.Contains(src, "nested") },
+		"missing reference edge from subdir/nested.md to README.md")
 }
 
 // ---------------------------------------------------------------------------
@@ -629,80 +616,86 @@ func TestFullPipelineIncremental(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Test 3: MCP round-trip via stdio pipe
-// ---------------------------------------------------------------------------
+// mcpStdioClient is a test helper that wraps an in-process MCP stdio connection.
+// Use newMCPStdioClient to create one; call close when done.
+type mcpStdioClient struct {
+	stdinWriter  *io.PipeWriter
+	scan         *bufio.Scanner
+	serverErrCh  chan error
+	cancelServer context.CancelFunc
+}
 
-func TestMCPRoundTrip(t *testing.T) {
-	// Index project-a so there is data to query
-	projectDir := fixtureDir(t, "project-a")
-	st := indexTestProject(t, projectDir)
-
-	// Create MCP server and register tools
-	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
-	tools.Register(srv, st, projectDir)
-
-	// Create pipes for stdin/stdout
+// newMCPStdioClient starts an MCP stdio server backed by srv and returns a
+// client connected via in-process pipes. The caller must call client.close(t)
+// to drain the server error channel and assert no unexpected error occurred.
+func newMCPStdioClient(t *testing.T, srv *mcpserver.MCPServer) *mcpStdioClient {
+	t.Helper()
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()
-
 	stdio := mcpserver.NewStdioServer(srv)
 	stdio.SetErrorLogger(log.New(io.Discard, "", 0))
-
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	serverErrCh := make(chan error, 1)
+	errCh := make(chan error, 1)
 	go func() {
 		err := stdio.Listen(ctx, stdinReader, stdoutWriter)
 		if err != nil && err != io.EOF && err != context.Canceled {
-			serverErrCh <- err
+			errCh <- err
 		}
 		stdoutWriter.Close()
-		close(serverErrCh)
+		close(errCh)
 	}()
-
-	scan := bufio.NewScanner(stdoutReader)
-
-	sendAndRecv := func(t *testing.T, id int, method string, params map[string]any) map[string]any {
-		t.Helper()
-		req := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"method":  method,
-		}
-		if params != nil {
-			req["params"] = params
-		}
-		reqBytes, err := json.Marshal(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := stdinWriter.Write(append(reqBytes, '\n')); err != nil {
-			t.Fatal(err)
-		}
-		if !scan.Scan() {
-			t.Fatal("failed to read response from MCP server")
-		}
-		var resp map[string]any
-		if err := json.Unmarshal(scan.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to unmarshal response: %v", err)
-		}
-		if resp["jsonrpc"] != "2.0" {
-			t.Errorf("expected jsonrpc 2.0, got %v", resp["jsonrpc"])
-		}
-		if resp["id"].(float64) != float64(id) {
-			t.Errorf("expected id %d, got %v", id, resp["id"])
-		}
-		return resp
+	return &mcpStdioClient{
+		stdinWriter:  stdinWriter,
+		scan:         bufio.NewScanner(stdoutReader),
+		serverErrCh:  errCh,
+		cancelServer: cancel,
 	}
+}
 
-	// 1. Initialize
-	resp := sendAndRecv(t, 1, "initialize", map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "test", "version": "0.1"},
-	})
+// sendAndRecv sends a JSON-RPC request and reads one response, verifying
+// protocol version and matching id.
+func (c *mcpStdioClient) sendAndRecv(t *testing.T, id int, method string, params map[string]any) map[string]any {
+	t.Helper()
+	req := map[string]any{"jsonrpc": "2.0", "id": id, "method": method}
+	if params != nil {
+		req["params"] = params
+	}
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.stdinWriter.Write(append(reqBytes, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	if !c.scan.Scan() {
+		t.Fatal("failed to read response from MCP server")
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(c.scan.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["jsonrpc"] != "2.0" {
+		t.Errorf("expected jsonrpc 2.0, got %v", resp["jsonrpc"])
+	}
+	if resp["id"].(float64) != float64(id) {
+		t.Errorf("expected id %d, got %v", id, resp["id"])
+	}
+	return resp
+}
+
+// close tears down the server and asserts no unexpected error was received.
+func (c *mcpStdioClient) close(t *testing.T) {
+	t.Helper()
+	c.cancelServer()
+	c.stdinWriter.Close()
+	if err := <-c.serverErrCh; err != nil {
+		t.Errorf("unexpected server error: %v", err)
+	}
+}
+
+// assertMCPInitialize verifies the initialize response contains a valid serverInfo.
+func assertMCPInitialize(t *testing.T, resp map[string]any) {
+	t.Helper()
 	if resp["error"] != nil {
 		t.Fatalf("initialize error: %v", resp["error"])
 	}
@@ -717,46 +710,63 @@ func TestMCPRoundTrip(t *testing.T) {
 	if serverInfo["name"] != "docgraph" {
 		t.Errorf("expected serverInfo.name == 'docgraph', got %v", serverInfo["name"])
 	}
+}
+
+// assertMCPToolResultText extracts the first text content item from a tool call
+// response and returns it. Fatal if the response is an error or has no content.
+func assertMCPToolResultText(t *testing.T, toolName string, resp map[string]any) string {
+	t.Helper()
+	if resp["error"] != nil {
+		t.Fatalf("%s error: %v", toolName, resp["error"])
+	}
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result in %s response", toolName)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("expected non-empty content in %s result", toolName)
+	}
+	text, _ := content[0].(map[string]any)["text"].(string)
+	return text
+}
+
+// ---------------------------------------------------------------------------
+// Test 3: MCP round-trip via stdio pipe
+// ---------------------------------------------------------------------------
+
+func TestMCPRoundTrip(t *testing.T) {
+	// Index project-a so there is data to query
+	projectDir := fixtureDir(t, "project-a")
+	st := indexTestProject(t, projectDir)
+
+	// Create MCP server, register tools, and start stdio client
+	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
+	tools.Register(srv, st, projectDir)
+	client := newMCPStdioClient(t, srv)
+	defer client.close(t)
+
+	// 1. Initialize
+	assertMCPInitialize(t, client.sendAndRecv(t, 1, "initialize", map[string]any{
+		"protocolVersion": "2024-11-05",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "test", "version": "0.1"},
+	}))
 
 	// 2. Call docgraph_status
-	resp = sendAndRecv(t, 2, "tools/call", map[string]any{
+	statusText := assertMCPToolResultText(t, "docgraph_status", client.sendAndRecv(t, 2, "tools/call", map[string]any{
 		"name":      "docgraph_status",
 		"arguments": map[string]any{},
-	})
-	if resp["error"] != nil {
-		t.Fatalf("docgraph_status error: %v", resp["error"])
-	}
-	statusResult, ok := resp["result"].(map[string]any)
-	if !ok {
-		t.Fatal("expected result in docgraph_status response")
-	}
-	content, ok := statusResult["content"].([]any)
-	if !ok || len(content) == 0 {
-		t.Fatal("expected non-empty content in docgraph_status result")
-	}
-	firstContent := content[0].(map[string]any)
-	statusText, _ := firstContent["text"].(string)
+	}))
 	if !strings.Contains(statusText, "Files:") {
 		t.Errorf("expected status text to contain 'Files:', got: %s", statusText)
 	}
 
 	// 3. Call docgraph_search
-	resp = sendAndRecv(t, 3, "tools/call", map[string]any{
+	searchText := assertMCPToolResultText(t, "docgraph_search", client.sendAndRecv(t, 3, "tools/call", map[string]any{
 		"name":      "docgraph_search",
 		"arguments": map[string]any{"query": "Document", "limit": float64(5)},
-	})
-	if resp["error"] != nil {
-		t.Fatalf("docgraph_search error: %v", resp["error"])
-	}
-	searchResult, ok := resp["result"].(map[string]any)
-	if !ok {
-		t.Fatal("expected result in docgraph_search response")
-	}
-	searchContent, ok := searchResult["content"].([]any)
-	if !ok || len(searchContent) == 0 {
-		t.Fatal("expected non-empty content in docgraph_search result")
-	}
-	searchText, _ := searchContent[0].(map[string]any)["text"].(string)
+	}))
 	if !strings.Contains(searchText, "Search Results") {
 		t.Errorf("expected search text to contain 'Search Results', got: %s", searchText)
 	}
@@ -766,32 +776,33 @@ func TestMCPRoundTrip(t *testing.T) {
 	}
 
 	// 4. Call docgraph_context and verify bounded source content is included.
-	resp = sendAndRecv(t, 4, "tools/call", map[string]any{
+	contextText := assertMCPToolResultText(t, "docgraph_context", client.sendAndRecv(t, 4, "tools/call", map[string]any{
 		"name":      "docgraph_context",
 		"arguments": map[string]any{"task": "Document", "maxNodes": float64(1), "maxContentBytes": float64(1000)},
-	})
-	if resp["error"] != nil {
-		t.Fatalf("docgraph_context error: %v", resp["error"])
-	}
-	contextResult, ok := resp["result"].(map[string]any)
-	if !ok {
-		t.Fatal("expected result in docgraph_context response")
-	}
-	contextContent, ok := contextResult["content"].([]any)
-	if !ok || len(contextContent) == 0 {
-		t.Fatal("expected non-empty content in docgraph_context result")
-	}
-	contextText, _ := contextContent[0].(map[string]any)["text"].(string)
+	}))
 	if !strings.Contains(contextText, "#### Content") || !strings.Contains(contextText, "```markdown") {
 		t.Errorf("expected context output to include bounded markdown content, got: %s", contextText)
 	}
+}
 
-	// Cleanup
-	cancel()
-	stdinWriter.Close()
-	if err := <-serverErrCh; err != nil {
-		t.Errorf("unexpected server error: %v", err)
+// assertWorkspaceSearchFinds searches for query in the workspace and asserts
+// that at least one result's QualifiedName contains projectSubstr.
+func assertWorkspaceSearchFinds(t *testing.T, w *workspace.Workspace, query, projectSubstr string) {
+	t.Helper()
+	results, err := w.Search(query, "", 20)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if len(results) == 0 {
+		t.Errorf("search for %q returned 0 results, expected matches from %s", query, projectSubstr)
+		return
+	}
+	for _, r := range results {
+		if strings.Contains(r.Node.QualifiedName, projectSubstr) {
+			return
+		}
+	}
+	t.Errorf("search for %q did not include %s results", query, projectSubstr)
 }
 
 // ---------------------------------------------------------------------------
@@ -823,62 +834,14 @@ func TestWorkspaceSearch(t *testing.T) {
 	}
 
 	// Step 3: Search for "Document" → should find results from project-a
-	results, err := w.Search("Document", "", 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) == 0 {
-		t.Error("search for 'Document' returned 0 results, expected matches from project-a")
-	}
-	foundProjectA := false
-	for _, r := range results {
-		if strings.Contains(r.Node.QualifiedName, "project-a") {
-			foundProjectA = true
-			break
-		}
-	}
-	if !foundProjectA {
-		t.Error("search for 'Document' did not include project-a results")
-	}
+	assertWorkspaceSearchFinds(t, w, "Document", "project-a")
 
 	// Step 4: Search for "Glossary" → should find results from project-b
-	results, err = w.Search("Glossary", "", 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) == 0 {
-		t.Error("search for 'Glossary' returned 0 results, expected matches from project-b")
-	}
-	foundProjectB := false
-	for _, r := range results {
-		if strings.Contains(r.Node.QualifiedName, "project-b") {
-			foundProjectB = true
-			break
-		}
-	}
-	if !foundProjectB {
-		t.Error("search for 'Glossary' did not include project-b results")
-	}
+	assertWorkspaceSearchFinds(t, w, "Glossary", "project-b")
 
 	// Step 5: Search for "中文" → should find results from project-c
 	// Note: len([]rune("中文")) == 2 < 3, so this uses the LIKE branch
-	results, err = w.Search("中文", "", 20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(results) == 0 {
-		t.Error("search for '中文' returned 0 results, expected matches from project-c")
-	}
-	foundProjectC := false
-	for _, r := range results {
-		if strings.Contains(r.Node.QualifiedName, "project-c") {
-			foundProjectC = true
-			break
-		}
-	}
-	if !foundProjectC {
-		t.Error("search for '中文' did not include project-c results")
-	}
+	assertWorkspaceSearchFinds(t, w, "中文", "project-c")
 }
 
 // ---------------------------------------------------------------------------

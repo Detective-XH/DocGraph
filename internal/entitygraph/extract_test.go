@@ -22,6 +22,20 @@ func buildResult(metadataJSON string, links []parser.RawLink) *parser.ParseResul
 	}
 }
 
+// assertDefinitionMention checks that m is a "definition" mention anchored to nodeID/filePath.
+func assertDefinitionMention(t *testing.T, m store.Mention, nodeAndFilePath string) {
+	t.Helper()
+	if m.MentionType != "definition" {
+		t.Errorf("expected mention_type 'definition', got %q", m.MentionType)
+	}
+	if m.NodeID != nodeAndFilePath {
+		t.Errorf("expected node_id %q, got %q", nodeAndFilePath, m.NodeID)
+	}
+	if m.FilePath != nodeAndFilePath {
+		t.Errorf("expected file_path %q, got %q", nodeAndFilePath, m.FilePath)
+	}
+}
+
 func TestFromParseResult_EmptyResult(t *testing.T) {
 	res := buildResult("", nil)
 	got := FromParseResult(res, nil)
@@ -73,15 +87,7 @@ func TestFromParseResult_FrontmatterEntities(t *testing.T) {
 
 	// Mentions must use definition type and point to doc node.
 	for _, m := range got.Mentions {
-		if m.MentionType != "definition" {
-			t.Errorf("expected mention_type 'definition', got %q", m.MentionType)
-		}
-		if m.NodeID != "docs/test.md" {
-			t.Errorf("expected node_id 'docs/test.md', got %q", m.NodeID)
-		}
-		if m.FilePath != "docs/test.md" {
-			t.Errorf("expected file_path 'docs/test.md', got %q", m.FilePath)
-		}
+		assertDefinitionMention(t, m, "docs/test.md")
 	}
 
 	// Mention.EntityID must match the corresponding entity.
@@ -96,7 +102,7 @@ func TestFromParseResult_FrontmatterEntities(t *testing.T) {
 func TestFromParseResult_MaxEntities(t *testing.T) {
 	// Build a metadata JSON with 600 entities — should be capped at 500.
 	var items []string
-	for i := 0; i < 600; i++ {
+	for i := range 600 {
 		items = append(items, fmt.Sprintf(`{"name":"Entity%d","type":"person"}`, i))
 	}
 	meta := `{"entities":[` + strings.Join(items, ",") + `]}`

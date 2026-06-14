@@ -10,6 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Detective-XH/docgraph/internal/parser"
+	"github.com/Detective-XH/docgraph/internal/store"
 )
 
 // ── fixture helpers ──────────────────────────────────────────────────────────
@@ -127,10 +130,7 @@ func buildZipBombDOCX() ([]byte, error) {
 	chunk := make([]byte, 65536)
 	written := 0
 	for written < uncompressedSize {
-		n := uncompressedSize - written
-		if n > len(chunk) {
-			n = len(chunk)
-		}
+		n := min(uncompressedSize-written, len(chunk))
 		if _, err := w.Write(chunk[:n]); err != nil {
 			return nil, err
 		}
@@ -178,6 +178,97 @@ func ensureDocxFixtures(t testing.TB) {
 
 // ── tests ────────────────────────────────────────────────────────────────────
 
+// assertSampleDocxHeadings verifies the two headings extracted from the sample fixture.
+func assertSampleDocxHeadings(t *testing.T, headings []store.Node) {
+	t.Helper()
+	if len(headings) != 2 {
+		t.Errorf("Headings count = %d; want 2", len(headings))
+		return
+	}
+	if headings[0].Name != "Introduction" {
+		t.Errorf("Headings[0].Name = %q; want %q", headings[0].Name, "Introduction")
+	}
+	if headings[0].Level != 1 {
+		t.Errorf("Headings[0].Level = %d; want 1", headings[0].Level)
+	}
+	if headings[1].Name != "Details" {
+		t.Errorf("Headings[1].Name = %q; want %q", headings[1].Name, "Details")
+	}
+	if headings[1].Level != 2 {
+		t.Errorf("Headings[1].Level = %d; want 2", headings[1].Level)
+	}
+}
+
+// assertSampleDocxRawLinks verifies the single hyperlink extracted from the sample fixture.
+func assertSampleDocxRawLinks(t *testing.T, links []parser.RawLink) {
+	t.Helper()
+	if len(links) != 1 {
+		t.Errorf("RawLinks count = %d; want 1", len(links))
+		return
+	}
+	if links[0].Target != "https://example.com" {
+		t.Errorf("RawLinks[0].Target = %q; want %q", links[0].Target, "https://example.com")
+	}
+	if links[0].Kind != "docx_hyperlink" {
+		t.Errorf("RawLinks[0].Kind = %q; want %q", links[0].Kind, "docx_hyperlink")
+	}
+}
+
+// assertSampleDocxMetaTuples verifies that title and creator appear in the metadata tuples.
+func assertSampleDocxMetaTuples(t *testing.T, tuples []store.MetadataTuple) {
+	t.Helper()
+	var foundTitle, foundCreator bool
+	for _, mt := range tuples {
+		if mt.Key == "title" && mt.Value == "Sample Document" {
+			foundTitle = true
+		}
+		if mt.Key == "creator" && mt.Value == "Test Author" {
+			foundCreator = true
+		}
+	}
+	if !foundTitle {
+		t.Error("MetadataTuples: title 'Sample Document' not found")
+	}
+	if !foundCreator {
+		t.Error("MetadataTuples: creator 'Test Author' not found")
+	}
+}
+
+// assertSampleDocxSectionChunks verifies the three section chunks produced for the sample fixture.
+func assertSampleDocxSectionChunks(t *testing.T, chunks []store.SectionChunk, relPath string) {
+	t.Helper()
+	if len(chunks) != 3 {
+		t.Errorf("SectionChunks count = %d; want 3", len(chunks))
+		return
+	}
+	if chunks[0].NodeID != relPath {
+		t.Errorf("SectionChunks[0].NodeID = %q; want %q", chunks[0].NodeID, relPath)
+	}
+	if chunks[0].HeadingPath != "" {
+		t.Errorf("SectionChunks[0].HeadingPath = %q; want empty", chunks[0].HeadingPath)
+	}
+	if chunks[1].HeadingPath == "" {
+		t.Error("SectionChunks[1].HeadingPath is empty; want 'Introduction'")
+	}
+	if chunks[2].HeadingPath == "" {
+		t.Error("SectionChunks[2].HeadingPath is empty; want 'Introduction > Details'")
+	}
+}
+
+// assertSampleDocxFileInfo verifies path, content hash, and node count in the FileInfo.
+func assertSampleDocxFileInfo(t *testing.T, fi store.FileInfo, relPath, hash string) {
+	t.Helper()
+	if fi.Path != relPath {
+		t.Errorf("FileInfo.Path = %q; want %q", fi.Path, relPath)
+	}
+	if fi.ContentHash != hash {
+		t.Errorf("FileInfo.ContentHash mismatch")
+	}
+	if fi.NodeCount != 3 {
+		t.Errorf("FileInfo.NodeCount = %d; want 3", fi.NodeCount)
+	}
+}
+
 func TestExtractDOCX_Sample(t *testing.T) {
 	ensureDocxFixtures(t)
 	samplePath := filepath.Join(testdataDir(t), "sample.docx")
@@ -194,7 +285,7 @@ func TestExtractDOCX_Sample(t *testing.T) {
 		t.Fatalf("extractDOCX error: %v", err)
 	}
 
-	// DocNode ID must equal relPath.
+	// DocNode identity.
 	if result.DocNode.ID != relPath {
 		t.Errorf("DocNode.ID = %q; want %q", result.DocNode.ID, relPath)
 	}
@@ -202,83 +293,11 @@ func TestExtractDOCX_Sample(t *testing.T) {
 		t.Errorf("DocNode.Kind = %q; want %q", result.DocNode.Kind, "document")
 	}
 
-	// Must have exactly 2 heading nodes.
-	if len(result.Headings) != 2 {
-		t.Errorf("Headings count = %d; want 2", len(result.Headings))
-	} else {
-		if result.Headings[0].Name != "Introduction" {
-			t.Errorf("Headings[0].Name = %q; want %q", result.Headings[0].Name, "Introduction")
-		}
-		if result.Headings[0].Level != 1 {
-			t.Errorf("Headings[0].Level = %d; want 1", result.Headings[0].Level)
-		}
-		if result.Headings[1].Name != "Details" {
-			t.Errorf("Headings[1].Name = %q; want %q", result.Headings[1].Name, "Details")
-		}
-		if result.Headings[1].Level != 2 {
-			t.Errorf("Headings[1].Level = %d; want 2", result.Headings[1].Level)
-		}
-	}
-
-	// Must have exactly 1 RawLink (the hyperlink to https://example.com).
-	if len(result.RawLinks) != 1 {
-		t.Errorf("RawLinks count = %d; want 1", len(result.RawLinks))
-	} else {
-		if result.RawLinks[0].Target != "https://example.com" {
-			t.Errorf("RawLinks[0].Target = %q; want %q", result.RawLinks[0].Target, "https://example.com")
-		}
-		if result.RawLinks[0].Kind != "docx_hyperlink" {
-			t.Errorf("RawLinks[0].Kind = %q; want %q", result.RawLinks[0].Kind, "docx_hyperlink")
-		}
-	}
-
-	// MetadataTuples must contain title and creator.
-	var foundTitle, foundCreator bool
-	for _, mt := range result.MetadataTuples {
-		if mt.Key == "title" && mt.Value == "Sample Document" {
-			foundTitle = true
-		}
-		if mt.Key == "creator" && mt.Value == "Test Author" {
-			foundCreator = true
-		}
-	}
-	if !foundTitle {
-		t.Error("MetadataTuples: title 'Sample Document' not found")
-	}
-	if !foundCreator {
-		t.Error("MetadataTuples: creator 'Test Author' not found")
-	}
-
-	// SectionChunks: 3 entries — document + 2 headings.
-	if len(result.SectionChunks) != 3 {
-		t.Errorf("SectionChunks count = %d; want 3", len(result.SectionChunks))
-	} else {
-		// First chunk is the document-level chunk.
-		if result.SectionChunks[0].NodeID != relPath {
-			t.Errorf("SectionChunks[0].NodeID = %q; want %q", result.SectionChunks[0].NodeID, relPath)
-		}
-		if result.SectionChunks[0].HeadingPath != "" {
-			t.Errorf("SectionChunks[0].HeadingPath = %q; want empty", result.SectionChunks[0].HeadingPath)
-		}
-		// Heading chunks have non-empty HeadingPath.
-		if result.SectionChunks[1].HeadingPath == "" {
-			t.Error("SectionChunks[1].HeadingPath is empty; want 'Introduction'")
-		}
-		if result.SectionChunks[2].HeadingPath == "" {
-			t.Error("SectionChunks[2].HeadingPath is empty; want 'Introduction > Details'")
-		}
-	}
-
-	// FileInfo checks.
-	if result.FileInfo.Path != relPath {
-		t.Errorf("FileInfo.Path = %q; want %q", result.FileInfo.Path, relPath)
-	}
-	if result.FileInfo.ContentHash != hash {
-		t.Errorf("FileInfo.ContentHash mismatch")
-	}
-	if result.FileInfo.NodeCount != 3 {
-		t.Errorf("FileInfo.NodeCount = %d; want 3", result.FileInfo.NodeCount)
-	}
+	assertSampleDocxHeadings(t, result.Headings)
+	assertSampleDocxRawLinks(t, result.RawLinks)
+	assertSampleDocxMetaTuples(t, result.MetadataTuples)
+	assertSampleDocxSectionChunks(t, result.SectionChunks, relPath)
+	assertSampleDocxFileInfo(t, result.FileInfo, relPath, hash)
 }
 
 func TestExtractDOCX_ZipBomb(t *testing.T) {
@@ -323,7 +342,7 @@ func TestExtractDOCX_TooManyEntries(t *testing.T) {
 	// Build a zip with 501 entries.
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	for i := 0; i < 501; i++ {
+	for i := range 501 {
 		w, err := zw.Create(fmt.Sprintf("entry%d.txt", i))
 		if err != nil {
 			t.Fatalf("create entry %d: %v", i, err)

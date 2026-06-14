@@ -6,24 +6,13 @@ import (
 	"testing"
 )
 
-// TestSearchBatchEquivalence is the correctness contract for the batched ranking
-// loaders: every value the SearchWithOptions hot path now reads from a batch
-// helper must equal what the per-candidate reference (GetGovernanceMetadata /
-// GetResearchMetadata / GetFileHistory / graphSignals) returns for the same
-// input. The ship case ("same scores, far fewer queries") rests entirely on this
-// — a coarse end-to-end ordering test can miss a subtle count mismatch, so this
-// asserts the per-candidate equality directly.
-//
-// The corpus deliberately exercises every keying path the batch must replicate:
-//   - document candidates (key on Node.ID, which equals FilePath)
-//   - heading candidates (key on FilePath; in/out by Node.ID)
-//   - a document and one of its headings sharing a tag source (a.md): the
-//     collision the batch fans a single GROUP BY row out to both
-//   - present and absent governance/research/history rows (nil parity)
-//   - tagged edges matching a Terms entry AND an ExpandedTerms entry
-func TestSearchBatchEquivalence(t *testing.T) {
-	st := tempStore(t)
-
+// seedBatchEquivalenceCorpus inserts all nodes, edges, and ranking metadata used
+// by TestSearchBatchEquivalence. It returns the full node slice so callers can
+// index into it for candidate and corpus-guard calls.
+// Extracted so the six inserts and their error checks don't inflate the main
+// function's cyclomatic complexity.
+func seedBatchEquivalenceCorpus(t *testing.T, st *Store) []Node {
+	t.Helper()
 	nodes := []Node{
 		{ID: "a.md", Kind: "document", Name: "Alpha Doc", QualifiedName: "a.md", FilePath: "a.md", StartLine: 1, EndLine: 9, BodyExcerpt: "alpha", UpdatedAt: 1},
 		{ID: "a.md#h1", Kind: "heading", Name: "Section One", QualifiedName: "a.md#h1", FilePath: "a.md", StartLine: 2, EndLine: 5, Level: 1, BodyExcerpt: "alpha", UpdatedAt: 1},
@@ -88,6 +77,152 @@ func TestSearchBatchEquivalence(t *testing.T) {
 	if err := st.UpsertFileHistory(FileHistory{Path: "d.md", CommitCount: 1, FirstCommitAt: 50, LastCommitAt: 50, AuthorCount: 1, LastAuthor: "y", LastSubject: "t"}); err != nil {
 		t.Fatalf("UpsertFileHistory d.md: %v", err)
 	}
+	return nodes
+}
+
+// assertRetrievalDocIDOracle asserts the metadata key derivation for each
+// candidate independently of retrievalDocID itself — both sides of the
+// equivalence loop call the same function, so a wrong derivation would corrupt
+// both sides equally and pass; this golden map breaks that symmetry.
+func assertRetrievalDocIDOracle(t *testing.T, cands []*searchCandidate) {
+	t.Helper()
+	wantDocID := map[string]string{
+		"a.md": "a.md", "a.md#h1": "a.md", "b.md": "b.md",
+		"c.md": "c.md", "d.md": "d.md", "a.md#def1": "a.md",
+	}
+	for _, c := range cands {
+		if got := retrievalDocID(c.Node); got != wantDocID[c.Node.ID] {
+			t.Errorf("retrievalDocID(%s) = %q, want %q", c.Node.ID, got, wantDocID[c.Node.ID])
+		}
+	}
+}
+
+// loadBatches builds the ID/path key sets from cands and fetches all four batch
+// maps in a single helper — reduces the four error-checked calls from the main
+// function body.
+func loadBatches(t *testing.T, st *Store, req searchRequest, cands []*searchCandidate) (
+	govBatch map[string]*GovernanceRecord,
+	resBatch map[string]*ResearchRecord,
+	histBatch map[string]*FileHistory,
+	graphBatch map[string]graphSig,
+) {
+	t.Helper()
+	metaIDSet := map[string]struct{}{}
+	pathSet := map[string]struct{}{}
+	for _, c := range cands {
+		metaIDSet[retrievalDocID(c.Node)] = struct{}{}
+		pathSet[c.Node.FilePath] = struct{}{}
+	}
+	var err error
+	govBatch, err = st.Searcher.getGovernanceMetadataBatch(setKeys(metaIDSet))
+	if err != nil {
+		t.Fatalf("getGovernanceMetadataBatch: %v", err)
+	}
+	resBatch, err = st.Searcher.getResearchMetadataBatch(setKeys(metaIDSet))
+	if err != nil {
+		t.Fatalf("getResearchMetadataBatch: %v", err)
+	}
+	histBatch, err = st.Searcher.getFileHistoryBatch(setKeys(pathSet))
+	if err != nil {
+		t.Fatalf("getFileHistoryBatch: %v", err)
+	}
+	graphBatch, err = st.Searcher.graphSignalsBatch(req, cands)
+	if err != nil {
+		t.Fatalf("graphSignalsBatch: %v", err)
+	}
+	return
+}
+
+// assertCandidateBatchEquivalence checks that all four batch loaders return values
+// identical to their per-candidate reference functions for a single candidate.
+// It is a genuine extraction: it groups all four equivalence assertions that share
+// the same candidate + request context and must always be checked together.
+func assertCandidateBatchEquivalence(
+	t *testing.T,
+	st *Store,
+	req searchRequest,
+	c *searchCandidate,
+	govBatch map[string]*GovernanceRecord,
+	resBatch map[string]*ResearchRecord,
+	histBatch map[string]*FileHistory,
+	graphBatch map[string]graphSig,
+) {
+	t.Helper()
+	id := retrievalDocID(c.Node)
+
+	wantGov, err := st.GetGovernanceMetadata(id)
+	if err != nil {
+		t.Fatalf("GetGovernanceMetadata(%s): %v", id, err)
+	}
+	if !reflect.DeepEqual(wantGov, govBatch[id]) {
+		t.Errorf("governance mismatch for %s (id=%s):\n  per-candidate: %+v\n  batch:         %+v", c.Node.ID, id, wantGov, govBatch[id])
+	}
+
+	wantRes, err := st.GetResearchMetadata(id)
+	if err != nil {
+		t.Fatalf("GetResearchMetadata(%s): %v", id, err)
+	}
+	if !reflect.DeepEqual(wantRes, resBatch[id]) {
+		t.Errorf("research mismatch for %s (id=%s):\n  per-candidate: %+v\n  batch:         %+v", c.Node.ID, id, wantRes, resBatch[id])
+	}
+
+	wantHist, err := st.GetFileHistory(c.Node.FilePath)
+	if err != nil {
+		t.Fatalf("GetFileHistory(%s): %v", c.Node.FilePath, err)
+	}
+	if !reflect.DeepEqual(wantHist, histBatch[c.Node.FilePath]) {
+		t.Errorf("history mismatch for %s (path=%s):\n  per-candidate: %+v\n  batch:         %+v", c.Node.ID, c.Node.FilePath, wantHist, histBatch[c.Node.FilePath])
+	}
+
+	gotSig := graphBatch[c.Node.ID]
+	inc, out, tag, err := st.Searcher.graphSignals(req, c.Node)
+	if err != nil {
+		t.Fatalf("graphSignals(%s): %v", c.Node.ID, err)
+	}
+	if gotSig.incoming != inc || gotSig.outgoing != out || gotSig.tagMatches != tag {
+		t.Errorf("graph signal mismatch for %s:\n  per-candidate: in=%d out=%d tag=%d\n  batch:         in=%d out=%d tag=%d",
+			c.Node.ID, inc, out, tag, gotSig.incoming, gotSig.outgoing, gotSig.tagMatches)
+	}
+}
+
+// assertCorpusGuard verifies that the test corpus produces non-zero graph signals,
+// ensuring "equivalence" is not trivially true on an all-empty corpus.
+func assertCorpusGuard(t *testing.T, st *Store, req searchRequest, node Node) {
+	t.Helper()
+	wIn, _, wTag, err := st.Searcher.graphSignals(req, node) // a.md
+	if err != nil {
+		t.Fatalf("graphSignals a.md: %v", err)
+	}
+	// Document-level incoming joins on the TARGET node's file_path, so it counts
+	// edges pointing at the doc AND at any heading in the same file: b.md→a.md,
+	// c.md→a.md, and b.md→a.md#h1 all resolve to file_path a.md ⇒ 3. (This exact
+	// doc-vs-heading keying difference is what the batch must replicate.)
+	if wIn != 3 {
+		t.Fatalf("corpus guard: a.md incoming want 3 (b.md→a.md, c.md→a.md, b.md→a.md#h1), got %d", wIn)
+	}
+	if wTag != 2 {
+		t.Fatalf("corpus guard: a.md tagMatches want 2 (alpha+beta), got %d", wTag)
+	}
+}
+
+// TestSearchBatchEquivalence is the correctness contract for the batched ranking
+// loaders: every value the SearchWithOptions hot path now reads from a batch
+// helper must equal what the per-candidate reference (GetGovernanceMetadata /
+// GetResearchMetadata / GetFileHistory / graphSignals) returns for the same
+// input. The ship case ("same scores, far fewer queries") rests entirely on this
+// — a coarse end-to-end ordering test can miss a subtle count mismatch, so this
+// asserts the per-candidate equality directly.
+//
+// The corpus deliberately exercises every keying path the batch must replicate:
+//   - document candidates (key on Node.ID, which equals FilePath)
+//   - heading candidates (key on FilePath; in/out by Node.ID)
+//   - a document and one of its headings sharing a tag source (a.md): the
+//     collision the batch fans a single GROUP BY row out to both
+//   - present and absent governance/research/history rows (nil parity)
+//   - tagged edges matching a Terms entry AND an ExpandedTerms entry
+func TestSearchBatchEquivalence(t *testing.T) {
+	st := tempStore(t)
+	nodes := seedBatchEquivalenceCorpus(t, st)
 
 	// "alpha" in Terms, "beta"/"gamma" in ExpandedTerms — disjoint, as
 	// expandQueryTerms guarantees in production (it dedups expansions against
@@ -107,15 +242,7 @@ func TestSearchBatchEquivalence(t *testing.T) {
 	// retrievalDocID oracle: assert the metadata key derivation INDEPENDENTLY of
 	// retrievalDocID itself (the equivalence loop below feeds the same function to
 	// both sides, so a wrong derivation would corrupt both equally and pass).
-	wantDocID := map[string]string{
-		"a.md": "a.md", "a.md#h1": "a.md", "b.md": "b.md",
-		"c.md": "c.md", "d.md": "d.md", "a.md#def1": "a.md",
-	}
-	for _, c := range cands {
-		if got := retrievalDocID(c.Node); got != wantDocID[c.Node.ID] {
-			t.Errorf("retrievalDocID(%s) = %q, want %q", c.Node.ID, got, wantDocID[c.Node.ID])
-		}
-	}
+	assertRetrievalDocIDOracle(t, cands)
 
 	// Golden lock on the graph-score formula. The equivalence checks below verify
 	// the COUNTS fed to applyGraphScore match the per-candidate path, but not the
@@ -131,81 +258,13 @@ func TestSearchBatchEquivalence(t *testing.T) {
 
 	// --- guard: the corpus must produce non-zero signals, else "equivalence"
 	// would be trivially true on an all-empty corpus. ---
-	wIn, _, wTag, err := st.Searcher.graphSignals(req, nodes[0]) // a.md
-	if err != nil {
-		t.Fatalf("graphSignals a.md: %v", err)
-	}
-	// Document-level incoming joins on the TARGET node's file_path, so it counts
-	// edges pointing at the doc AND at any heading in the same file: b.md→a.md,
-	// c.md→a.md, and b.md→a.md#h1 all resolve to file_path a.md ⇒ 3. (This exact
-	// doc-vs-heading keying difference is what the batch must replicate.)
-	if wIn != 3 {
-		t.Fatalf("corpus guard: a.md incoming want 3 (b.md→a.md, c.md→a.md, b.md→a.md#h1), got %d", wIn)
-	}
-	if wTag != 2 {
-		t.Fatalf("corpus guard: a.md tagMatches want 2 (alpha+beta), got %d", wTag)
-	}
+	assertCorpusGuard(t, st, req, nodes[0])
 
 	// --- metadata equivalence ---
-	metaIDSet := map[string]struct{}{}
-	pathSet := map[string]struct{}{}
-	for _, c := range cands {
-		metaIDSet[retrievalDocID(c.Node)] = struct{}{}
-		pathSet[c.Node.FilePath] = struct{}{}
-	}
-	govBatch, err := st.Searcher.getGovernanceMetadataBatch(setKeys(metaIDSet))
-	if err != nil {
-		t.Fatalf("getGovernanceMetadataBatch: %v", err)
-	}
-	resBatch, err := st.Searcher.getResearchMetadataBatch(setKeys(metaIDSet))
-	if err != nil {
-		t.Fatalf("getResearchMetadataBatch: %v", err)
-	}
-	histBatch, err := st.Searcher.getFileHistoryBatch(setKeys(pathSet))
-	if err != nil {
-		t.Fatalf("getFileHistoryBatch: %v", err)
-	}
-	graphBatch, err := st.Searcher.graphSignalsBatch(req, cands)
-	if err != nil {
-		t.Fatalf("graphSignalsBatch: %v", err)
-	}
+	govBatch, resBatch, histBatch, graphBatch := loadBatches(t, st, req, cands)
 
 	for _, c := range cands {
-		id := retrievalDocID(c.Node)
-
-		wantGov, err := st.GetGovernanceMetadata(id)
-		if err != nil {
-			t.Fatalf("GetGovernanceMetadata(%s): %v", id, err)
-		}
-		if !reflect.DeepEqual(wantGov, govBatch[id]) {
-			t.Errorf("governance mismatch for %s (id=%s):\n  per-candidate: %+v\n  batch:         %+v", c.Node.ID, id, wantGov, govBatch[id])
-		}
-
-		wantRes, err := st.GetResearchMetadata(id)
-		if err != nil {
-			t.Fatalf("GetResearchMetadata(%s): %v", id, err)
-		}
-		if !reflect.DeepEqual(wantRes, resBatch[id]) {
-			t.Errorf("research mismatch for %s (id=%s):\n  per-candidate: %+v\n  batch:         %+v", c.Node.ID, id, wantRes, resBatch[id])
-		}
-
-		wantHist, err := st.GetFileHistory(c.Node.FilePath)
-		if err != nil {
-			t.Fatalf("GetFileHistory(%s): %v", c.Node.FilePath, err)
-		}
-		if !reflect.DeepEqual(wantHist, histBatch[c.Node.FilePath]) {
-			t.Errorf("history mismatch for %s (path=%s):\n  per-candidate: %+v\n  batch:         %+v", c.Node.ID, c.Node.FilePath, wantHist, histBatch[c.Node.FilePath])
-		}
-
-		gotSig := graphBatch[c.Node.ID]
-		inc, out, tag, err := st.Searcher.graphSignals(req, c.Node)
-		if err != nil {
-			t.Fatalf("graphSignals(%s): %v", c.Node.ID, err)
-		}
-		if gotSig.incoming != inc || gotSig.outgoing != out || gotSig.tagMatches != tag {
-			t.Errorf("graph signal mismatch for %s:\n  per-candidate: in=%d out=%d tag=%d\n  batch:         in=%d out=%d tag=%d",
-				c.Node.ID, inc, out, tag, gotSig.incoming, gotSig.outgoing, gotSig.tagMatches)
-		}
+		assertCandidateBatchEquivalence(t, st, req, c, govBatch, resBatch, histBatch, graphBatch)
 	}
 
 	// --- collision case made explicit: a.md (document, tag source = its ID) and
