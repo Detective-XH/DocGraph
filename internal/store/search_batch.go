@@ -176,51 +176,11 @@ func (se *searchStore) graphSignalsBatch(req searchRequest, cands []*searchCandi
 		}
 	}
 
-	const refKinds = "('references','wikilinks_to','related_to','embeds')"
-
-	setIncoming := func(c *searchCandidate, n int) { sig := sigs[c.Node.ID]; sig.incoming = n; sigs[c.Node.ID] = sig }
-	setOutgoing := func(c *searchCandidate, n int) { sig := sigs[c.Node.ID]; sig.outgoing = n; sigs[c.Node.ID] = sig }
-
-	// Document candidates: in/out resolved through the target/source node's file_path.
-	if len(docCandsByPath) > 0 {
-		paths := mapKeys(docCandsByPath)
-		in, err := se.scanGroupCounts(`SELECT t.file_path, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
-			WHERE t.file_path IN (`+inPlaceholders(len(paths))+`) AND e.kind IN `+refKinds+` GROUP BY t.file_path`, paths)
-		if err != nil {
-			return nil, err
-		}
-		out, err := se.scanGroupCounts(`SELECT src.file_path, COUNT(*) FROM edges e JOIN nodes src ON src.id = e.source
-			WHERE src.file_path IN (`+inPlaceholders(len(paths))+`) AND e.kind IN `+refKinds+` GROUP BY src.file_path`, paths)
-		if err != nil {
-			return nil, err
-		}
-		for path, cs := range docCandsByPath {
-			for _, c := range cs {
-				setIncoming(c, in[path])
-				setOutgoing(c, out[path])
-			}
-		}
+	if err := se.loadDocGraphSignals(sigs, docCandsByPath); err != nil {
+		return nil, err
 	}
-
-	// Non-document candidates: in/out resolved directly by node id.
-	if len(nonDocCandsByID) > 0 {
-		ids := mapKeys(nonDocCandsByID)
-		in, err := se.scanGroupCounts(`SELECT target, COUNT(*) FROM edges
-			WHERE target IN (`+inPlaceholders(len(ids))+`) AND kind IN `+refKinds+` GROUP BY target`, ids)
-		if err != nil {
-			return nil, err
-		}
-		out, err := se.scanGroupCounts(`SELECT source, COUNT(*) FROM edges
-			WHERE source IN (`+inPlaceholders(len(ids))+`) AND kind IN `+refKinds+` GROUP BY source`, ids)
-		if err != nil {
-			return nil, err
-		}
-		for id, cs := range nonDocCandsByID {
-			for _, c := range cs {
-				setIncoming(c, in[id])
-				setOutgoing(c, out[id])
-			}
-		}
+	if err := se.loadNonDocGraphSignals(sigs, nonDocCandsByID); err != nil {
+		return nil, err
 	}
 
 	// Tag matches: graphSignals sums COUNT(name == term) over the distinct term
@@ -228,38 +188,105 @@ func (se *searchStore) graphSignalsBatch(req searchRequest, cands []*searchCandi
 	// COUNT(name IN terms) — one query. Terms are lowered to match the per-term
 	// lower(t.name)=lower(?) comparison.
 	terms := lowerDistinct(append(append([]string{}, req.Terms...), req.ExpandedTerms...))
-	if len(tagSrcToCands) > 0 && len(terms) > 0 {
-		srcs := mapKeys(tagSrcToCands)
-		args := make([]any, 0, len(srcs)+len(terms))
-		args = append(args, toArgs(srcs)...)
-		args = append(args, toArgs(terms)...)
-		rows, err := se.db.Query(`SELECT e.source, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
-			WHERE e.source IN (`+inPlaceholders(len(srcs))+`)
-			  AND e.kind = 'tagged' AND t.kind = 'tag'
-			  AND lower(t.name) IN (`+inPlaceholders(len(terms))+`)
-			GROUP BY e.source`, args...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
-		if err != nil {
-			return nil, err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var src string
-			var n int
-			if err := rows.Scan(&src, &n); err != nil {
-				return nil, err
-			}
-			for _, c := range tagSrcToCands[src] {
-				sig := sigs[c.Node.ID]
-				sig.tagMatches = n
-				sigs[c.Node.ID] = sig
-			}
-		}
-		if err := rows.Err(); err != nil {
-			return nil, err
-		}
+	if err := se.loadTagMatchSignals(sigs, tagSrcToCands, terms); err != nil {
+		return nil, err
 	}
 
 	return sigs, nil
+}
+
+// loadDocGraphSignals populates incoming/outgoing counts for document candidates.
+// Documents resolve reference counts through their file_path (all nodes in the
+// file share the same in/out count as the document node).
+func (se *searchStore) loadDocGraphSignals(sigs map[string]graphSig, docCandsByPath map[string][]*searchCandidate) error {
+	if len(docCandsByPath) == 0 {
+		return nil
+	}
+	const refKinds = "('references','wikilinks_to','related_to','embeds')"
+	paths := mapKeys(docCandsByPath)
+	in, err := se.scanGroupCounts(`SELECT t.file_path, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
+		WHERE t.file_path IN (`+inPlaceholders(len(paths))+`) AND e.kind IN `+refKinds+` GROUP BY t.file_path`, paths)
+	if err != nil {
+		return err
+	}
+	out, err := se.scanGroupCounts(`SELECT src.file_path, COUNT(*) FROM edges e JOIN nodes src ON src.id = e.source
+		WHERE src.file_path IN (`+inPlaceholders(len(paths))+`) AND e.kind IN `+refKinds+` GROUP BY src.file_path`, paths)
+	if err != nil {
+		return err
+	}
+	for path, cs := range docCandsByPath {
+		for _, c := range cs {
+			sig := sigs[c.Node.ID]
+			sig.incoming = in[path]
+			sig.outgoing = out[path]
+			sigs[c.Node.ID] = sig
+		}
+	}
+	return nil
+}
+
+// loadNonDocGraphSignals populates incoming/outgoing counts for non-document
+// candidates. Non-documents resolve reference counts directly by node ID.
+func (se *searchStore) loadNonDocGraphSignals(sigs map[string]graphSig, nonDocCandsByID map[string][]*searchCandidate) error {
+	if len(nonDocCandsByID) == 0 {
+		return nil
+	}
+	const refKinds = "('references','wikilinks_to','related_to','embeds')"
+	ids := mapKeys(nonDocCandsByID)
+	in, err := se.scanGroupCounts(`SELECT target, COUNT(*) FROM edges
+		WHERE target IN (`+inPlaceholders(len(ids))+`) AND kind IN `+refKinds+` GROUP BY target`, ids)
+	if err != nil {
+		return err
+	}
+	out, err := se.scanGroupCounts(`SELECT source, COUNT(*) FROM edges
+		WHERE source IN (`+inPlaceholders(len(ids))+`) AND kind IN `+refKinds+` GROUP BY source`, ids)
+	if err != nil {
+		return err
+	}
+	for id, cs := range nonDocCandsByID {
+		for _, c := range cs {
+			sig := sigs[c.Node.ID]
+			sig.incoming = in[id]
+			sig.outgoing = out[id]
+			sigs[c.Node.ID] = sig
+		}
+	}
+	return nil
+}
+
+// loadTagMatchSignals populates tag-match counts for all candidates.
+// Each candidate's tag source is its Node.ID (document) or Node.FilePath
+// (non-document), which is the same partitioning graphSignals uses per row.
+func (se *searchStore) loadTagMatchSignals(sigs map[string]graphSig, tagSrcToCands map[string][]*searchCandidate, terms []string) error {
+	if len(tagSrcToCands) == 0 || len(terms) == 0 {
+		return nil
+	}
+	srcs := mapKeys(tagSrcToCands)
+	args := make([]any, 0, len(srcs)+len(terms))
+	args = append(args, toArgs(srcs)...)
+	args = append(args, toArgs(terms)...)
+	rows, err := se.db.Query(`SELECT e.source, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
+		WHERE e.source IN (`+inPlaceholders(len(srcs))+`)
+		  AND e.kind = 'tagged' AND t.kind = 'tag'
+		  AND lower(t.name) IN (`+inPlaceholders(len(terms))+`)
+		GROUP BY e.source`, args...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var src string
+		var n int
+		if err := rows.Scan(&src, &n); err != nil {
+			return err
+		}
+		for _, c := range tagSrcToCands[src] {
+			sig := sigs[c.Node.ID]
+			sig.tagMatches = n
+			sigs[c.Node.ID] = sig
+		}
+	}
+	return rows.Err()
 }
 
 // scanGroupCounts runs a "SELECT key, COUNT(*) … GROUP BY key" query whose only

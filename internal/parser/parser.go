@@ -44,6 +44,132 @@ type ParseResult struct {
 var inlineWikilinkRe = regexp.MustCompile(`(!?)\[\[([^\]|]+)(?:\|[^\]]+)?\]\]`)
 var definitionLineRe = regexp.MustCompile(`^\s*\*\*([^*:\n][^*\n]{0,120}?):\*\*\s*(.*)$`)
 
+// astWalkState holds mutable state shared across the goldmark AST walk in
+// buildASTLinks. Fields are modified by the walk callback and read afterwards.
+type astWalkState struct {
+	headings         []store.Node
+	rawLinks         []RawLink
+	firstH1          string
+	slugCount        map[string]int
+	currentHeadingID string
+	currentBlockLine int
+}
+
+// buildASTLinks walks the goldmark AST and collects heading nodes and raw links.
+// All stateful fields are carried via ws so the caller retains the accumulated
+// results after the walk completes.
+func buildASTLinks(doc ast.Node, source []byte, lineOffsets []int, relPath string, ws *astWalkState) error {
+	return ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+
+		if n.Type() == ast.TypeBlock && n.Lines().Len() > 0 {
+			seg := n.Lines().At(0)
+			ws.currentBlockLine = offsetToLine(lineOffsets, seg.Start)
+		}
+
+		switch v := n.(type) {
+		case *ast.Heading:
+			txt := extractText(v, source)
+			slug := Slugify(txt)
+			ws.slugCount[slug]++
+			if ws.slugCount[slug] > 1 {
+				slug = fmt.Sprintf("%s-%d", slug, ws.slugCount[slug])
+			}
+			id := relPath + "#" + slug
+			if v.Level == 1 && ws.firstH1 == "" {
+				ws.firstH1 = txt
+			}
+			ws.headings = append(ws.headings, store.Node{
+				ID:            id,
+				Kind:          "heading",
+				Name:          txt,
+				QualifiedName: relPath + "#" + slug,
+				FilePath:      relPath,
+				StartLine:     ws.currentBlockLine,
+				Level:         v.Level,
+				UpdatedAt:     time.Now().Unix(),
+			})
+			ws.currentHeadingID = id
+
+		case *ast.Link:
+			dest := string(v.Destination)
+			ws.rawLinks = append(ws.rawLinks, RawLink{
+				Text:       extractText(v, source),
+				Target:     dest,
+				Kind:       classifyLink(dest),
+				Line:       ws.currentBlockLine,
+				FromNodeID: ws.currentHeadingID,
+			})
+
+		case *ast.AutoLink:
+			url := string(v.URL(source))
+			ws.rawLinks = append(ws.rawLinks, RawLink{
+				Text:       url,
+				Target:     url,
+				Kind:       "external",
+				Line:       ws.currentBlockLine,
+				FromNodeID: ws.currentHeadingID,
+			})
+
+		case *ast.Text:
+			// Wikilinks handled by pre-parse pass (goldmark splits [[ across Text nodes)
+		}
+
+		return ast.WalkContinue, nil
+	})
+}
+
+// buildTagNodesAndEdges creates deduplicated tag nodes and tagged edges from
+// the frontmatter tag list.
+func buildTagNodesAndEdges(fm map[string]interface{}, relPath, docID string) ([]store.Node, []store.Edge) {
+	var tagNodes []store.Node
+	var edges []store.Edge
+	seen := make(map[string]bool)
+	for _, tag := range GetTags(fm) {
+		tagID := "tag:" + strings.ToLower(tag)
+		if seen[tagID] {
+			continue
+		}
+		seen[tagID] = true
+		tagNodes = append(tagNodes, store.Node{
+			ID:            tagID,
+			Kind:          "tag",
+			Name:          tag,
+			QualifiedName: tagID,
+			FilePath:      relPath,
+			StartLine:     0,
+			EndLine:       0,
+			UpdatedAt:     time.Now().Unix(),
+		})
+		edges = append(edges, store.Edge{
+			Source: docID,
+			Target: tagID,
+			Kind:   "tagged",
+		})
+	}
+	return tagNodes, edges
+}
+
+// assignWikilinkHeadings resolves each pre-parsed inline wikilink to its
+// nearest enclosing heading by reverse-scanning the heading list. Links that
+// precede all headings are assigned to the document node (docID).
+func assignWikilinkHeadings(preLinks []RawLink, headings []store.Node, docID string) []RawLink {
+	result := make([]RawLink, 0, len(preLinks))
+	for _, pl := range preLinks {
+		pl.FromNodeID = docID
+		for i := len(headings) - 1; i >= 0; i-- {
+			if headings[i].StartLine <= pl.Line {
+				pl.FromNodeID = headings[i].ID
+				break
+			}
+		}
+		result = append(result, pl)
+	}
+	return result
+}
+
 // ParseFile parses a markdown file and extracts nodes, edges, and raw links.
 func ParseFile(absPath string, relPath string, source []byte, contentHash string) (*ParseResult, error) {
 	// 1. Extract frontmatter
@@ -82,85 +208,20 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 	bodyStartLine := docEndLine - bytes.Count(body, []byte("\n"))
 	preLinks := scanInlineWikilinks(body, bodyStartLine, relPath)
 
-	// 4. Walk AST
-	var headings []store.Node
-	var rawLinks []RawLink
-	var firstH1 string
-	slugCount := make(map[string]int)
-
-	currentHeadingID := docNode.ID
-	currentBlockLine := 1
-
-	if err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-
-		if n.Type() == ast.TypeBlock && n.Lines().Len() > 0 {
-			seg := n.Lines().At(0)
-			currentBlockLine = offsetToLine(lineOffsets, seg.Start)
-		}
-
-		switch v := n.(type) {
-		case *ast.Heading:
-			txt := extractText(v, source)
-			slug := Slugify(txt)
-			slugCount[slug]++
-			if slugCount[slug] > 1 {
-				slug = fmt.Sprintf("%s-%d", slug, slugCount[slug])
-			}
-			id := relPath + "#" + slug
-			startLine := currentBlockLine
-
-			if v.Level == 1 && firstH1 == "" {
-				firstH1 = txt
-			}
-
-			headings = append(headings, store.Node{
-				ID:            id,
-				Kind:          "heading",
-				Name:          txt,
-				QualifiedName: relPath + "#" + slug,
-				FilePath:      relPath,
-				StartLine:     startLine,
-				Level:         v.Level,
-				UpdatedAt:     time.Now().Unix(),
-			})
-			currentHeadingID = id
-
-		case *ast.Link:
-			dest := string(v.Destination)
-			linkText := extractText(v, source)
-			kind := classifyLink(dest)
-			rawLinks = append(rawLinks, RawLink{
-				Text:       linkText,
-				Target:     dest,
-				Kind:       kind,
-				Line:       currentBlockLine,
-				FromNodeID: currentHeadingID,
-			})
-
-		case *ast.AutoLink:
-			url := string(v.URL(source))
-			rawLinks = append(rawLinks, RawLink{
-				Text:       url,
-				Target:     url,
-				Kind:       "external",
-				Line:       currentBlockLine,
-				FromNodeID: currentHeadingID,
-			})
-
-		case *ast.Text:
-			// Wikilinks handled by pre-parse pass (goldmark splits [[ across Text nodes)
-		}
-
-		return ast.WalkContinue, nil
-	}); err != nil {
+	// 4. Walk AST — collect headings, links, first H1 via shared state.
+	ws := &astWalkState{
+		slugCount:        make(map[string]int),
+		currentHeadingID: docNode.ID,
+		currentBlockLine: 1,
+	}
+	if err := buildASTLinks(doc, source, lineOffsets, relPath, ws); err != nil {
 		return nil, err
 	}
+	headings := ws.headings
+	rawLinks := ws.rawLinks
 
 	// Determine document name: first H1 > frontmatter title > filename
-	docNode.Name = firstH1
+	docNode.Name = ws.firstH1
 	if docNode.Name == "" {
 		docNode.Name = GetTitle(fm)
 	}
@@ -181,30 +242,8 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 	edges = append(edges, defEdges...)
 
 	// 7. Create tag nodes and tagged edges
-	var tagNodes []store.Node
-	seen := make(map[string]bool)
-	for _, tag := range GetTags(fm) {
-		tagID := "tag:" + strings.ToLower(tag)
-		if seen[tagID] {
-			continue
-		}
-		seen[tagID] = true
-		tagNodes = append(tagNodes, store.Node{
-			ID:            tagID,
-			Kind:          "tag",
-			Name:          tag,
-			QualifiedName: tagID,
-			FilePath:      relPath,
-			StartLine:     0,
-			EndLine:       0,
-			UpdatedAt:     time.Now().Unix(),
-		})
-		edges = append(edges, store.Edge{
-			Source: docNode.ID,
-			Target: tagID,
-			Kind:   "tagged",
-		})
-	}
+	tagNodes, tagEdges := buildTagNodesAndEdges(fm, relPath, docNode.ID)
+	edges = append(edges, tagEdges...)
 
 	// 8. Frontmatter wikilinks → RawLinks
 	for _, target := range GetWikilinks(fm) {
@@ -216,16 +255,7 @@ func ParseFile(absPath string, relPath string, source []byte, contentHash string
 	}
 
 	// 8b. Merge pre-parsed inline wikilinks (assign to nearest heading)
-	for _, pl := range preLinks {
-		pl.FromNodeID = docNode.ID
-		for i := len(headings) - 1; i >= 0; i-- {
-			if headings[i].StartLine <= pl.Line {
-				pl.FromNodeID = headings[i].ID
-				break
-			}
-		}
-		rawLinks = append(rawLinks, pl)
-	}
+	rawLinks = append(rawLinks, assignWikilinkHeadings(preLinks, headings, docNode.ID)...)
 
 	// 9. Build FileInfo
 	fileInfo := store.FileInfo{

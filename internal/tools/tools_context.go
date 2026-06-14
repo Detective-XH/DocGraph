@@ -69,23 +69,36 @@ const maxContextResponseBytes = 20 * 1024
 // to the listed stubs, so a 200-doc tail cannot fan out 200 edge lookups.
 const maxTailStubBytes = 4 * 1024
 
-func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.GetArguments()
-	task := getStringArg(args, "task", "")
+// ctxEntry is a single deduped context result (one per source file).
+type ctxEntry struct {
+	sr       store.SearchResult
+	sections []string
+}
+
+// contextRenderOpts holds the render-time options extracted from the request.
+type contextRenderOpts struct {
+	includeContent  bool
+	maxContentBytes int
+}
+
+// parseContextArgs validates and parses the handleContext request into a
+// SearchOptions plus render opts. Returns a non-nil tool-error result on failure.
+func parseContextArgs(args map[string]any) (task string, opts store.SearchOptions, render contextRenderOpts, toolErr *mcp.CallToolResult) {
+	task = getStringArg(args, "task", "")
 	if task == "" {
-		return mcp.NewToolResultError("task parameter is required"), nil
+		return "", opts, render, mcp.NewToolResultError("task parameter is required")
 	}
 	task = sanitizeArg(task, maxArgLength)
 	maxNodes := getIntArgClamped(args, "maxNodes", 10, 1, 200)
-	includeContent := getBoolArg(args, "includeContent", true)
-	maxContentBytes := getIntArg(args, "maxContentBytes", 2000)
-	if maxContentBytes <= 0 {
-		maxContentBytes = 2000
+	render.includeContent = getBoolArg(args, "includeContent", true)
+	render.maxContentBytes = getIntArg(args, "maxContentBytes", 2000)
+	if render.maxContentBytes <= 0 {
+		render.maxContentBytes = 2000
 	}
-	if maxContentBytes > 6000 {
-		maxContentBytes = 6000
+	if render.maxContentBytes > 6000 {
+		render.maxContentBytes = 6000
 	}
-	opts := store.SearchOptions{
+	opts = store.SearchOptions{
 		Query: task,
 		Limit: maxNodes,
 		Governance: store.GovernanceSearchOptions{
@@ -103,44 +116,13 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		},
 		ProjectFilter: sanitizeArg(getStringArg(args, "project", ""), maxArgLength),
 	}
+	return task, opts, render, nil
+}
 
-	var results []store.SearchResult
-	var err error
-	if h.workspace != nil {
-		results, err = h.workspace.SearchWithOptions(opts)
-	} else {
-		results, err = h.store.Searcher.SearchWithOptions(opts)
-	}
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
-	}
-
-	format := strings.ToLower(strings.TrimSpace(getStringArg(args, "format", "")))
-	if format == "context_pack" || format == "evidence_pack" {
-		impactDepth := getIntArgClamped(args, "impactDepth", 1, 1, 3)
-		referenceLimit := getIntArgClamped(args, "referenceLimit", 5, 1, 20)
-		return mcp.NewToolResultText(h.renderContextPack(task, results, contextPackOptions{
-			IncludeContent:  includeContent,
-			MaxContentBytes: maxContentBytes,
-			ImpactDepth:     impactDepth,
-			ReferenceLimit:  referenceLimit,
-		})), nil
-	}
-	if format == "drift_audit" {
-		return mcp.NewToolResultText(h.renderDriftAudit(task, opts.ProjectFilter)), nil
-	}
-
-	// P-v3-1: docgraph_context frames results as "documents", but the ranked
-	// result set can hold several nodes (a document node plus heading hits) from
-	// the SAME source file — which a weak agent double-counts as separate
-	// documents (the v3 B-noise finding). Collapse to one entry per source file,
-	// keeping the best-ranked occurrence, and list any additional matched sections
-	// inline so no match is silently dropped. Render-only: store ranking + order
-	// are untouched (this de-duplicates by file, never reorders).
-	type ctxEntry struct {
-		sr       store.SearchResult
-		sections []string
-	}
+// dedupeContextResultsByFile collapses the ranked result set to one entry per
+// source file (P-v3-1: prevents double-counting of heading hits from the same doc).
+// Render-only: store ranking and order are untouched.
+func dedupeContextResultsByFile(results []store.SearchResult) []ctxEntry {
 	var deduped []ctxEntry
 	seenFile := map[string]int{}
 	for _, sr := range results {
@@ -162,59 +144,136 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		}
 		deduped = append(deduped, entry)
 	}
+	return deduped
+}
+
+// appendContextEntryMetadata appends AI summary + governance + research + quality
+// + entity sections when metadata is available for the node.
+func (h *handler) appendContextEntryMetadata(sb *strings.Builder, node *store.Node) {
+	st := h.getStoreForResolvedNode(node)
+	if st == nil {
+		return
+	}
+	docID := contextPackDocID(*node)
+	if summary, err := st.GetAISummary(docID); err == nil && summary != nil {
+		sb.WriteString(appendAISummarySection(summary))
+	}
+	if gov, err := st.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
+		sb.WriteString(appendGovernanceSection(gov))
+	}
+	if research, err := st.GetResearchMetadata(docID); err == nil && !store.IsResearchEmpty(research) {
+		sb.WriteString(appendResearchSection(research))
+	}
+	if quality, err := st.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
+		sb.WriteString(appendMetadataQualitySection(quality))
+	}
+	if mentions, err := st.Entity.GetEntityMentions(node.ID); err == nil {
+		sb.WriteString(appendEntitySection(st.Entity, mentions))
+	}
+}
+
+// appendContextEntry renders one deduped entry (heading + excerpt + content +
+// governance metadata) into sb.
+func (h *handler) appendContextEntry(sb *strings.Builder, i int, entry ctxEntry, render contextRenderOpts) {
+	sr := entry.sr
+	node := sr.Node
+	headings := h.getHeadings(&node)
+	inCount, outCount := h.getEdgeCounts(&node)
+
+	fmt.Fprintf(sb, "\n### %d. %s\n", i+1, node.Name)
+	fmt.Fprintf(sb, "**Path:** %s | **Headings:** %d | **Refs in:** %d | **Refs out:** %d\n",
+		node.FilePath, len(headings), inCount, outCount)
+	if len(entry.sections) > 0 {
+		fmt.Fprintf(sb, "Also matched %d section(s) in this same document: %s\n",
+			len(entry.sections), strings.Join(entry.sections, "; "))
+	}
+
+	if len(headings) > 0 {
+		sb.WriteString("\n#### Structure\n")
+		sb.WriteString(formatHeadingOutline(headings))
+	}
+
+	if node.BodyExcerpt != "" {
+		sb.WriteString("\n")
+		for line := range strings.SplitSeq(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
+			fmt.Fprintf(sb, "> %s\n", line)
+		}
+	}
+
+	if render.includeContent {
+		appendBoundedContent(sb, h, &node, render.maxContentBytes)
+	}
+
+	// Governance metadata — appended when available.
+	h.appendContextEntryMetadata(sb, &node)
+}
+
+// appendContextTailStubs writes the overflow stub list for entries past the budget cap.
+// The budget-check condition and break MUST stay in the caller's loop.
+func (h *handler) appendContextTailStubs(sb *strings.Builder, shown int, total int, tail []ctxEntry) {
+	fmt.Fprintf(sb, "\n---\n> ⚠ Response budget reached — showing full content for %d of %d documents; the remaining %d follow as stubs (path + refs only, capped). Set includeContent=false, reduce maxNodes, or add project=<name> for their content.\n",
+		shown, total, len(tail))
+	tailStart := sb.Len()
+	listed := 0
+	for _, rest := range tail {
+		rn := rest.sr.Node
+		inC, outC := h.getEdgeCounts(&rn)
+		// Build the stub, then enforce the cap BEFORE appending it — so a single
+		// untrusted FilePath/Name long enough to exceed the whole tail budget on
+		// its own cannot overshoot. Such a stub is counted (below), never written.
+		stub := fmt.Sprintf("> - %s — %s (%d in / %d out)\n", rn.FilePath, rn.Name, inC, outC)
+		if sb.Len()-tailStart+len(stub) > maxTailStubBytes {
+			break
+		}
+		sb.WriteString(stub)
+		listed++
+	}
+	if remaining := len(tail) - listed; remaining > 0 {
+		fmt.Fprintf(sb, "> …and %d more not listed — narrow with project=<name> or a smaller maxNodes.\n", remaining)
+	}
+}
+
+func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	task, opts, render, toolErr := parseContextArgs(args)
+	if toolErr != nil {
+		return toolErr, nil
+	}
+
+	var results []store.SearchResult
+	var err error
+	if h.workspace != nil {
+		results, err = h.workspace.SearchWithOptions(opts)
+	} else {
+		results, err = h.store.Searcher.SearchWithOptions(opts)
+	}
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("search failed: %v", err)), nil
+	}
+
+	format := strings.ToLower(strings.TrimSpace(getStringArg(args, "format", "")))
+	if format == "context_pack" || format == "evidence_pack" {
+		impactDepth := getIntArgClamped(args, "impactDepth", 1, 1, 3)
+		referenceLimit := getIntArgClamped(args, "referenceLimit", 5, 1, 20)
+		return mcp.NewToolResultText(h.renderContextPack(task, results, contextPackOptions{
+			IncludeContent:  render.includeContent,
+			MaxContentBytes: render.maxContentBytes,
+			ImpactDepth:     impactDepth,
+			ReferenceLimit:  referenceLimit,
+		})), nil
+	}
+	if format == "drift_audit" {
+		return mcp.NewToolResultText(h.renderDriftAudit(task, opts.ProjectFilter)), nil
+	}
+
+	// P-v3-1: Collapse to one entry per source file (see dedupeContextResultsByFile).
+	deduped := dedupeContextResultsByFile(results)
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Context for %q\n\nFound %d relevant documents.\n", task, len(deduped))
 
 	for i, entry := range deduped {
-		sr := entry.sr
-		node := sr.Node
-		headings := h.getHeadings(&node)
-		inCount, outCount := h.getEdgeCounts(&node)
-
-		fmt.Fprintf(&sb, "\n### %d. %s\n", i+1, node.Name)
-		fmt.Fprintf(&sb, "**Path:** %s | **Headings:** %d | **Refs in:** %d | **Refs out:** %d\n",
-			node.FilePath, len(headings), inCount, outCount)
-		if len(entry.sections) > 0 {
-			fmt.Fprintf(&sb, "Also matched %d section(s) in this same document: %s\n",
-				len(entry.sections), strings.Join(entry.sections, "; "))
-		}
-
-		if len(headings) > 0 {
-			sb.WriteString("\n#### Structure\n")
-			sb.WriteString(formatHeadingOutline(headings))
-		}
-
-		if node.BodyExcerpt != "" {
-			sb.WriteString("\n")
-			for line := range strings.SplitSeq(strings.TrimRight(node.BodyExcerpt, "\n"), "\n") {
-				fmt.Fprintf(&sb, "> %s\n", line)
-			}
-		}
-
-		if includeContent {
-			appendBoundedContent(&sb, h, &node, maxContentBytes)
-		}
-
-		// Governance metadata — appended when available.
-		if st := h.getStoreForResolvedNode(&node); st != nil {
-			docID := contextPackDocID(node)
-			if summary, err := st.GetAISummary(docID); err == nil && summary != nil {
-				sb.WriteString(appendAISummarySection(summary))
-			}
-			if gov, err := st.GetGovernanceMetadata(docID); err == nil && !store.IsGovernanceEmpty(gov) {
-				sb.WriteString(appendGovernanceSection(gov))
-			}
-			if research, err := st.GetResearchMetadata(docID); err == nil && !store.IsResearchEmpty(research) {
-				sb.WriteString(appendResearchSection(research))
-			}
-			if quality, err := st.GetMetadataQuality(docID, time.Time{}); err == nil && quality != nil {
-				sb.WriteString(appendMetadataQualitySection(quality))
-			}
-			if mentions, err := st.Entity.GetEntityMentions(node.ID); err == nil {
-				sb.WriteString(appendEntitySection(st.Entity, mentions))
-			}
-		}
+		h.appendContextEntry(&sb, i, entry, render)
 
 		// Check payload budget after rendering each document. P-v6-2 originally
 		// dropped the remaining documents entirely (count-only notice), erasing
@@ -224,27 +283,7 @@ func (h *handler) handleContext(ctx context.Context, request mcp.CallToolRequest
 		// large maxNodes cannot ~double the payload; stubs past the cap are disclosed
 		// as a trailing count, never silently dropped.
 		if sb.Len() >= maxContextResponseBytes && i < len(deduped)-1 {
-			tail := deduped[i+1:]
-			fmt.Fprintf(&sb, "\n---\n> ⚠ Response budget reached — showing full content for %d of %d documents; the remaining %d follow as stubs (path + refs only, capped). Set includeContent=false, reduce maxNodes, or add project=<name> for their content.\n",
-				i+1, len(deduped), len(tail))
-			tailStart := sb.Len()
-			listed := 0
-			for _, rest := range tail {
-				rn := rest.sr.Node
-				inC, outC := h.getEdgeCounts(&rn)
-				// Build the stub, then enforce the cap BEFORE appending it — so a single
-				// untrusted FilePath/Name long enough to exceed the whole tail budget on
-				// its own cannot overshoot. Such a stub is counted (below), never written.
-				stub := fmt.Sprintf("> - %s — %s (%d in / %d out)\n", rn.FilePath, rn.Name, inC, outC)
-				if sb.Len()-tailStart+len(stub) > maxTailStubBytes {
-					break
-				}
-				sb.WriteString(stub)
-				listed++
-			}
-			if remaining := len(tail) - listed; remaining > 0 {
-				fmt.Fprintf(&sb, "> …and %d more not listed — narrow with project=<name> or a smaller maxNodes.\n", remaining)
-			}
+			h.appendContextTailStubs(&sb, i+1, len(deduped), deduped[i+1:])
 			break
 		}
 	}
