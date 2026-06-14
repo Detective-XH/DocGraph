@@ -137,28 +137,88 @@ func indexStore(root string, st *store.Store, force bool) error {
 	// but a user indexing a large git repo who doesn't want it skips the cost here.
 	gitEnabled := git.IsRepo(root) && !noHistory
 
-	// FTS bulk-rebuild fast path. The AFTER INSERT triggers that tokenize text into
-	// the two FTS5 indexes (section_chunks_fts over section bodies, nodes_fts over
-	// name/qname/body_excerpt/metadata) are the #1 index cost (~42% of wall):
-	// incremental hash-flush+automerge per batch. On a from-scratch build (FTS empty)
-	// it is cheaper to drop the triggers, bulk-load the base rows, then 'rebuild' each
-	// FTS in one optimal pass (measured: section ~2.4x, nodes ~5x trigger cost on the
-	// real corpus). Incremental runs (FTS already populated) keep the triggers. The
-	// probe runs under IndexMu (held above) so a watcher pass can't observe a
-	// transient empty FTS mid-build.
+	fullBuild, err := indexStoreSetupFTS(st)
+	if err != nil {
+		return err
+	}
+
+	var nNew, nSkip int
+	var changedDocIDs []string
+
+	// batch-N: accumulate parsed files, then flush nodes + section chunks across
+	// the batch in single InsertNodes/UpsertSectionChunks calls (see indexStoreFlush).
+	// Those are the two FTS5-backed tables; coalescing collapses ~one commit-per-file
+	// into ~one commit-per-batch. Profiling (full ~10.5k-file corpus) showed the win is
+	// transaction/fsync overhead, NOT segment-merge: fts5IndexMergeLevel stays flat
+	// (~9.5s) while sys time and commit count drop sharply — ~17% wall at N=500 vs
+	// the per-file baseline.
 	//
-	// Combined gate (sectionEmpty || nodesEmpty): the two rebuilds are independent, so
-	// a crash BETWEEN them leaves one FTS empty while the other is populated. ORing the
-	// two probes means the next run re-enters this path whenever EITHER index is empty;
-	// every file then hash-skips (nNew==0) and BOTH rebuilds re-run from the intact base
-	// tables. 'rebuild' is idempotent, so re-running the already-populated one is safe.
-	// This is why the tail rebuild is gated on fullBuild, NOT on nNew. The OR can only
-	// make the gate fire MORE often (toward the safe full-rebuild path), never less.
-	//
-	// Drop ALL three sync triggers per table. For section_chunks a fresh build still
-	// fires _update via UpsertSectionChunks' ON CONFLICT DO UPDATE on duplicate section
-	// node_ids; nodes uses INSERT OR IGNORE (no UPDATE) so only _insert would fire, but
-	// all three are dropped for symmetry and safety.
+	// Dual bound: flush at batchN files OR batchBytes of accumulated section text,
+	// whichever comes first. The byte cap keeps peak heap bounded on large-document
+	// corpora where a pure file count could buffer far more than the ~90MB this
+	// corpus adds. Flushing on a file boundary preserves crash-atomicity — a lost
+	// batch re-indexes cleanly (file hashes are written in the flush via UpsertFile).
+	// batch[:0] + batchTextBytes reset stay in this loop (the lifted indexStoreFlush
+	// no longer owns the locals the former closure did).
+	const batchN = 500
+	const batchBytes = 32 << 20 // 32 MiB of section text
+	batch := make([]*parser.ParseResult, 0, batchN)
+	var batchTextBytes int
+
+	for _, e := range entries {
+		res, unchanged := indexStorePrepareEntry(st, e, codeDocEnabled, force)
+		if unchanged {
+			nSkip++
+			continue
+		}
+		if res == nil {
+			continue // excluded ext / read|delete|parse error (already logged)
+		}
+		batch = append(batch, res)
+		for _, c := range res.SectionChunks {
+			batchTextBytes += len(c.Text)
+		}
+		nNew++
+		if len(batch) >= batchN || batchTextBytes >= batchBytes {
+			if err := indexStoreFlush(st, root, gitEnabled, batch, &changedDocIDs); err != nil {
+				return err
+			}
+			batch = batch[:0]
+			batchTextBytes = 0
+		}
+	}
+	if err := indexStoreFlush(st, root, gitEnabled, batch, &changedDocIDs); err != nil {
+		return err
+	}
+	return indexStoreTail(st, fullBuild, len(entries), nNew, nSkip, changedDocIDs)
+}
+
+// indexStoreSetupFTS detects whether either FTS index is empty (a from-scratch or
+// crash-recovery build) and, if so, drops the sync triggers so the per-file inserts
+// bulk-load the base rows for a single optimal 'rebuild' pass in indexStoreTail.
+//
+// The AFTER INSERT triggers that tokenize text into the two FTS5 indexes
+// (section_chunks_fts over section bodies, nodes_fts over name/qname/body_excerpt/
+// metadata) are the #1 index cost (~42% of wall): incremental hash-flush+automerge
+// per batch. On a from-scratch build (FTS empty) it is cheaper to drop the triggers,
+// bulk-load the base rows, then 'rebuild' each FTS in one optimal pass (measured:
+// section ~2.4x, nodes ~5x trigger cost on the real corpus). Incremental runs (FTS
+// already populated) keep the triggers. The probe runs under IndexMu (held by the
+// caller) so a watcher pass can't observe a transient empty FTS mid-build.
+//
+// Combined gate (sectionEmpty || nodesEmpty): the two rebuilds are independent, so a
+// crash BETWEEN them leaves one FTS empty while the other is populated. ORing the two
+// probes means the next run re-enters this path whenever EITHER index is empty; every
+// file then hash-skips (nNew==0) and BOTH rebuilds re-run from the intact base tables.
+// 'rebuild' is idempotent, so re-running the already-populated one is safe. This is why
+// the tail rebuild is gated on fullBuild, NOT on nNew. The OR can only make the gate
+// fire MORE often (toward the safe full-rebuild path), never less.
+//
+// Drop ALL three sync triggers per table. For section_chunks a fresh build still fires
+// _update via UpsertSectionChunks' ON CONFLICT DO UPDATE on duplicate section node_ids;
+// nodes uses INSERT OR IGNORE (no UPDATE) so only _insert would fire, but all three are
+// dropped for symmetry and safety.
+func indexStoreSetupFTS(st *store.Store) (bool, error) {
 	sectionEmpty, ftsErr := st.Fts.SectionFTSIsEmpty()
 	if ftsErr != nil {
 		fmt.Fprintf(os.Stderr, "section FTS probe: %v\n", ftsErr)
@@ -172,155 +232,137 @@ func indexStore(root string, st *store.Store, force bool) error {
 	fullBuild := sectionEmpty || nodesEmpty
 	if fullBuild {
 		if err := st.Fts.DropSectionFTSTriggers(); err != nil {
-			return err
+			return false, err
 		}
 		if err := st.Fts.DropNodesFTSTriggers(); err != nil {
-			return err
+			return false, err
 		}
 	}
+	return fullBuild, nil
+}
 
-	var nNew, nSkip int
-	var changedDocIDs []string
-
-	// batch-N: accumulate parsed files, then flush nodes + section chunks across
-	// the batch in single InsertNodes/UpsertSectionChunks calls. Those are the two
-	// FTS5-backed tables; coalescing collapses ~one commit-per-file into ~one
-	// commit-per-batch. Profiling (full ~10.5k-file corpus) showed the win is
-	// transaction/fsync overhead, NOT segment-merge: fts5IndexMergeLevel stays flat
-	// (~9.5s) while sys time and commit count drop sharply — ~17% wall at N=500 vs
-	// the per-file baseline. The non-FTS dependent writes stay a per-file loop inside
-	// the flush — they only need to run AFTER the batch node insert so FK references
-	// (section_chunks/edges/entity_mentions → nodes) resolve.
-	//
-	// Dual bound: flush at batchN files OR batchBytes of accumulated section text,
-	// whichever comes first. The byte cap keeps peak heap bounded on large-document
-	// corpora where a pure file count could buffer far more than the ~90MB this
-	// corpus adds. Flushing on a file boundary preserves crash-atomicity — a lost
-	// batch re-indexes cleanly (file hashes are written in the flush via UpsertFile).
-	const batchN = 500
-	const batchBytes = 32 << 20 // 32 MiB of section text
-	batch := make([]*parser.ParseResult, 0, batchN)
-	var batchTextBytes int
-
-	flush := func() error {
-		if len(batch) == 0 {
-			return nil
-		}
-		// Phase A — nodes first (FK parents), then section chunks, batched.
-		var allNodes []store.Node
-		var allChunks []store.SectionChunk
-		for _, res := range batch {
-			allNodes = append(allNodes, res.DocNode)
-			allNodes = append(allNodes, res.Headings...)
-			allNodes = append(allNodes, res.Defs...)
-			allNodes = append(allNodes, res.Tags...)
-			allChunks = append(allChunks, res.SectionChunks...)
-		}
-		if err := st.InsertNodes(allNodes); err != nil {
-			return err
-		}
-		if len(allChunks) > 0 {
-			if err := st.UpsertSectionChunks(allChunks); err != nil {
-				return err
-			}
-		}
-		// Phase B — per-file dependent writes (nodes now exist, so FKs resolve).
-		// Collect git history for the whole batch up front, fanning the per-file
-		// `git log --follow` forks across NumCPU workers. On a large versioned
-		// corpus this is by far the dominant index cost (a serial loop pegs one
-		// core on `--follow` rename detection while the rest idle); see
-		// git.CollectHistories. The forks are pure and independent; the
-		// UpsertFileHistory writes below stay serial under IndexMu (SQLite is a
-		// single writer), so results[idx] aligns with the batch order.
-		var histories []git.FileHistory
-		if gitEnabled {
-			relPaths := make([]string, len(batch))
-			for i, res := range batch {
-				relPaths[i] = res.FileInfo.Path
-			}
-			histories = git.CollectHistories(root, relPaths, runtime.NumCPU())
-		}
-		for idx, res := range batch {
-			var fh git.FileHistory
-			if gitEnabled {
-				fh = histories[idx]
-			}
-			if err := indexcore.WriteDependents(st, res, fh, gitEnabled, &changedDocIDs, ""); err != nil {
-				return err
-			}
-		}
-		batch = batch[:0]
-		batchTextBytes = 0
-		return nil
-	}
-
-	for _, e := range entries {
-		if !codeDocEnabled && codedoc.IsCodeExt(strings.ToLower(filepath.Ext(e.RelPath))) {
-			continue
-		}
-		ext := strings.ToLower(filepath.Ext(e.RelPath))
-		src, err := docformat.ReadFileCapped(e.Path, docformat.MaxFileSizeByExt[ext])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
-			continue
-		}
-		hash := sha256Hex(src)
-		if old, _ := st.GetFileHash(e.RelPath); hash == old {
-			nSkip++
-			continue
-		}
-		// Delete stale section chunks, metadata, entity data, and node/edge data
-		// before re-parsing so cascade-deleted IDs are still reachable. Idempotent.
-		// Eager (phase 1): InsertEdges/InsertUnresolvedRefs are plain INSERTs, so the
-		// stale rows must be gone before the batch flush re-inserts them.
-		//
-		// Skip on a --force build: removeIndexDB already wiped the DB, so the base
-		// tables are empty and every one of these per-file deletes matches 0 rows —
-		// ~9 DELETEs across 7 txns per file (plus a full-table PruneOrphanEntities
-		// anti-join), pure no-op overhead across the whole corpus. Guard on `force`,
-		// NOT on `fullBuild`: `fullBuild` is FTS-emptiness, which is ALSO true on a
-		// crash-recovery incremental run (base rows intact, FTS lost) — there a
-		// changed file's stale rows MUST still be deleted or the non-idempotent
-		// inserts above duplicate edges / orphan chunks. force==true is the only
-		// signal meaning "removeIndexDB ran ⟹ DB empty ⟹ nothing to delete".
-		if !force {
-			if err := st.DeleteSectionChunksByFile(e.RelPath); err != nil {
-				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
-				continue
-			}
-			if err := st.DeleteDocumentMetadataByFile(e.RelPath); err != nil {
-				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
-				continue
-			}
-			if err := st.Entity.DeleteEntityData(e.RelPath); err != nil {
-				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
-				continue
-			}
-			if err := st.DeleteFileData(e.RelPath); err != nil {
-				fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
-				continue
-			}
-		}
-		res, err := dispatchParse(e.Path, e.RelPath, src, hash)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
-			continue
-		}
-		res.FileInfo.ModifiedAt = e.ModifiedAt
-		batch = append(batch, res)
-		for _, c := range res.SectionChunks {
-			batchTextBytes += len(c.Text)
-		}
-		nNew++
-		if len(batch) >= batchN || batchTextBytes >= batchBytes {
-			if err := flush(); err != nil {
-				return err
-			}
-		}
-	}
-	if err := flush(); err != nil {
+// indexStoreDeleteStale removes the stale section chunks, metadata, entity data, and
+// node/edge/file rows for relPath before a re-parse, so cascade-deleted IDs are still
+// reachable. The deletes are eager (phase 1): InsertEdges/InsertUnresolvedRefs are
+// plain INSERTs, so stale rows must be gone before the batch flush re-inserts them.
+// Returns the first delete error; the caller logs it and skips the file (matching the
+// original per-delete log-then-continue, since only the first failure ran).
+func indexStoreDeleteStale(st *store.Store, relPath string) error {
+	if err := st.DeleteSectionChunksByFile(relPath); err != nil {
 		return err
 	}
+	if err := st.DeleteDocumentMetadataByFile(relPath); err != nil {
+		return err
+	}
+	if err := st.Entity.DeleteEntityData(relPath); err != nil {
+		return err
+	}
+	if err := st.DeleteFileData(relPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+// indexStorePrepareEntry reads, hashes, deletes-stale (unless force), and parses one
+// scanned entry. It returns (res, false) with a parsed result to batch, (nil, true)
+// when the file is unchanged (hash hit → caller bumps nSkip), or (nil, false) to skip
+// silently (excluded ext or a read/delete/parse error already logged to stderr — each
+// was a `continue` in the original loop).
+//
+// force MUST mean "the DB was just wiped" (--force runs removeIndexDB before reopening,
+// so base tables are empty): then the per-file deletes are skipped as no-ops. Guard on
+// `force`, NOT on `fullBuild`: `fullBuild` is FTS-emptiness, which is ALSO true on a
+// crash-recovery incremental run (base rows intact, FTS lost) — there a changed file's
+// stale rows MUST still be deleted or the non-idempotent inserts duplicate edges /
+// orphan chunks. force==true is the only signal meaning "DB empty ⟹ nothing to delete".
+func indexStorePrepareEntry(st *store.Store, e scanner.FileEntry, codeDocEnabled, force bool) (*parser.ParseResult, bool) {
+	ext := strings.ToLower(filepath.Ext(e.RelPath))
+	if !codeDocEnabled && codedoc.IsCodeExt(ext) {
+		return nil, false
+	}
+	src, err := docformat.ReadFileCapped(e.Path, docformat.MaxFileSizeByExt[ext])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "skip %s: %v\n", e.RelPath, err)
+		return nil, false
+	}
+	hash := sha256Hex(src)
+	if old, _ := st.GetFileHash(e.RelPath); hash == old {
+		return nil, true
+	}
+	if !force {
+		if err := indexStoreDeleteStale(st, e.RelPath); err != nil {
+			fmt.Fprintf(os.Stderr, "delete %s: %v\n", e.RelPath, err)
+			return nil, false
+		}
+	}
+	res, err := dispatchParse(e.Path, e.RelPath, src, hash)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "parse %s: %v\n", e.RelPath, err)
+		return nil, false
+	}
+	res.FileInfo.ModifiedAt = e.ModifiedAt
+	return res, false
+}
+
+// indexStoreFlush writes one accumulated batch: nodes first (FK parents) then section
+// chunks, both batched, followed by per-file dependent writes. It is the lifted form of
+// the former flush closure; the caller resets batch[:0] + batchTextBytes after it
+// returns. A nil/empty batch is a no-op.
+func indexStoreFlush(st *store.Store, root string, gitEnabled bool, batch []*parser.ParseResult, changedDocIDs *[]string) error {
+	if len(batch) == 0 {
+		return nil
+	}
+	// Phase A — nodes first (FK parents), then section chunks, batched.
+	var allNodes []store.Node
+	var allChunks []store.SectionChunk
+	for _, res := range batch {
+		allNodes = append(allNodes, res.DocNode)
+		allNodes = append(allNodes, res.Headings...)
+		allNodes = append(allNodes, res.Defs...)
+		allNodes = append(allNodes, res.Tags...)
+		allChunks = append(allChunks, res.SectionChunks...)
+	}
+	if err := st.InsertNodes(allNodes); err != nil {
+		return err
+	}
+	if len(allChunks) > 0 {
+		if err := st.UpsertSectionChunks(allChunks); err != nil {
+			return err
+		}
+	}
+	// Phase B — per-file dependent writes (nodes now exist, so FKs resolve).
+	// Collect git history for the whole batch up front, fanning the per-file
+	// `git log --follow` forks across NumCPU workers. On a large versioned
+	// corpus this is by far the dominant index cost (a serial loop pegs one
+	// core on `--follow` rename detection while the rest idle); see
+	// git.CollectHistories. The forks are pure and independent; the
+	// UpsertFileHistory writes below stay serial under IndexMu (SQLite is a
+	// single writer), so histories[idx] aligns with the batch order.
+	var histories []git.FileHistory
+	if gitEnabled {
+		relPaths := make([]string, len(batch))
+		for i, res := range batch {
+			relPaths[i] = res.FileInfo.Path
+		}
+		histories = git.CollectHistories(root, relPaths, runtime.NumCPU())
+	}
+	for idx, res := range batch {
+		var fh git.FileHistory
+		if gitEnabled {
+			fh = histories[idx]
+		}
+		if err := indexcore.WriteDependents(st, res, fh, gitEnabled, changedDocIDs, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// indexStoreTail rebuilds both FTS indexes (only on a fullBuild) and restores the sync
+// triggers, then prunes orphan entities and (when any file changed) runs the resolver +
+// incremental similarity. Unlike indexProjectOpts, PruneOrphanEntities runs
+// unconditionally here.
+func indexStoreTail(st *store.Store, fullBuild bool, totalEntries, nNew, nSkip int, changedDocIDs []string) error {
 	// Build both FTS indexes in one bulk pass each and restore the sync triggers.
 	// Gated on fullBuild (not nNew): a crash-recovery run hash-skips every file
 	// (nNew==0) yet still needs the FTS repopulated from the intact base tables.
@@ -346,7 +388,7 @@ func indexStore(root string, st *store.Store, force bool) error {
 			return err
 		}
 	}
-	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", len(entries), nNew, nSkip)
+	fmt.Fprintf(os.Stderr, "Indexed %d files (%d new, %d unchanged)\n", totalEntries, nNew, nSkip)
 	if err := st.Entity.PruneOrphanEntities(); err != nil {
 		fmt.Fprintf(os.Stderr, "prune orphan entities: %v\n", err)
 	}
@@ -357,7 +399,6 @@ func indexStore(root string, st *store.Store, force bool) error {
 		if err := similarity.ComputeSimilarityIncremental(st, changedDocIDs, similarityThreshold); err != nil {
 			fmt.Fprintf(os.Stderr, "similarity: %v\n", err)
 		}
-
 	}
 	return nil
 }

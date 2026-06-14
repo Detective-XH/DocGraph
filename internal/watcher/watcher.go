@@ -75,6 +75,131 @@ func WatchWithLimit(paths []string, maxWatches int, onChange OnChangeFunc) error
 	return WatchWithContext(context.Background(), paths, 2*time.Second, maxWatches, onChange)
 }
 
+// addRoots resolves each path to an absolute path, registers it synchronously
+// with the watcher, and returns the list of absolute root paths. Subdirectory
+// expansion is deferred to the caller (run in a background goroutine via
+// addRecursive). The root's own fd is counted by the addRecursive walk (its
+// first visit re-Adds the root idempotently), so it is not double-counted here.
+func addRoots(w *fsnotify.Watcher, paths []string) ([]string, error) {
+	roots := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return nil, fmt.Errorf("abs path %s: %w", p, err)
+		}
+		// Add only the root synchronously so the event loop can start immediately.
+		// Subdirectory expansion runs in the background; new dirs created after
+		// startup are handled by the Create-event handler below.
+		if err := w.Add(abs); err != nil {
+			return nil, fmt.Errorf("watch %s: %w", abs, err)
+		}
+		roots = append(roots, abs)
+	}
+	return roots, nil
+}
+
+// classifyWatchEvent is a pure filter that decides whether a filesystem event
+// should be forwarded to onChange. It returns the project root and relative path
+// on success (ok=true). It has no side effects — all stateful operations
+// (Create-dir addRecursive, debounce scheduling) remain in the caller.
+//
+// Ordering invariant: the caller MUST invoke handleCreateDir BEFORE calling this
+// function. A newly-created directory fails the supported-ext check (classify →
+// ok=false → continue), so if the addRecursive side-effect ran after classify it
+// would never execute for directory Create events.
+func classifyWatchEvent(name string, roots []string) (root, rel string, ok bool) {
+	base := filepath.Base(name)
+	isIgnoreRuleFile := base == ".docgraphignore" || base == ".gitignore"
+	// Ignore-rule files have no supported extension, so the check below would
+	// drop them — but editing one changes which files are in scope. Let their
+	// events through (as a reindex trigger; the rel path is forwarded to
+	// onChange, which re-scans the whole project and runs the ignore-aware
+	// reconcile that prunes any newly-excluded files). Without this, an agent
+	// writing a .docgraphignore exclusion on a live server would see no effect
+	// until some other file happened to change.
+	if !isIgnoreRuleFile && !docformat.SupportedExt(strings.ToLower(filepath.Ext(name))) {
+		return "", "", false
+	}
+	root = findProjectRoot(name, roots)
+	if root == "" {
+		return "", "", false
+	}
+	rel, err := filepath.Rel(root, name)
+	if err != nil {
+		return "", "", false
+	}
+	return root, rel, true
+}
+
+// debouncer coalesces rapid filesystem events into batched onChange calls. The
+// per-call state that was previously captured as local closure variables now
+// lives here so it can be reasoned about separately.
+//
+// Concurrency contract: schedule is called ONLY from the single event-loop
+// goroutine, so d.timer is touched by exactly one goroutine and requires no
+// locking. The mutex guards ONLY d.pending, which is also written by the
+// AfterFunc timer goroutine. The AfterFunc callback MUST NOT touch d.timer.
+type debouncer struct {
+	mu       sync.Mutex
+	pending  map[string][]string
+	timer    *time.Timer
+	debounce time.Duration
+	onChange OnChangeFunc
+}
+
+// schedule appends rel to the pending set for root and arms (or re-arms) the
+// debounce timer. It preserves the original Stop-then-reassign idiom exactly:
+// timer is stopped before reassignment so the previous AfterFunc callback cannot
+// fire while the new one is being installed. The callback swaps d.pending under
+// the mutex, releases the lock, then dispatches each project batch through a
+// per-project recover wrapper so a panicking reindex cannot kill the server.
+func (d *debouncer) schedule(root, rel string) {
+	d.mu.Lock()
+	d.pending[root] = append(d.pending[root], rel)
+	d.mu.Unlock()
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+	d.timer = time.AfterFunc(d.debounce, func() {
+		d.mu.Lock()
+		batch := d.pending
+		d.pending = make(map[string][]string)
+		d.mu.Unlock()
+		for projectPath, files := range batch {
+			// onChange runs the reindex pipeline (parse → resolver →
+			// similarity → store) over files that just changed on disk —
+			// i.e. untrusted content. This callback executes on the
+			// AfterFunc timer goroutine, which has no parent recover, so
+			// an unrecovered panic here (e.g. a malformed document that
+			// slips past the per-file parser recover) would kill the
+			// whole serve process. Contain it per project so one bad
+			// file can neither crash the server nor block re-indexing of
+			// the other projects in the batch.
+			func(projectPath string, files []string) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("watcher: recovered from panic re-indexing %s: %v", projectPath, r)
+					}
+				}()
+				d.onChange(projectPath, files)
+			}(projectPath, files)
+		}
+	})
+}
+
+// handleCreateDir watches a newly-created directory. It is called BEFORE
+// classifyWatchEvent in the event loop to preserve the ordering invariant: new
+// directories must be registered with fsnotify even when they contain no
+// supported-ext files (which would cause classify to return ok=false).
+func handleCreateDir(w *fsnotify.Watcher, event fsnotify.Event, budget *watchBudget) {
+	if event.Op&fsnotify.Create == 0 {
+		return
+	}
+	if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+		_ = addRecursive(w, event.Name, budget)
+	}
+}
+
 func WatchWithContext(ctx context.Context, paths []string, debounce time.Duration, maxWatches int, onChange OnChangeFunc) error {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -84,21 +209,9 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 
 	budget := &watchBudget{max: maxWatches}
 
-	roots := make([]string, 0, len(paths))
-	for _, p := range paths {
-		abs, err := filepath.Abs(p)
-		if err != nil {
-			return fmt.Errorf("abs path %s: %w", p, err)
-		}
-		// Add only the root synchronously so the event loop can start immediately.
-		// Subdirectory expansion runs in the background; new dirs created after
-		// startup are handled by the Create-event handler below. The root's own fd
-		// is counted by the addRecursive walk below (its first visit re-Adds the
-		// root idempotently), so it is not double-counted here.
-		if err := w.Add(abs); err != nil {
-			return fmt.Errorf("watch %s: %w", abs, err)
-		}
-		roots = append(roots, abs)
+	roots, err := addRoots(w, paths)
+	if err != nil {
+		return err
 	}
 	go func() {
 		for _, abs := range roots {
@@ -106,11 +219,11 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 		}
 	}()
 
-	var (
-		mu      sync.Mutex
-		pending = make(map[string][]string)
-		timer   *time.Timer
-	)
+	deb := &debouncer{
+		pending:  make(map[string][]string),
+		debounce: debounce,
+		onChange: onChange,
+	}
 
 	for {
 		select {
@@ -123,62 +236,12 @@ func WatchWithContext(ctx context.Context, paths []string, debounce time.Duratio
 			if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove) == 0 {
 				continue
 			}
-			if event.Op&fsnotify.Create != 0 {
-				if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
-					_ = addRecursive(w, event.Name, budget)
-				}
-			}
-			// Ignore-rule files have no supported extension, so the check below would
-			// drop them — but editing one changes which files are in scope. Let their
-			// events through (as a reindex trigger; the rel path is forwarded to
-			// onChange, which re-scans the whole project and runs the ignore-aware
-			// reconcile that prunes any newly-excluded files). Without this, an agent
-			// writing a .docgraphignore exclusion on a live server would see no effect
-			// until some other file happened to change.
-			base := filepath.Base(event.Name)
-			isIgnoreRuleFile := base == ".docgraphignore" || base == ".gitignore"
-			if !isIgnoreRuleFile && !docformat.SupportedExt(strings.ToLower(filepath.Ext(event.Name))) {
+			handleCreateDir(w, event, budget)
+			root, rel, ok := classifyWatchEvent(event.Name, roots)
+			if !ok {
 				continue
 			}
-			root := findProjectRoot(event.Name, roots)
-			if root == "" {
-				continue
-			}
-			rel, err := filepath.Rel(root, event.Name)
-			if err != nil {
-				continue
-			}
-			mu.Lock()
-			pending[root] = append(pending[root], rel)
-			mu.Unlock()
-			if timer != nil {
-				timer.Stop()
-			}
-			timer = time.AfterFunc(debounce, func() {
-				mu.Lock()
-				batch := pending
-				pending = make(map[string][]string)
-				mu.Unlock()
-				for projectPath, files := range batch {
-					// onChange runs the reindex pipeline (parse → resolver →
-					// similarity → store) over files that just changed on disk —
-					// i.e. untrusted content. This callback executes on the
-					// AfterFunc timer goroutine, which has no parent recover, so
-					// an unrecovered panic here (e.g. a malformed document that
-					// slips past the per-file parser recover) would kill the
-					// whole serve process. Contain it per project so one bad
-					// file can neither crash the server nor block re-indexing of
-					// the other projects in the batch.
-					func(projectPath string, files []string) {
-						defer func() {
-							if r := recover(); r != nil {
-								log.Printf("watcher: recovered from panic re-indexing %s: %v", projectPath, r)
-							}
-						}()
-						onChange(projectPath, files)
-					}(projectPath, files)
-				}
-			})
+			deb.schedule(root, rel)
 		case err, ok := <-w.Errors:
 			if !ok {
 				return nil

@@ -24,47 +24,25 @@ const (
 	garbageReplacementRatio = 0.3       // U+FFFD rune fraction above which page text is treated as encoding garbage
 )
 
-func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
-	_ = absPath
-	r, err := pdf.OpenBytes(src)
-	if err != nil {
-		return nil, fmt.Errorf("extractPDF: open PDF: %w", err)
-	}
+// pdfPageResult holds the outputs of extractPDFPages.
+type pdfPageResult struct {
+	pageTexts    []string
+	totalChars   int
+	rawLinks     []parser.RawLink
+	pageWarnings []store.MetadataTuple
+}
 
-	numPages := r.NumPage()
-	if numPages > pdfMaxPages {
-		return nil, fmt.Errorf("extractPDF: PDF has %d pages, exceeds cap of %d", numPages, pdfMaxPages)
-	}
-
-	// --- Extract Info dict via the v0.6.0 Metadata API. r.Info() wraps
-	// Trailer → Info (not Trailer → Root → Info) and parses dates per PDF
-	// spec §14.3.3, so we no longer hand-walk the dictionary. ---
-	info := r.Info()
-	docTitle := strings.TrimSpace(info.Title())
-	docAuthor := strings.TrimSpace(info.Author())
-	docSubject := strings.TrimSpace(info.Subject())
-	docKeywords := strings.TrimSpace(info.Keywords())
-	// CreationDate() returns a parsed time.Time (zero on absent/unparseable).
-	// Normalize to an RFC3339 UTC timestamp so the stored tuple is a clean,
-	// sortable ISO date rather than the raw "D:YYYYMMDDHHmmSS±HH'mm'" string.
-	var docCreationDate string
-	if t := info.CreationDate(); !t.IsZero() {
-		docCreationDate = t.UTC().Format(time.RFC3339)
-	}
-
-	// Determine display name: prefer title from info dict, else basename.
-	docName := docTitle
-	if docName == "" {
-		docName = filepath.Base(relPath)
-	}
-
-	// --- Extract per-page text and links ---
+// extractPDFPages iterates over every page: caches fonts, calls GetPlainText,
+// applies the security gate (U+FFFD garbage detection), and collects URI links.
+// Page-level warning tuples are returned separately so the orchestrator can
+// place them before the Info-dict tuples (preserving metaTuples append order).
+func extractPDFPages(r *pdf.Reader, relPath string, numPages int) pdfPageResult {
 	fonts := make(map[string]*pdf.Font)
-	var chunks []store.SectionChunk
-	var rawLinks []parser.RawLink
-	var totalChars int
-	var metaTuples []store.MetadataTuple
 	pageTexts := make([]string, numPages)
+	var rawLinks []parser.RawLink
+	var pageWarnings []store.MetadataTuple
+	var totalChars int
+
 	for n := 1; n <= numPages; n++ {
 		page := r.Page(n)
 		// Cache fonts for performance.
@@ -83,7 +61,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 			// on untrusted bytes, so sanitize + bound it and tag it under a fixed
 			// sub-key that cannot be confused with the structured detections above
 			// (prevents metadata/prompt injection via a crafted PDF).
-			metaTuples = append(metaTuples, store.MetadataTuple{
+			pageWarnings = append(pageWarnings, store.MetadataTuple{
 				Key:       "warning",
 				Value:     "extraction-failed:plaintext-error:" + sanitizeWarningDetail(err.Error()),
 				ValueType: "string",
@@ -96,7 +74,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 			// density is the reliable signal that an unlisted CMap decoded to
 			// replacement characters; discard rather than index the garbage.
 			if err == nil {
-				metaTuples = append(metaTuples, store.MetadataTuple{
+				pageWarnings = append(pageWarnings, store.MetadataTuple{
 					Key:       "warning",
 					Value:     "extraction-failed:encoding-garbage",
 					ValueType: "string",
@@ -105,35 +83,68 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 			}
 			t = ""
 		}
-		text := t
-		pageTexts[n-1] = text
-		totalChars += len(text)
+		pageTexts[n-1] = t
+		totalChars += len(t)
 
 		// Extract URI annotations from this page (encoding-independent).
 		rawLinks = append(rawLinks, extractPageURIs(page, relPath, n)...)
 	}
 
-	// --- Scanned PDF detection ---
-	avgChars := 0
-	if numPages > 0 {
-		avgChars = totalChars / numPages
+	return pdfPageResult{
+		pageTexts:    pageTexts,
+		totalChars:   totalChars,
+		rawLinks:     rawLinks,
+		pageWarnings: pageWarnings,
 	}
-	isScanned := numPages > 0 && avgChars < pdfScannedThreshold
+}
 
-	// --- Body excerpt from page 1 text (500 byte cap) ---
-	var bodyExcerpt string
-	if len(pageTexts) > 0 {
-		t := strings.TrimSpace(pageTexts[0])
-		if len(t) > pdfExcerptLen {
-			t = t[:pdfExcerptLen]
-		}
-		bodyExcerpt = t
+// extractPDFMeta reads the PDF Info dict and returns the display name and the
+// info metadata tuples (title/author/subject/keywords/creation_date), each
+// gated on non-empty, in the canonical append order.
+func extractPDFMeta(r *pdf.Reader, relPath string) (docName string, infoTuples []store.MetadataTuple) {
+	// --- Extract Info dict via the v0.6.0 Metadata API. r.Info() wraps
+	// Trailer → Info (not Trailer → Root → Info) and parses dates per PDF
+	// spec §14.3.3, so we no longer hand-walk the dictionary. ---
+	info := r.Info()
+	docTitle := strings.TrimSpace(info.Title())
+	docAuthor := strings.TrimSpace(info.Author())
+	docSubject := strings.TrimSpace(info.Subject())
+	docKeywords := strings.TrimSpace(info.Keywords())
+	// CreationDate() returns a parsed time.Time (zero on absent/unparseable).
+	// Normalize to an RFC3339 UTC timestamp so the stored tuple is a clean,
+	// sortable ISO date rather than the raw "D:YYYYMMDDHHmmSS±HH'mm'" string.
+	var docCreationDate string
+	if t := info.CreationDate(); !t.IsZero() {
+		docCreationDate = t.UTC().Format(time.RFC3339)
 	}
 
-	// --- Build page nodes, section chunks, and containment edges ---
-	now := time.Now().Unix()
-	var pageNodes []store.Node
-	var edges []store.Edge
+	// Determine display name: prefer title from info dict, else basename.
+	docName = docTitle
+	if docName == "" {
+		docName = filepath.Base(relPath)
+	}
+
+	if docTitle != "" {
+		infoTuples = append(infoTuples, store.MetadataTuple{Key: "pdf.title", Value: docTitle, ValueType: "string", Source: "pdf_info"})
+	}
+	if docAuthor != "" {
+		infoTuples = append(infoTuples, store.MetadataTuple{Key: "pdf.author", Value: docAuthor, ValueType: "string", Source: "pdf_info"})
+	}
+	if docSubject != "" {
+		infoTuples = append(infoTuples, store.MetadataTuple{Key: "pdf.subject", Value: docSubject, ValueType: "string", Source: "pdf_info"})
+	}
+	if docKeywords != "" {
+		infoTuples = append(infoTuples, store.MetadataTuple{Key: "pdf.keywords", Value: docKeywords, ValueType: "string", Source: "pdf_info"})
+	}
+	if docCreationDate != "" {
+		infoTuples = append(infoTuples, store.MetadataTuple{Key: "pdf.creation_date", Value: docCreationDate, ValueType: "string", Source: "pdf_info"})
+	}
+	return docName, infoTuples
+}
+
+// buildPDFNodes constructs page nodes, containment edges, and section chunks.
+// now must be a single timestamp from the orchestrator so all nodes share it.
+func buildPDFNodes(relPath, hash string, pageTexts []string, isScanned bool, now int64) (pageNodes []store.Node, edges []store.Edge, chunks []store.SectionChunk) {
 	if isScanned {
 		// Single document-level chunk for image-only PDFs; no page nodes needed.
 		chunks = []store.SectionChunk{
@@ -148,57 +159,82 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 				Text:        "",
 			},
 		}
-	} else {
-		for n, text := range pageTexts {
-			pageNum := n + 1
-			nodeID := relPath + "#page-" + strconv.Itoa(pageNum)
-			bounded := text
-			if len(bounded) > pdfMaxTextLen {
-				bounded = bounded[:pdfMaxTextLen]
-			}
-			// Page nodes serve as section anchors (plan: "page nodes serve as the section anchor").
-			// They must exist in nodes before UpsertSectionChunks due to FK constraint.
-			pageNodes = append(pageNodes, store.Node{
-				ID:            nodeID,
-				Kind:          "heading",
-				Name:          "Page " + strconv.Itoa(pageNum),
-				QualifiedName: nodeID,
-				FilePath:      relPath,
-				StartLine:     pageNum,
-				EndLine:       pageNum,
-				Level:         1,
-				UpdatedAt:     now,
-			})
-			edges = append(edges, store.Edge{Source: relPath, Target: nodeID, Kind: "contains"})
-			chunks = append(chunks, store.SectionChunk{
-				NodeID:      nodeID,
-				FilePath:    relPath,
-				StartLine:   pageNum,
-				EndLine:     pageNum,
-				ContentHash: hash,
-				SectionHash: sectionHash(bounded),
-				HeadingPath: "Page " + strconv.Itoa(pageNum),
-				Text:        bounded,
-			})
+		return pageNodes, edges, chunks
+	}
+	for n, text := range pageTexts {
+		pageNum := n + 1
+		nodeID := relPath + "#page-" + strconv.Itoa(pageNum)
+		bounded := text
+		if len(bounded) > pdfMaxTextLen {
+			bounded = bounded[:pdfMaxTextLen]
 		}
+		// Page nodes serve as section anchors (plan: "page nodes serve as the section anchor").
+		// They must exist in nodes before UpsertSectionChunks due to FK constraint.
+		pageNodes = append(pageNodes, store.Node{
+			ID:            nodeID,
+			Kind:          "heading",
+			Name:          "Page " + strconv.Itoa(pageNum),
+			QualifiedName: nodeID,
+			FilePath:      relPath,
+			StartLine:     pageNum,
+			EndLine:       pageNum,
+			Level:         1,
+			UpdatedAt:     now,
+		})
+		edges = append(edges, store.Edge{Source: relPath, Target: nodeID, Kind: "contains"})
+		chunks = append(chunks, store.SectionChunk{
+			NodeID:      nodeID,
+			FilePath:    relPath,
+			StartLine:   pageNum,
+			EndLine:     pageNum,
+			ContentHash: hash,
+			SectionHash: sectionHash(bounded),
+			HeadingPath: "Page " + strconv.Itoa(pageNum),
+			Text:        bounded,
+		})
+	}
+	return pageNodes, edges, chunks
+}
+
+func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
+	_ = absPath
+	r, err := pdf.OpenBytes(src)
+	if err != nil {
+		return nil, fmt.Errorf("extractPDF: open PDF: %w", err)
 	}
 
-	// --- Metadata tuples ---
-	if docTitle != "" {
-		metaTuples = append(metaTuples, store.MetadataTuple{Key: "pdf.title", Value: docTitle, ValueType: "string", Source: "pdf_info"})
+	numPages := r.NumPage()
+	if numPages > pdfMaxPages {
+		return nil, fmt.Errorf("extractPDF: PDF has %d pages, exceeds cap of %d", numPages, pdfMaxPages)
 	}
-	if docAuthor != "" {
-		metaTuples = append(metaTuples, store.MetadataTuple{Key: "pdf.author", Value: docAuthor, ValueType: "string", Source: "pdf_info"})
+
+	docName, infoTuples := extractPDFMeta(r, relPath)
+	pages := extractPDFPages(r, relPath, numPages)
+
+	// --- Scanned PDF detection ---
+	avgChars := 0
+	if numPages > 0 {
+		avgChars = pages.totalChars / numPages
 	}
-	if docSubject != "" {
-		metaTuples = append(metaTuples, store.MetadataTuple{Key: "pdf.subject", Value: docSubject, ValueType: "string", Source: "pdf_info"})
+	isScanned := numPages > 0 && avgChars < pdfScannedThreshold
+
+	// --- Body excerpt from page 1 text (500 byte cap) ---
+	var bodyExcerpt string
+	if len(pages.pageTexts) > 0 {
+		t := strings.TrimSpace(pages.pageTexts[0])
+		if len(t) > pdfExcerptLen {
+			t = t[:pdfExcerptLen]
+		}
+		bodyExcerpt = t
 	}
-	if docKeywords != "" {
-		metaTuples = append(metaTuples, store.MetadataTuple{Key: "pdf.keywords", Value: docKeywords, ValueType: "string", Source: "pdf_info"})
-	}
-	if docCreationDate != "" {
-		metaTuples = append(metaTuples, store.MetadataTuple{Key: "pdf.creation_date", Value: docCreationDate, ValueType: "string", Source: "pdf_info"})
-	}
+
+	// now is computed once so all nodes (page and doc) share a single timestamp.
+	now := time.Now().Unix()
+	pageNodes, edges, chunks := buildPDFNodes(relPath, hash, pages.pageTexts, isScanned, now)
+
+	// --- Metadata tuples: page warnings first, then Info-dict tuples, then image-only ---
+	metaTuples := pages.pageWarnings
+	metaTuples = append(metaTuples, infoTuples...)
 	if isScanned {
 		metaTuples = append(metaTuples, store.MetadataTuple{Key: "warning", Value: "image-only-pdf", ValueType: "string", Source: "extractor"})
 	}
@@ -225,7 +261,7 @@ func extractPDF(absPath, relPath string, src []byte, hash string) (*parser.Parse
 		FileInfo:       fileInfo,
 		SectionChunks:  chunks,
 		MetadataTuples: metaTuples,
-		RawLinks:       rawLinks,
+		RawLinks:       pages.rawLinks,
 	}, nil
 }
 
