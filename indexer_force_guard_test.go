@@ -42,13 +42,13 @@ func TestIndexStore_ForceGuardPreservesCrashRecoveryDeletes(t *testing.T) {
 	}
 	// Simulate the crash-recovery state: base tables intact, both FTS indexes empty
 	// → the next run computes fullBuild=true over a populated DB.
-	if err := recStore.DeleteAllNodesFTS(); err != nil {
+	if err := recStore.Fts.DeleteAllNodesFTS(); err != nil {
 		t.Fatal(err)
 	}
-	if err := recStore.DeleteAllSectionFTS(); err != nil {
+	if err := recStore.Fts.DeleteAllSectionFTS(); err != nil {
 		t.Fatal(err)
 	}
-	if empty, _ := recStore.NodesFTSIsEmpty(); !empty {
+	if empty, _ := recStore.Fts.NodesFTSIsEmpty(); !empty {
 		t.Fatal("setup precondition: nodes FTS must be empty so the next run computes fullBuild=true")
 	}
 	// Change the file, then run an INCREMENTAL (force=false) re-index. fullBuild is

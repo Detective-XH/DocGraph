@@ -67,7 +67,7 @@ func anyCode(results []SearchResult) bool {
 func TestSearchExcludesCodeFileByDefault(t *testing.T) {
 	st := seedDocAndCodeFile(t)
 
-	ftsResults, err := st.Search("telemetry", "", 10)
+	ftsResults, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("Search(fts) failed: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestSearchExcludesCodeFileByDefault(t *testing.T) {
 		t.Fatalf("default FTS search must exclude all code-derived nodes, got %+v", ftsResults)
 	}
 
-	likeResults, err := st.Search("et", "", 10)
+	likeResults, err := st.Searcher.Search("et", "", 10)
 	if err != nil {
 		t.Fatalf("Search(like) failed: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestSearchExcludesCodeFileByDefault(t *testing.T) {
 func TestSearchIncludeCodeOptsIn(t *testing.T) {
 	st := seedDocAndCodeFile(t)
 
-	ftsResults, err := st.SearchWithOptions(SearchOptions{Query: "telemetry", IncludeCode: true, Limit: 10})
+	ftsResults, err := st.Searcher.SearchWithOptions(SearchOptions{Query: "telemetry", IncludeCode: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("SearchWithOptions(fts) failed: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestSearchIncludeCodeOptsIn(t *testing.T) {
 		t.Fatalf("include_code must surface the code-derived heading, got %+v", ftsResults)
 	}
 
-	likeResults, err := st.SearchWithOptions(SearchOptions{Query: "et", IncludeCode: true, Limit: 10})
+	likeResults, err := st.Searcher.SearchWithOptions(SearchOptions{Query: "et", IncludeCode: true, Limit: 10})
 	if err != nil {
 		t.Fatalf("SearchWithOptions(like) failed: %v", err)
 	}
@@ -129,7 +129,7 @@ func hasCodeHeading(results []SearchResult) bool {
 func TestSearchKindCodeFileImpliesIncludeCode(t *testing.T) {
 	st := seedDocAndCodeFile(t)
 
-	results, err := st.Search("telemetry", "code_file", 10)
+	results, err := st.Searcher.Search("telemetry", "code_file", 10)
 	if err != nil {
 		t.Fatalf("Search(kind=code_file) failed: %v", err)
 	}

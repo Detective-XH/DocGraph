@@ -112,7 +112,7 @@ func (w *Workspace) SearchWithOptions(opts store.SearchOptions) ([]store.SearchR
 		perProjectCap := limit * 2
 		projectOpts := opts
 		projectOpts.Limit = perProjectCap
-		results, err := p.Store.SearchWithOptions(projectOpts)
+		results, err := p.Store.Searcher.SearchWithOptions(projectOpts)
 		if err != nil {
 			continue
 		}

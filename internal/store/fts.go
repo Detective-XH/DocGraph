@@ -2,6 +2,15 @@ package store
 
 import "fmt"
 
+// ftsStore owns the FTS5 index lifecycle domain (the nodes_fts and
+// section_chunks_fts external-content indexes: empty-probes, sync-trigger
+// create/drop, and bulk rebuild/delete-all). It shares Store's *baseDB, so every
+// method reaches the DB via ft.db exactly as the former (s *Store) receivers did.
+// Reached through Store.Fts.
+type ftsStore struct {
+	*baseDB
+}
+
 // sectionChunksFTSTriggersSQL is the canonical DDL for ALL THREE triggers that
 // keep section_chunks_fts in sync with the section_chunks base table. It MUST stay
 // byte-identical to the copies inlined in SchemaSQL (schema.go) —
@@ -37,9 +46,9 @@ END;`
 // (one row per indexed doc, detail=full), NOT `count(*) FROM section_chunks_fts`:
 // for an external-content FTS the latter reflects the CONTENT table, so it stays
 // non-zero after 'delete-all' / a crash and would miss the self-heal case.
-func (s *Store) SectionFTSIsEmpty() (bool, error) {
+func (ft *ftsStore) SectionFTSIsEmpty() (bool, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT count(*) FROM section_chunks_fts_docsize`).Scan(&n); err != nil {
+	if err := ft.db.QueryRow(`SELECT count(*) FROM section_chunks_fts_docsize`).Scan(&n); err != nil {
 		return false, fmt.Errorf("SectionFTSIsEmpty: %w", err)
 	}
 	return n == 0, nil
@@ -48,9 +57,9 @@ func (s *Store) SectionFTSIsEmpty() (bool, error) {
 // DropSectionFTSTriggers removes all three section_chunks_fts sync triggers so a
 // bulk load writes section_chunks base rows (incl. ON CONFLICT updates and deletes)
 // without touching the FTS index. Idempotent (DROP ... IF EXISTS).
-func (s *Store) DropSectionFTSTriggers() error {
+func (ft *ftsStore) DropSectionFTSTriggers() error {
 	for _, name := range []string{"section_chunks_fts_insert", "section_chunks_fts_update", "section_chunks_fts_delete"} {
-		if _, err := s.db.Exec(`DROP TRIGGER IF EXISTS ` + name); err != nil {
+		if _, err := ft.db.Exec(`DROP TRIGGER IF EXISTS ` + name); err != nil {
 			return fmt.Errorf("DropSectionFTSTriggers %s: %w", name, err)
 		}
 	}
@@ -59,8 +68,8 @@ func (s *Store) DropSectionFTSTriggers() error {
 
 // CreateSectionFTSTriggers restores the three sync triggers after a bulk rebuild,
 // so subsequent incremental indexing keeps section_chunks_fts current.
-func (s *Store) CreateSectionFTSTriggers() error {
-	if _, err := s.db.Exec(sectionChunksFTSTriggersSQL); err != nil {
+func (ft *ftsStore) CreateSectionFTSTriggers() error {
+	if _, err := ft.db.Exec(sectionChunksFTSTriggersSQL); err != nil {
 		return fmt.Errorf("CreateSectionFTSTriggers: %w", err)
 	}
 	return nil
@@ -70,8 +79,8 @@ func (s *Store) CreateSectionFTSTriggers() error {
 // (the external-content 'delete-all' command). Mainly a test seam for the
 // crash-recovery state (base rows present, FTS empty); the production self-heal
 // reaches the same state via a crash between bulk load and rebuild.
-func (s *Store) DeleteAllSectionFTS() error {
-	if _, err := s.db.Exec(`INSERT INTO section_chunks_fts(section_chunks_fts) VALUES('delete-all')`); err != nil {
+func (ft *ftsStore) DeleteAllSectionFTS() error {
+	if _, err := ft.db.Exec(`INSERT INTO section_chunks_fts(section_chunks_fts) VALUES('delete-all')`); err != nil {
 		return fmt.Errorf("DeleteAllSectionFTS: %w", err)
 	}
 	return nil
@@ -82,8 +91,8 @@ func (s *Store) DeleteAllSectionFTS() error {
 // repeated hash-flush+automerge of incremental trigger population — ~2.4x cheaper
 // on a full build, measured). The caller MUST ensure section_chunks is fully
 // populated AND the sync triggers are dropped, or rows would be double-indexed.
-func (s *Store) RebuildSectionFTS() error {
-	if _, err := s.db.Exec(`INSERT INTO section_chunks_fts(section_chunks_fts) VALUES('rebuild')`); err != nil {
+func (ft *ftsStore) RebuildSectionFTS() error {
+	if _, err := ft.db.Exec(`INSERT INTO section_chunks_fts(section_chunks_fts) VALUES('rebuild')`); err != nil {
 		return fmt.Errorf("RebuildSectionFTS: %w", err)
 	}
 	return nil
@@ -126,9 +135,9 @@ END;`
 // SectionFTSIsEmpty it probes the FTS5 shadow table nodes_fts_docsize (NOT
 // `count(*) FROM nodes_fts`, which for external-content FTS reflects the CONTENT
 // table and so stays non-zero after a crash, missing the self-heal case).
-func (s *Store) NodesFTSIsEmpty() (bool, error) {
+func (ft *ftsStore) NodesFTSIsEmpty() (bool, error) {
 	var n int
-	if err := s.db.QueryRow(`SELECT count(*) FROM nodes_fts_docsize`).Scan(&n); err != nil {
+	if err := ft.db.QueryRow(`SELECT count(*) FROM nodes_fts_docsize`).Scan(&n); err != nil {
 		return false, fmt.Errorf("NodesFTSIsEmpty: %w", err)
 	}
 	return n == 0, nil
@@ -136,9 +145,9 @@ func (s *Store) NodesFTSIsEmpty() (bool, error) {
 
 // DropNodesFTSTriggers removes all three nodes_fts sync triggers so a bulk load
 // writes nodes base rows without touching the FTS index. Idempotent.
-func (s *Store) DropNodesFTSTriggers() error {
+func (ft *ftsStore) DropNodesFTSTriggers() error {
 	for _, name := range []string{"nodes_fts_insert", "nodes_fts_update", "nodes_fts_delete"} {
-		if _, err := s.db.Exec(`DROP TRIGGER IF EXISTS ` + name); err != nil {
+		if _, err := ft.db.Exec(`DROP TRIGGER IF EXISTS ` + name); err != nil {
 			return fmt.Errorf("DropNodesFTSTriggers %s: %w", name, err)
 		}
 	}
@@ -147,8 +156,8 @@ func (s *Store) DropNodesFTSTriggers() error {
 
 // CreateNodesFTSTriggers restores the three sync triggers after a bulk rebuild, so
 // subsequent incremental indexing keeps nodes_fts current.
-func (s *Store) CreateNodesFTSTriggers() error {
-	if _, err := s.db.Exec(nodesFTSTriggersSQL); err != nil {
+func (ft *ftsStore) CreateNodesFTSTriggers() error {
+	if _, err := ft.db.Exec(nodesFTSTriggersSQL); err != nil {
 		return fmt.Errorf("CreateNodesFTSTriggers: %w", err)
 	}
 	return nil
@@ -157,8 +166,8 @@ func (s *Store) CreateNodesFTSTriggers() error {
 // DeleteAllNodesFTS empties nodes_fts without touching the base table (the
 // external-content 'delete-all' command). Mainly a test seam for the crash-recovery
 // state (base rows present, FTS empty).
-func (s *Store) DeleteAllNodesFTS() error {
-	if _, err := s.db.Exec(`INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all')`); err != nil {
+func (ft *ftsStore) DeleteAllNodesFTS() error {
+	if _, err := ft.db.Exec(`INSERT INTO nodes_fts(nodes_fts) VALUES('delete-all')`); err != nil {
 		return fmt.Errorf("DeleteAllNodesFTS: %w", err)
 	}
 	return nil
@@ -169,8 +178,8 @@ func (s *Store) DeleteAllNodesFTS() error {
 // dropped, or rows would be double-indexed. Requires the FTS `metadata` column to
 // match base nodes.metadata (see nodesFTSTriggersSQL) — content reconstruction by
 // 'rebuild' resolves columns by name.
-func (s *Store) RebuildNodesFTS() error {
-	if _, err := s.db.Exec(`INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')`); err != nil {
+func (ft *ftsStore) RebuildNodesFTS() error {
+	if _, err := ft.db.Exec(`INSERT INTO nodes_fts(nodes_fts) VALUES('rebuild')`); err != nil {
 		return fmt.Errorf("RebuildNodesFTS: %w", err)
 	}
 	return nil

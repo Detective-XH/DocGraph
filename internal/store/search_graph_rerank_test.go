@@ -62,7 +62,7 @@ func TestGraphRerankActivatesOnLinkDensity(t *testing.T) {
 	}
 
 	// Baseline: no edges. Tie → FilePath tie-break → aaa.md before zzz.md.
-	base, err := st.Search("telemetry", "", 10)
+	base, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("baseline Search: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestGraphRerankActivatesOnLinkDensity(t *testing.T) {
 		t.Fatalf("InsertEdges: %v", err)
 	}
 
-	treat, err := st.Search("telemetry", "", 10)
+	treat, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("treatment Search: %v", err)
 	}

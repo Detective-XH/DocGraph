@@ -131,7 +131,7 @@ func TestSearchBatchEquivalence(t *testing.T) {
 
 	// --- guard: the corpus must produce non-zero signals, else "equivalence"
 	// would be trivially true on an all-empty corpus. ---
-	wIn, _, wTag, err := st.graphSignals(req, nodes[0]) // a.md
+	wIn, _, wTag, err := st.Searcher.graphSignals(req, nodes[0]) // a.md
 	if err != nil {
 		t.Fatalf("graphSignals a.md: %v", err)
 	}
@@ -153,19 +153,19 @@ func TestSearchBatchEquivalence(t *testing.T) {
 		metaIDSet[retrievalDocID(c.Node)] = struct{}{}
 		pathSet[c.Node.FilePath] = struct{}{}
 	}
-	govBatch, err := st.getGovernanceMetadataBatch(setKeys(metaIDSet))
+	govBatch, err := st.Searcher.getGovernanceMetadataBatch(setKeys(metaIDSet))
 	if err != nil {
 		t.Fatalf("getGovernanceMetadataBatch: %v", err)
 	}
-	resBatch, err := st.getResearchMetadataBatch(setKeys(metaIDSet))
+	resBatch, err := st.Searcher.getResearchMetadataBatch(setKeys(metaIDSet))
 	if err != nil {
 		t.Fatalf("getResearchMetadataBatch: %v", err)
 	}
-	histBatch, err := st.getFileHistoryBatch(setKeys(pathSet))
+	histBatch, err := st.Searcher.getFileHistoryBatch(setKeys(pathSet))
 	if err != nil {
 		t.Fatalf("getFileHistoryBatch: %v", err)
 	}
-	graphBatch, err := st.graphSignalsBatch(req, cands)
+	graphBatch, err := st.Searcher.graphSignalsBatch(req, cands)
 	if err != nil {
 		t.Fatalf("graphSignalsBatch: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestSearchBatchEquivalence(t *testing.T) {
 		}
 
 		gotSig := graphBatch[c.Node.ID]
-		inc, out, tag, err := st.graphSignals(req, c.Node)
+		inc, out, tag, err := st.Searcher.graphSignals(req, c.Node)
 		if err != nil {
 			t.Fatalf("graphSignals(%s): %v", c.Node.ID, err)
 		}

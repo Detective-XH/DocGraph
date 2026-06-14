@@ -19,7 +19,7 @@ import (
 // misses, and runs regardless of intent. The LIKE prefilter narrows to the few
 // document rows; the exact basename equality is verified in Go (LIKE alone would
 // also admit "myREADME.md" or "README.notes.md").
-func (s *Store) collectFilenameCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+func (se *searchStore) collectFilenameCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
 	q := strings.TrimSpace(strings.Trim(req.Query, `"`))
 	// A basename carries no whitespace, so a phrase query can never equal one —
 	// skip the scan entirely, keeping this path inert for topic search.
@@ -30,7 +30,7 @@ func (s *Store) collectFilenameCandidates(req searchRequest, candidates map[stri
 		return nil
 	}
 	like := "%" + escapeLike(strings.ToLower(q)) + ".%"
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT id, kind, name, qualified_name, file_path, start_line, end_line, level, metadata, body_excerpt, updated_at
 		FROM nodes
 		WHERE kind = 'document'

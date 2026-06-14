@@ -60,8 +60,11 @@ func (s *Store) UpsertSectionChunks(chunks []SectionChunk) error {
 }
 
 // GetSectionChunk retrieves the indexed snapshot for a node. Returns (nil, false, nil) if not found.
-func (s *Store) GetSectionChunk(nodeID string) (*SectionChunk, bool, error) {
-	row := s.db.QueryRow(`
+// Lives on baseDB (not *Store): it is a shared content read that searchStore needs
+// directly, and it stays promoted to *Store via the embedded *baseDB so existing
+// st.GetSectionChunk callers are unaffected.
+func (b *baseDB) GetSectionChunk(nodeID string) (*SectionChunk, bool, error) {
+	row := b.db.QueryRow(`
 		SELECT node_id, file_path, start_line, end_line, content_hash, section_hash, heading_path, text
 		FROM section_chunks WHERE node_id = ?`, nodeID)
 	var c SectionChunk

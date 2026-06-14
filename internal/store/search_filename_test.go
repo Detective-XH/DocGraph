@@ -37,7 +37,7 @@ func TestFilenameBoostSurfacesDocumentByBasename(t *testing.T) {
 	st := fixtureFilenameVsHeading(t)
 
 	for _, q := range []string{"README", "readme"} { // case-insensitive
-		res, err := st.Search(q, "", 10)
+		res, err := st.Searcher.Search(q, "", 10)
 		if err != nil {
 			t.Fatalf("Search(%q): %v", q, err)
 		}
@@ -59,7 +59,7 @@ func TestFilenameBoostSurfacesDocumentByBasename(t *testing.T) {
 func TestFilenameBoostInertForPhraseQuery(t *testing.T) {
 	st := fixtureFilenameVsHeading(t)
 
-	res, err := st.Search("README file", "", 10)
+	res, err := st.Searcher.Search("README file", "", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

@@ -57,7 +57,7 @@ func TestInsertAndSearchNodes(t *testing.T) {
 	}
 
 	t.Run("search by name", func(t *testing.T) {
-		results, err := st.Search("Alpha Report", "", 10)
+		results, err := st.Searcher.Search("Alpha Report", "", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -77,7 +77,7 @@ func TestInsertAndSearchNodes(t *testing.T) {
 	})
 
 	t.Run("search heading", func(t *testing.T) {
-		results, err := st.Search("Introduction", "", 10)
+		results, err := st.Searcher.Search("Introduction", "", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -87,7 +87,7 @@ func TestInsertAndSearchNodes(t *testing.T) {
 	})
 
 	t.Run("search with kind filter", func(t *testing.T) {
-		results, err := st.Search("Alpha", "heading", 10)
+		results, err := st.Searcher.Search("Alpha", "heading", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -124,7 +124,7 @@ func TestSearchSectionChunkCandidate(t *testing.T) {
 		t.Fatalf("UpsertSectionChunks failed: %v", err)
 	}
 
-	results, err := st.Search("incident response", "", 10)
+	results, err := st.Searcher.Search("incident response", "", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestSearchFieldWeightedRanking(t *testing.T) {
 		t.Fatalf("InsertNodes failed: %v", err)
 	}
 
-	results, err := st.Search("budget policy", "document", 10)
+	results, err := st.Searcher.Search("budget policy", "document", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestSearchGraphRerankingIncomingReferences(t *testing.T) {
 		t.Fatalf("InsertEdges failed: %v", err)
 	}
 
-	results, err := st.Search("shared topic", "document", 10)
+	results, err := st.Searcher.Search("shared topic", "document", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestSearchGovernanceAwareRanking(t *testing.T) {
 		t.Fatalf("UpsertGovernanceMetadata approved: %v", err)
 	}
 
-	results, err := st.SearchWithOptions(SearchOptions{
+	results, err := st.Searcher.SearchWithOptions(SearchOptions{
 		Query: "incident response policy",
 		Kind:  "document",
 		Limit: 10,
@@ -279,7 +279,7 @@ func TestSearchGovernanceFiltersAudienceAndEffectiveDate(t *testing.T) {
 		}
 	}
 
-	results, err := st.SearchWithOptions(SearchOptions{
+	results, err := st.Searcher.SearchWithOptions(SearchOptions{
 		Query: "access policy",
 		Kind:  "document",
 		Limit: 10,
@@ -326,7 +326,7 @@ func TestSearchResearchAwareRanking(t *testing.T) {
 		t.Fatalf("UpsertResearchMetadata high: %v", err)
 	}
 
-	results, err := st.SearchWithOptions(SearchOptions{
+	results, err := st.Searcher.SearchWithOptions(SearchOptions{
 		Query: "supply chain assessment",
 		Kind:  "document",
 		Limit: 10,
@@ -356,7 +356,7 @@ func TestSearchTagExpansionReturnsTaggedDocument(t *testing.T) {
 		t.Fatalf("InsertEdges failed: %v", err)
 	}
 
-	results, err := st.Search("security", "document", 10)
+	results, err := st.Searcher.Search("security", "document", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestFTS5CJK(t *testing.T) {
 
 	t.Run("trigram FTS5 4-char query", func(t *testing.T) {
 		// "情報分析" is 4 runes (12 bytes), len >= 3 → FTS5 trigram path
-		results, err := st.Search("情報分析", "", 10)
+		results, err := st.Searcher.Search("情報分析", "", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -397,7 +397,7 @@ func TestFTS5CJK(t *testing.T) {
 
 	t.Run("LIKE fallback 2-char query", func(t *testing.T) {
 		// "情報" is 2 runes but 6 bytes; Search sees len([]rune) < 3 → LIKE fallback
-		results, err := st.Search("情報", "", 10)
+		results, err := st.Searcher.Search("情報", "", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -414,7 +414,7 @@ func TestFTS5CJK(t *testing.T) {
 		// rule, so it hit FTS MATCH → 0 trigram rows with no fallback. The terms
 		// are non-adjacent in the body ("情報分析結果在此"), so a whole-query LIKE
 		// would also miss — only a per-term AND fallback matches.
-		results, err := st.Search("情報 結果", "", 10)
+		results, err := st.Searcher.Search("情報 結果", "", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -428,7 +428,7 @@ func TestFTS5CJK(t *testing.T) {
 
 	t.Run("multi-term all-short CJK requires ALL terms", func(t *testing.T) {
 		// "情報" is in the body but "无关" is not → per-term AND must exclude it.
-		results, err := st.Search("情報 无关", "", 10)
+		results, err := st.Searcher.Search("情報 无关", "", 10)
 		if err != nil {
 			t.Fatalf("Search failed: %v", err)
 		}
@@ -459,7 +459,7 @@ func TestSearchMultiTermAllShortLatin(t *testing.T) {
 	if err := st.InsertNodes(nodes); err != nil {
 		t.Fatalf("InsertNodes failed: %v", err)
 	}
-	results, err := st.Search("is to", "", 10)
+	results, err := st.Searcher.Search("is to", "", 10)
 	if err != nil {
 		t.Fatalf("Search failed: %v", err)
 	}
@@ -607,7 +607,7 @@ func TestSearchSQLInjection(t *testing.T) {
 	// Attempt SQL injection via search. This should not crash the process or
 	// corrupt the database, regardless of whether Search returns an error or
 	// zero results.
-	results, err := st.Search(`"; DROP TABLE nodes; --`, "", 10)
+	results, err := st.Searcher.Search(`"; DROP TABLE nodes; --`, "", 10)
 	_ = results // We don't care about the result count; only that the DB survives.
 	_ = err     // FTS5 may return a syntax error, which is acceptable.
 
@@ -721,7 +721,7 @@ func TestNullAndEmptySearch(t *testing.T) {
 	}
 
 	t.Run("empty string search", func(t *testing.T) {
-		results, err := st.Search("", "", 10)
+		results, err := st.Searcher.Search("", "", 10)
 		if err != nil {
 			t.Fatalf("Search with empty string should not crash, got: %v", err)
 		}
@@ -731,7 +731,7 @@ func TestNullAndEmptySearch(t *testing.T) {
 	})
 
 	t.Run("whitespace only search", func(t *testing.T) {
-		results, err := st.Search("   ", "", 10)
+		results, err := st.Searcher.Search("   ", "", 10)
 		// May error or return results; must not crash.
 		_ = results
 		_ = err

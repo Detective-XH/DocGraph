@@ -48,12 +48,12 @@ func toArgs(keys []string) []any {
 // one query. Absent IDs are simply not in the map — mirrors GetGovernanceMetadata
 // returning (nil, nil) for a missing row, so a candidate with no row leaves
 // c.Governance nil exactly as before.
-func (s *Store) getGovernanceMetadataBatch(ids []string) (map[string]*GovernanceRecord, error) {
+func (se *searchStore) getGovernanceMetadataBatch(ids []string) (map[string]*GovernanceRecord, error) {
 	out := make(map[string]*GovernanceRecord, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT node_id, status, owner, approver, department,
 		       effective_date, review_due, supersedes, superseded_by,
 		       sensitivity, allowed_audience, canonical_source, updated_at
@@ -80,12 +80,12 @@ func (s *Store) getGovernanceMetadataBatch(ids []string) (map[string]*Governance
 
 // getResearchMetadataBatch loads research projections for many node IDs in one
 // query. Absent IDs are not in the map (mirrors GetResearchMetadata nil,nil).
-func (s *Store) getResearchMetadataBatch(ids []string) (map[string]*ResearchRecord, error) {
+func (se *searchStore) getResearchMetadataBatch(ids []string) (map[string]*ResearchRecord, error) {
 	out := make(map[string]*ResearchRecord, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT node_id, claim_id, evidence, source_type, confidence,
 		       event_date, assessment_date, last_verified, valid_until,
 		       analyst_status, client, deliverable_id, updated_at
@@ -112,12 +112,12 @@ func (s *Store) getResearchMetadataBatch(ids []string) (map[string]*ResearchReco
 
 // getFileHistoryBatch loads file_history rows for many paths in one query.
 // Absent paths are not in the map (mirrors GetFileHistory nil,nil).
-func (s *Store) getFileHistoryBatch(paths []string) (map[string]*FileHistory, error) {
+func (se *searchStore) getFileHistoryBatch(paths []string) (map[string]*FileHistory, error) {
 	out := make(map[string]*FileHistory, len(paths))
 	if len(paths) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Query(`
+	rows, err := se.db.Query(`
 		SELECT path, commit_count, first_commit_at, last_commit_at, author_count, last_author, last_subject
 		FROM file_history
 		WHERE path IN (`+inPlaceholders(len(paths))+`)`, toArgs(paths)...) // #nosec G202 -- structural SQL: column names are compile-time constants and inPlaceholders(n)/constant fragments; all user values are bound via ? parameters, never interpolated
@@ -156,7 +156,7 @@ type graphSig struct {
 // which is also the tag source of every heading in that file), so the source→
 // candidates maps hold slices and each count is fanned out to all sharers — the
 // per-candidate code would have run the identical query for each.
-func (s *Store) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (map[string]graphSig, error) {
+func (se *searchStore) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (map[string]graphSig, error) {
 	sigs := make(map[string]graphSig, len(cands))
 	if len(cands) == 0 {
 		return sigs, nil
@@ -184,12 +184,12 @@ func (s *Store) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (
 	// Document candidates: in/out resolved through the target/source node's file_path.
 	if len(docCandsByPath) > 0 {
 		paths := mapKeys(docCandsByPath)
-		in, err := s.scanGroupCounts(`SELECT t.file_path, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
+		in, err := se.scanGroupCounts(`SELECT t.file_path, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
 			WHERE t.file_path IN (`+inPlaceholders(len(paths))+`) AND e.kind IN `+refKinds+` GROUP BY t.file_path`, paths)
 		if err != nil {
 			return nil, err
 		}
-		out, err := s.scanGroupCounts(`SELECT src.file_path, COUNT(*) FROM edges e JOIN nodes src ON src.id = e.source
+		out, err := se.scanGroupCounts(`SELECT src.file_path, COUNT(*) FROM edges e JOIN nodes src ON src.id = e.source
 			WHERE src.file_path IN (`+inPlaceholders(len(paths))+`) AND e.kind IN `+refKinds+` GROUP BY src.file_path`, paths)
 		if err != nil {
 			return nil, err
@@ -205,12 +205,12 @@ func (s *Store) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (
 	// Non-document candidates: in/out resolved directly by node id.
 	if len(nonDocCandsByID) > 0 {
 		ids := mapKeys(nonDocCandsByID)
-		in, err := s.scanGroupCounts(`SELECT target, COUNT(*) FROM edges
+		in, err := se.scanGroupCounts(`SELECT target, COUNT(*) FROM edges
 			WHERE target IN (`+inPlaceholders(len(ids))+`) AND kind IN `+refKinds+` GROUP BY target`, ids)
 		if err != nil {
 			return nil, err
 		}
-		out, err := s.scanGroupCounts(`SELECT source, COUNT(*) FROM edges
+		out, err := se.scanGroupCounts(`SELECT source, COUNT(*) FROM edges
 			WHERE source IN (`+inPlaceholders(len(ids))+`) AND kind IN `+refKinds+` GROUP BY source`, ids)
 		if err != nil {
 			return nil, err
@@ -233,7 +233,7 @@ func (s *Store) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (
 		args := make([]any, 0, len(srcs)+len(terms))
 		args = append(args, toArgs(srcs)...)
 		args = append(args, toArgs(terms)...)
-		rows, err := s.db.Query(`SELECT e.source, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
+		rows, err := se.db.Query(`SELECT e.source, COUNT(*) FROM edges e JOIN nodes t ON t.id = e.target
 			WHERE e.source IN (`+inPlaceholders(len(srcs))+`)
 			  AND e.kind = 'tagged' AND t.kind = 'tag'
 			  AND lower(t.name) IN (`+inPlaceholders(len(terms))+`)
@@ -265,12 +265,12 @@ func (s *Store) graphSignalsBatch(req searchRequest, cands []*searchCandidate) (
 // scanGroupCounts runs a "SELECT key, COUNT(*) … GROUP BY key" query whose only
 // bound args are keys, returning a key→count map. Keys absent from the result
 // (count 0) are simply not in the map, so callers read map[k] as 0 by default.
-func (s *Store) scanGroupCounts(query string, keys []string) (map[string]int, error) {
+func (se *searchStore) scanGroupCounts(query string, keys []string) (map[string]int, error) {
 	out := make(map[string]int, len(keys))
 	if len(keys) == 0 {
 		return out, nil
 	}
-	rows, err := s.db.Query(query, toArgs(keys)...)
+	rows, err := se.db.Query(query, toArgs(keys)...)
 	if err != nil {
 		return nil, err
 	}

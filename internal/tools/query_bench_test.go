@@ -368,7 +368,7 @@ func BenchmarkQuerySearchStore(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := st.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 20}); err != nil {
+		if _, err := st.Searcher.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 20}); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -520,7 +520,7 @@ func TestQueryBenchCorpusIsSearchable(t *testing.T) {
 	// 1. Store search returns a realistic, non-empty result set at Limit=20.
 	//    This is the searchability bar (proves FTS is populated) and is the
 	//    cheap ungated regression guard for the whole harness.
-	res20, err := st.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 20})
+	res20, err := st.Searcher.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 20})
 	if err != nil {
 		t.Fatalf("SearchWithOptions limit=20: %v", err)
 	}
@@ -535,7 +535,7 @@ func TestQueryBenchCorpusIsSearchable(t *testing.T) {
 	//    This is a property of the FULL bench corpus the instrument runs on — a
 	//    200-doc corpus structurally cannot produce 160 distinct candidates at
 	//    this selectivity (~0.58 candidates/doc), so the assertion is gated.
-	res200, err := st.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 200})
+	res200, err := st.Searcher.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 200})
 	if err != nil {
 		t.Fatalf("SearchWithOptions limit=200: %v", err)
 	}

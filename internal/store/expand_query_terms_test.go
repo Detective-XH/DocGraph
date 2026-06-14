@@ -28,7 +28,7 @@ func TestExpandQueryTermsCalibration(t *testing.T) {
 	}
 
 	req := searchRequest{Terms: []string{"api"}}
-	expanded := st.expandQueryTerms(req)
+	expanded := st.Searcher.expandQueryTerms(req)
 
 	got := make(map[string]bool, len(expanded))
 	for _, term := range expanded {
@@ -54,7 +54,7 @@ func TestExpandQueryTermsCalibration(t *testing.T) {
 // TestExpandQueryTermsEmptyInput guards the nil fast-path.
 func TestExpandQueryTermsEmptyInput(t *testing.T) {
 	st := tempStore(t)
-	if got := st.expandQueryTerms(searchRequest{}); got != nil {
+	if got := st.Searcher.expandQueryTerms(searchRequest{}); got != nil {
 		t.Errorf("expected nil for empty Terms, got %v", got)
 	}
 }
@@ -70,7 +70,7 @@ func TestExpandQueryTermsNoMatch(t *testing.T) {
 	if err := st.InsertNodes(nodes); err != nil {
 		t.Fatalf("InsertNodes: %v", err)
 	}
-	got := st.expandQueryTerms(searchRequest{Terms: []string{"xyzzy"}})
+	got := st.Searcher.expandQueryTerms(searchRequest{Terms: []string{"xyzzy"}})
 	if len(got) != 0 {
 		t.Errorf("expected no expansions, got %v", got)
 	}
@@ -107,10 +107,10 @@ func TestExpandQueryTermsLimitTruncation(t *testing.T) {
 	req := searchRequest{Terms: []string{"service"}}
 
 	// LIKE baseline: what does the current implementation return?
-	likeExpanded := st.expandQueryTermsLike(req)
+	likeExpanded := st.Searcher.expandQueryTermsLike(req)
 
 	// ⊇ assertion: Fix A's FTS expansion must be a superset of LIKE expansion.
-	ftsExpanded := st.expandQueryTerms(req)
+	ftsExpanded := st.Searcher.expandQueryTerms(req)
 	ftsSet := make(map[string]bool)
 	for _, term := range ftsExpanded {
 		ftsSet[term] = true

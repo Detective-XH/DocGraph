@@ -45,7 +45,7 @@ func TestHistoryRerankActivatesOnChurn(t *testing.T) {
 	}
 
 	// Phase 1: no file_history. Tie → FilePath tie-break → aaaaa.md before zzzzz.md.
-	base, err := st.Search("telemetry", "", 10)
+	base, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("phase 1 Search: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestHistoryRerankActivatesOnChurn(t *testing.T) {
 			t.Fatalf("UpsertFileHistory(%s): %v", id, err)
 		}
 	}
-	eq, err := st.Search("telemetry", "", 10)
+	eq, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("phase 2 Search: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestHistoryRerankActivatesOnChurn(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("phase 3 UpsertFileHistory: %v", err)
 	}
-	treat, err := st.Search("telemetry", "", 10)
+	treat, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("phase 3 Search: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestHistoryRerankDoesNotBuryStrongTextMatch(t *testing.T) {
 		t.Fatalf("UpsertFileHistory: %v", err)
 	}
 
-	results, err := st.Search("telemetry", "", 10)
+	results, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestHistoryRerankAuthorCountContributes(t *testing.T) {
 		t.Fatalf("UpsertSectionChunks: %v", err)
 	}
 
-	base, err := st.Search("telemetry", "", 10)
+	base, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("baseline Search: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestHistoryRerankAuthorCountContributes(t *testing.T) {
 	if err := st.UpsertFileHistory(FileHistory{Path: "zzzzz.md", CommitCount: 10, AuthorCount: 20, LastCommitAt: 1}); err != nil {
 		t.Fatalf("UpsertFileHistory zzzzz: %v", err)
 	}
-	treat, err := st.Search("telemetry", "", 10)
+	treat, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("treatment Search: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestHistoryRerankIgnoresMalformedCounts(t *testing.T) {
 		t.Fatalf("UpsertFileHistory malformed: %v", err)
 	}
 
-	results, err := st.Search("telemetry", "", 10)
+	results, err := st.Searcher.Search("telemetry", "", 10)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}

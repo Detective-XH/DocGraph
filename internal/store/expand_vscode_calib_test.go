@@ -37,8 +37,8 @@ func TestExpandQueryTermsVscodeCalibration(t *testing.T) {
 	allPassed := true
 	for _, term := range terms {
 		req := searchRequest{Terms: []string{term}}
-		likeExpanded := st.expandQueryTermsLike(req)
-		ftsExpanded := st.expandQueryTerms(req)
+		likeExpanded := st.Searcher.expandQueryTermsLike(req)
+		ftsExpanded := st.Searcher.expandQueryTerms(req)
 
 		ftsSet := make(map[string]bool)
 		for _, tok := range ftsExpanded {

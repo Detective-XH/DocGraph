@@ -231,7 +231,7 @@ func TestQueryWorkspaceBenchCorpusIsSearchable(t *testing.T) {
 	// FTS is populated in every project). Saturation (>=160 at Limit=200) is a
 	// property of the FULL per-project corpus — a 250-doc project cannot produce
 	// 160 distinct candidates at this selectivity — so that bar is gated.
-	probe, err := w.Projects[0].Store.SearchWithOptions(store.SearchOptions{Query: wsBenchQuery, Limit: 200})
+	probe, err := w.Projects[0].Store.Searcher.SearchWithOptions(store.SearchOptions{Query: wsBenchQuery, Limit: 200})
 	if err != nil {
 		t.Fatalf("per-project probe: %v", err)
 	}
