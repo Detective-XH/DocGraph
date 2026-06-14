@@ -230,10 +230,10 @@ func TestToolDescriptionSimilarEngineStatusCrossRef(t *testing.T) {
 	}
 }
 
-// toolDescriptionsMap starts a full MCP stdio round-trip and returns a map from tool name to
-// the complete tool object (name, description, inputSchema). Mirror of registeredToolNames but
-// exposes the full object for description-level assertions.
-func toolDescriptionsMap(t *testing.T, opts tools.RegisterOpts) map[string]map[string]any {
+// listRawTools starts a full MCP stdio round-trip (initialize → tools/list) and
+// returns the raw tools array. It tears down the server before returning so callers
+// only need to transform the slice.
+func listRawTools(t *testing.T, opts tools.RegisterOpts) []any {
 	t.Helper()
 
 	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
@@ -304,6 +304,21 @@ func toolDescriptionsMap(t *testing.T, opts tools.RegisterOpts) map[string]map[s
 		t.Fatal("tools/list response is missing tools array")
 	}
 
+	cancel()
+	stdinWriter.Close()
+	if err := <-serverErrCh; err != nil {
+		t.Errorf("unexpected MCP server error: %v", err)
+	}
+
+	return rawTools
+}
+
+// toolDescriptionsMap starts a full MCP stdio round-trip and returns a map from tool name to
+// the complete tool object (name, description, inputSchema). Mirror of registeredToolNames but
+// exposes the full object for description-level assertions.
+func toolDescriptionsMap(t *testing.T, opts tools.RegisterOpts) map[string]map[string]any {
+	t.Helper()
+	rawTools := listRawTools(t, opts)
 	m := make(map[string]map[string]any, len(rawTools))
 	for _, raw := range rawTools {
 		toolObj, ok := raw.(map[string]any)
@@ -316,87 +331,12 @@ func toolDescriptionsMap(t *testing.T, opts tools.RegisterOpts) map[string]map[s
 		}
 		m[name] = toolObj
 	}
-
-	cancel()
-	stdinWriter.Close()
-	if err := <-serverErrCh; err != nil {
-		t.Errorf("unexpected MCP server error: %v", err)
-	}
-
 	return m
 }
 
 func registeredToolNames(t *testing.T, opts tools.RegisterOpts) []string {
 	t.Helper()
-
-	srv := mcpserver.NewMCPServer("docgraph", "0.1.0")
-	tools.RegisterWithOpts(srv, nil, "", opts)
-
-	stdinReader, stdinWriter := io.Pipe()
-	stdoutReader, stdoutWriter := io.Pipe()
-	stdio := mcpserver.NewStdioServer(srv)
-	stdio.SetErrorLogger(log.New(io.Discard, "", 0))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	serverErrCh := make(chan error, 1)
-	go func() {
-		err := stdio.Listen(ctx, stdinReader, stdoutWriter)
-		if err != nil && err != io.EOF && err != context.Canceled {
-			serverErrCh <- err
-		}
-		stdoutWriter.Close()
-		close(serverErrCh)
-	}()
-
-	scan := bufio.NewScanner(stdoutReader)
-	sendAndRecv := func(id int, method string, params map[string]any) map[string]any {
-		t.Helper()
-		req := map[string]any{
-			"jsonrpc": "2.0",
-			"id":      id,
-			"method":  method,
-		}
-		if params != nil {
-			req["params"] = params
-		}
-		reqBytes, err := json.Marshal(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := stdinWriter.Write(append(reqBytes, '\n')); err != nil {
-			t.Fatal(err)
-		}
-		if !scan.Scan() {
-			t.Fatal("failed to read response from MCP server")
-		}
-		var resp map[string]any
-		if err := json.Unmarshal(scan.Bytes(), &resp); err != nil {
-			t.Fatalf("failed to unmarshal MCP response: %v", err)
-		}
-		if resp["error"] != nil {
-			t.Fatalf("%s returned error: %v", method, resp["error"])
-		}
-		return resp
-	}
-
-	sendAndRecv(1, "initialize", map[string]any{
-		"protocolVersion": "2024-11-05",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "tool-surface-test", "version": "0.1"},
-	})
-
-	resp := sendAndRecv(2, "tools/list", nil)
-	result, ok := resp["result"].(map[string]any)
-	if !ok {
-		t.Fatal("tools/list response is missing result object")
-	}
-	rawTools, ok := result["tools"].([]any)
-	if !ok {
-		t.Fatal("tools/list response is missing tools array")
-	}
-
+	rawTools := listRawTools(t, opts)
 	names := make([]string, 0, len(rawTools))
 	for _, raw := range rawTools {
 		toolObj, ok := raw.(map[string]any)
@@ -410,13 +350,6 @@ func registeredToolNames(t *testing.T, opts tools.RegisterOpts) []string {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-
-	cancel()
-	stdinWriter.Close()
-	if err := <-serverErrCh; err != nil {
-		t.Errorf("unexpected MCP server error: %v", err)
-	}
-
 	return names
 }
 

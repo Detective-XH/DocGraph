@@ -102,6 +102,141 @@ func queryBenchDocCount(def int) int {
 	return def
 }
 
+// genDocHeadings generates ~8–12 heading nodes and their section chunks for
+// one document. Extracted from genQueryCorpus to lower its cyclomatic complexity.
+// docIdx is the document's loop index (used for selectivity seeding on hIdx==0).
+// nowUnix is the shared timestamp for all generated nodes.
+func genDocHeadings(path string, docIdx int, rng *rand.Rand, nowUnix int64, sentence func(int) string) ([]store.Node, []store.SectionChunk) {
+	nHeadings := 8 + rng.Intn(5)
+	nodes := make([]store.Node, 0, nHeadings)
+	chunks := make([]store.SectionChunk, 0, nHeadings)
+	line := 5
+	for hIdx := range nHeadings {
+		hID := fmt.Sprintf("%s#h%d", path, hIdx)
+		headName := fmt.Sprintf("%s %s", capitalize(queryVocab[rng.Intn(len(queryVocab))]), capitalize(queryVocab[rng.Intn(len(queryVocab))]))
+		start := line
+		end := line + 20
+		line = end + 1
+		// Seed a fraction of headings with the hot tokens too, so heading-level
+		// FTS rows participate (the real corpus has the query terms in headings).
+		headBody := sentence(25)
+		if docIdx%5 == 0 && hIdx == 0 {
+			headBody = "kubernetes deployment " + headBody
+		}
+		nodes = append(nodes, store.Node{
+			ID: hID, Kind: "heading", Name: headName, QualifiedName: hID,
+			FilePath: path, StartLine: start, EndLine: end, Level: 1 + hIdx%3,
+			BodyExcerpt: headBody, UpdatedAt: nowUnix,
+		})
+		chunks = append(chunks, store.SectionChunk{
+			NodeID: hID, FilePath: path, StartLine: start, EndLine: end,
+			ContentHash: fmt.Sprintf("ch-%d-%d", docIdx, hIdx),
+			SectionHash: fmt.Sprintf("sh-%d-%d", docIdx, hIdx),
+			HeadingPath: headName, Text: headBody,
+		})
+	}
+	return nodes, chunks
+}
+
+// genDocEdges builds the outgoing graph edges for one document:
+//   - ~3 references + ~2 wikilinks to random other docs (graph density / rerank data)
+//   - hub fan-in: docs 1..queryHubFanIn each reference + wikilink the hub doc
+//   - consecutive similar_to chain (score 0.82) for the precomputed-edge path
+//   - similarity fan-out from the tail of the corpus to querySimilarHub
+func genDocEdges(docID string, docIdx, nDocs int, rng *rand.Rand) []store.Edge {
+	var edges []store.Edge
+	// Outgoing graph edges to other docs (~3 references + ~2 wikilinks) so
+	// graph traversal, the graph-density rerank, and outgoing links all have
+	// data. Targets are document IDs (other docs).
+	if nDocs > 1 {
+		for r := range 3 {
+			tgt := fmt.Sprintf("docs/doc%04d.md", rng.Intn(nDocs))
+			if tgt == docID {
+				continue
+			}
+			edges = append(edges, store.Edge{Source: docID, Target: tgt, Kind: "references", Line: 10 + r})
+		}
+		for w := range 2 {
+			tgt := fmt.Sprintf("docs/doc%04d.md", rng.Intn(nDocs))
+			if tgt == docID {
+				continue
+			}
+			edges = append(edges, store.Edge{Source: docID, Target: tgt, Kind: "wikilinks_to", Line: 20 + w})
+		}
+	}
+	// Hub fan-in: the first queryHubFanIn docs (other than the hub) each
+	// reference + wikilink the hub, giving it a guaranteed in-degree so
+	// operation=incoming/impact have real data to traverse.
+	if docIdx != 0 && docIdx <= queryHubFanIn {
+		edges = append(edges,
+			store.Edge{Source: docID, Target: queryHubDoc, Kind: "references", Line: 30},
+			store.Edge{Source: docID, Target: queryHubDoc, Kind: "wikilinks_to", Line: 31},
+		)
+	}
+	// similar_to edges (TF-IDF engine, score >= 0.75) between consecutive
+	// docs so handleSimilar's precomputed-edge path has data AND the drift
+	// audit's duplicate/conflict detection (SimilarityMin 0.75) has input.
+	if docIdx > 0 {
+		prev := fmt.Sprintf("docs/doc%04d.md", docIdx-1)
+		edges = append(edges, store.Edge{
+			Source: prev, Target: docID, Kind: "similar_to",
+			Metadata: `{"score":0.82,"engine":"tfidf"}`,
+		})
+	}
+	// Similarity fan-out: the last querySimilarFanOut docs each link to
+	// querySimilarHub with a similar_to edge (varied scores), giving that hub
+	// a real neighborhood so handleSimilar measures rendering MANY results,
+	// not one. Sourced from the tail of the corpus so the fan-out is present
+	// for any corpus large enough to hold it (incl. the small smoke corpus),
+	// not a fixed offset that only exists at full size.
+	if nDocs >= querySimilarFanOut+2 && docIdx >= nDocs-querySimilarFanOut && docID != querySimilarHub {
+		score := 0.75 + float64(docIdx%20)/100.0 // 0.75..0.94, all >= SimilarityMin
+		edges = append(edges, store.Edge{
+			Source: docID, Target: querySimilarHub, Kind: "similar_to",
+			Metadata: fmt.Sprintf(`{"score":%.2f,"engine":"tfidf"}`, score),
+		})
+	}
+	return edges
+}
+
+// insertCorpusSlices writes the fully-built node/chunk/edge/history slices into
+// st, fataling tb on the first error. Extracted from genQueryCorpus to move the
+// insert error-handling branches out of the main generator.
+func insertCorpusSlices(tb testing.TB, st *store.Store, nodes []store.Node, chunks []store.SectionChunk, edges []store.Edge, histories []store.FileHistory) {
+	tb.Helper()
+	if err := st.InsertNodes(nodes); err != nil {
+		tb.Fatalf("InsertNodes: %v", err)
+	}
+	if err := st.UpsertSectionChunks(chunks); err != nil {
+		tb.Fatalf("UpsertSectionChunks: %v", err)
+	}
+	if err := st.InsertEdges(edges); err != nil {
+		tb.Fatalf("InsertEdges: %v", err)
+	}
+	for _, h := range histories {
+		if err := st.UpsertFileHistory(h); err != nil {
+			tb.Fatalf("UpsertFileHistory: %v", err)
+		}
+	}
+}
+
+// upsertCorpusGovernance writes governance status metadata on every 13th doc so
+// the drift audit's status-driven finders (stale_review, superseded_referenced,
+// non_canonical) have input. Extracted from genQueryCorpus to reduce its
+// cyclomatic complexity.
+func upsertCorpusGovernance(tb testing.TB, st *store.Store, nDocs int, statuses []string) {
+	tb.Helper()
+	for i := 0; i < nDocs; i += 13 {
+		docID := fmt.Sprintf("docs/doc%04d.md", i)
+		status := statuses[(i/13)%len(statuses)]
+		if err := st.UpsertGovernanceMetadata(docID, []store.MetadataTuple{
+			{Key: "status", Value: status, ValueType: "string", Source: "frontmatter"},
+		}); err != nil {
+			tb.Fatalf("UpsertGovernanceMetadata: %v", err)
+		}
+	}
+}
+
 // genQueryCorpus deterministically populates st with nDocs synthetic documents
 // modelled on the real corpus (~12 nodes/doc, section chunks for FTS, a graph
 // of references/wikilinks, varied git history for the churn rerank, governance
@@ -142,7 +277,7 @@ func genQueryCorpus(tb testing.TB, st *store.Store, nDocs int) int {
 		return joinWords(words)
 	}
 
-	for i := 0; i < nDocs; i++ {
+	for i := range nDocs {
 		path := fmt.Sprintf("docs/doc%04d.md", i)
 		docID := path
 
@@ -177,87 +312,11 @@ func genQueryCorpus(tb testing.TB, st *store.Store, nDocs int) int {
 
 		// ~8–12 heading nodes per doc (realistic ~12 nodes/doc with the document
 		// + chunks). Headings get their own section chunks with real text.
-		nHeadings := 8 + rng.Intn(5)
-		line := 5
-		for hIdx := 0; hIdx < nHeadings; hIdx++ {
-			hID := fmt.Sprintf("%s#h%d", path, hIdx)
-			headName := fmt.Sprintf("%s %s", capitalize(queryVocab[rng.Intn(len(queryVocab))]), capitalize(queryVocab[rng.Intn(len(queryVocab))]))
-			start := line
-			end := line + 20
-			line = end + 1
-			// Seed a fraction of headings with the hot tokens too, so heading-level
-			// FTS rows participate (the real corpus has the query terms in headings).
-			headBody := sentence(25)
-			if i%5 == 0 && hIdx == 0 {
-				headBody = "kubernetes deployment " + headBody
-			}
-			nodes = append(nodes, store.Node{
-				ID: hID, Kind: "heading", Name: headName, QualifiedName: hID,
-				FilePath: path, StartLine: start, EndLine: end, Level: 1 + hIdx%3,
-				BodyExcerpt: headBody, UpdatedAt: nowUnix,
-			})
-			chunks = append(chunks, store.SectionChunk{
-				NodeID: hID, FilePath: path, StartLine: start, EndLine: end,
-				ContentHash: fmt.Sprintf("ch-%d-%d", i, hIdx),
-				SectionHash: fmt.Sprintf("sh-%d-%d", i, hIdx),
-				HeadingPath: headName, Text: headBody,
-			})
-		}
+		hNodes, hChunks := genDocHeadings(path, i, rng, nowUnix, sentence)
+		nodes = append(nodes, hNodes...)
+		chunks = append(chunks, hChunks...)
 
-		// Outgoing graph edges to other docs (~3 references + ~2 wikilinks) so
-		// graph traversal, the graph-density rerank, and outgoing links all have
-		// data. Targets are document IDs (other docs).
-		if nDocs > 1 {
-			for r := 0; r < 3; r++ {
-				tgt := fmt.Sprintf("docs/doc%04d.md", rng.Intn(nDocs))
-				if tgt == docID {
-					continue
-				}
-				edges = append(edges, store.Edge{Source: docID, Target: tgt, Kind: "references", Line: 10 + r})
-			}
-			for w := 0; w < 2; w++ {
-				tgt := fmt.Sprintf("docs/doc%04d.md", rng.Intn(nDocs))
-				if tgt == docID {
-					continue
-				}
-				edges = append(edges, store.Edge{Source: docID, Target: tgt, Kind: "wikilinks_to", Line: 20 + w})
-			}
-		}
-
-		// Hub fan-in: the first queryHubFanIn docs (other than the hub) each
-		// reference + wikilink the hub, giving it a guaranteed in-degree so
-		// operation=incoming/impact have real data to traverse.
-		if i != 0 && i <= queryHubFanIn {
-			edges = append(edges,
-				store.Edge{Source: docID, Target: queryHubDoc, Kind: "references", Line: 30},
-				store.Edge{Source: docID, Target: queryHubDoc, Kind: "wikilinks_to", Line: 31},
-			)
-		}
-
-		// similar_to edges (TF-IDF engine, score >= 0.75) between consecutive
-		// docs so handleSimilar's precomputed-edge path has data AND the drift
-		// audit's duplicate/conflict detection (SimilarityMin 0.75) has input.
-		if i > 0 {
-			prev := fmt.Sprintf("docs/doc%04d.md", i-1)
-			edges = append(edges, store.Edge{
-				Source: prev, Target: docID, Kind: "similar_to",
-				Metadata: `{"score":0.82,"engine":"tfidf"}`,
-			})
-		}
-
-		// Similarity fan-out: the last querySimilarFanOut docs each link to
-		// querySimilarHub with a similar_to edge (varied scores), giving that hub
-		// a real neighborhood so handleSimilar measures rendering MANY results,
-		// not one. Sourced from the tail of the corpus so the fan-out is present
-		// for any corpus large enough to hold it (incl. the small smoke corpus),
-		// not a fixed offset that only exists at full size.
-		if nDocs >= querySimilarFanOut+2 && i >= nDocs-querySimilarFanOut && docID != querySimilarHub {
-			score := 0.75 + float64(i%20)/100.0 // 0.75..0.94, all >= SimilarityMin
-			edges = append(edges, store.Edge{
-				Source: docID, Target: querySimilarHub, Kind: "similar_to",
-				Metadata: fmt.Sprintf(`{"score":%.2f,"engine":"tfidf"}`, score),
-			})
-		}
+		edges = append(edges, genDocEdges(docID, i, nDocs, rng)...)
 
 		// File history with varied commit/author counts so the #30 churn rerank
 		// is exercised. A fraction get a stale last_commit_at so doc.stale_by_git
@@ -273,34 +332,8 @@ func genQueryCorpus(tb testing.TB, st *store.Store, nDocs int) int {
 		})
 	}
 
-	if err := st.InsertNodes(nodes); err != nil {
-		tb.Fatalf("InsertNodes: %v", err)
-	}
-	if err := st.UpsertSectionChunks(chunks); err != nil {
-		tb.Fatalf("UpsertSectionChunks: %v", err)
-	}
-	if err := st.InsertEdges(edges); err != nil {
-		tb.Fatalf("InsertEdges: %v", err)
-	}
-	for _, h := range histories {
-		if err := st.UpsertFileHistory(h); err != nil {
-			tb.Fatalf("UpsertFileHistory: %v", err)
-		}
-	}
-
-	// Governance metadata on a fraction of docs so the drift audit's
-	// status-driven finders (stale_review, superseded_referenced, non_canonical)
-	// have input. Written as the indexer writes it: status tuples sourced from
-	// frontmatter.
-	for i := 0; i < nDocs; i += 13 {
-		docID := fmt.Sprintf("docs/doc%04d.md", i)
-		status := statuses[(i/13)%len(statuses)]
-		if err := st.UpsertGovernanceMetadata(docID, []store.MetadataTuple{
-			{Key: "status", Value: status, ValueType: "string", Source: "frontmatter"},
-		}); err != nil {
-			tb.Fatalf("UpsertGovernanceMetadata: %v", err)
-		}
-	}
+	insertCorpusSlices(tb, st, nodes, chunks, edges, histories)
+	upsertCorpusGovernance(tb, st, nDocs, statuses)
 
 	return len(nodes)
 }
@@ -367,7 +400,7 @@ func BenchmarkQuerySearchStore(b *testing.B) {
 	_, st, _, _ := setupQueryBenchStore(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := st.Searcher.SearchWithOptions(store.SearchOptions{Query: queryBenchQuery, Limit: 20}); err != nil {
 			b.Fatal(err)
 		}
@@ -379,7 +412,7 @@ func BenchmarkQueryDriftStore(b *testing.B) {
 	_, st, _, _ := setupQueryBenchStore(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		if _, err := st.GetDriftFindings(store.DriftAuditOpts{}); err != nil {
 			b.Fatal(err)
 		}
@@ -397,7 +430,7 @@ func BenchmarkQueryContextHandler(b *testing.B) {
 	b.Run("summary", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			res, err := callTool(h, h.handleContext, map[string]any{"task": queryBenchQuery})
 			if err != nil || res.IsError {
 				b.Fatalf("handleContext summary: err=%v res=%v", err, res)
@@ -408,7 +441,7 @@ func BenchmarkQueryContextHandler(b *testing.B) {
 	b.Run("context_pack", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			res, err := callTool(h, h.handleContext, map[string]any{
 				"task":   queryBenchQuery,
 				"format": "context_pack",
@@ -425,7 +458,7 @@ func BenchmarkQueryDriftAuditHandler(b *testing.B) {
 	h, _, _, _ := setupQueryBenchStore(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		res, err := callTool(h, h.handleContext, map[string]any{
 			"task":   queryBenchQuery,
 			"format": "drift_audit",
@@ -441,7 +474,7 @@ func BenchmarkQuerySearchHandler(b *testing.B) {
 	h, _, _, _ := setupQueryBenchStore(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		res, err := callTool(h, h.handleSearch, map[string]any{"query": queryBenchQuery, "limit": 20})
 		if err != nil || res.IsError {
 			b.Fatalf("handleSearch: err=%v res=%v", err, res)
@@ -454,7 +487,7 @@ func BenchmarkQuerySimilarHandler(b *testing.B) {
 	h, _, _, _ := setupQueryBenchStore(b)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		res, err := callTool(h, h.handleSimilar, map[string]any{"document": querySimilarHub})
 		if err != nil || res.IsError {
 			b.Fatalf("handleSimilar: err=%v res=%v", err, res)
@@ -469,7 +502,7 @@ func BenchmarkQueryGraphHandler(b *testing.B) {
 	b.Run("incoming", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			res, err := callTool(h, h.handleGraphFacade, map[string]any{
 				"operation": "incoming",
 				"document":  queryHubDoc,
@@ -484,7 +517,7 @@ func BenchmarkQueryGraphHandler(b *testing.B) {
 	b.Run("impact", func(b *testing.B) {
 		b.ReportAllocs()
 		b.ResetTimer()
-		for i := 0; i < b.N; i++ {
+		for b.Loop() {
 			res, err := callTool(h, h.handleGraphFacade, map[string]any{
 				"operation": "impact",
 				"document":  queryHubDoc,

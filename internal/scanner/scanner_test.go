@@ -18,6 +18,45 @@ func fixtureDir(t *testing.T, project string) string {
 	return dir
 }
 
+// writeFile creates parent directories as needed and writes data to path.
+func writeFile(t *testing.T, path string, data []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// scanOrFatal calls ScanDir and fatals on error.
+func scanOrFatal(t *testing.T, dir string) []FileEntry {
+	t.Helper()
+	entries, err := ScanDir(dir)
+	if err != nil {
+		t.Fatalf("ScanDir: %v", err)
+	}
+	return entries
+}
+
+// relPathSet returns the set of RelPath values from entries.
+func relPathSet(entries []FileEntry) map[string]bool {
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		set[e.RelPath] = true
+	}
+	return set
+}
+
+// relPathList returns a sorted slice of RelPath values for use in error messages.
+func relPathList(entries []FileEntry) []string {
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.RelPath
+	}
+	return names
+}
+
 func TestScanDirBasic(t *testing.T) {
 	t.Run("project-a has 4 markdown files", func(t *testing.T) {
 		entries, err := ScanDir(fixtureDir(t, "project-a"))
@@ -57,28 +96,13 @@ func TestScanDirSkipDirs(t *testing.T) {
 	t.Run("node_modules is skipped", func(t *testing.T) {
 		tmp := t.TempDir()
 
-		nmDir := filepath.Join(tmp, "node_modules")
-		if err := os.MkdirAll(nmDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(nmDir, "test.md"), []byte("# hidden"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "node_modules", "test.md"), []byte("# hidden"))
 		// Also place a visible file at the root
-		if err := os.WriteFile(filepath.Join(tmp, "visible.md"), []byte("# visible"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "visible.md"), []byte("# visible"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
+		entries := scanOrFatal(t, tmp)
 		if len(entries) != 1 {
-			names := make([]string, len(entries))
-			for i, e := range entries {
-				names[i] = e.RelPath
-			}
-			t.Fatalf("expected 1 file (visible.md only), got %d: %v", len(entries), names)
+			t.Fatalf("expected 1 file (visible.md only), got %d: %v", len(entries), relPathList(entries))
 		}
 		if entries[0].RelPath != "visible.md" {
 			t.Fatalf("expected visible.md, got %s", entries[0].RelPath)
@@ -88,42 +112,18 @@ func TestScanDirSkipDirs(t *testing.T) {
 	t.Run(".claude/worktrees is skipped but .claude/skills is indexed", func(t *testing.T) {
 		tmp := t.TempDir()
 
-		wtFile := filepath.Join(tmp, ".claude", "worktrees", "agent-x", "dup.md")
-		if err := os.MkdirAll(filepath.Dir(wtFile), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(wtFile, []byte("# duplicate repo copy"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		skillFile := filepath.Join(tmp, ".claude", "skills", "foo", "SKILL.md")
-		if err := os.MkdirAll(filepath.Dir(skillFile), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(skillFile, []byte("# skill"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, ".claude", "worktrees", "agent-x", "dup.md"), []byte("# duplicate repo copy"))
+		writeFile(t, filepath.Join(tmp, ".claude", "skills", "foo", "SKILL.md"), []byte("# skill"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
+		entries := scanOrFatal(t, tmp)
 		for _, e := range entries {
 			if strings.Contains(e.RelPath, "worktrees") {
 				t.Fatalf("worktree copy should be skipped, got %s", e.RelPath)
 			}
 		}
-		var sawSkill bool
-		for _, e := range entries {
-			if e.RelPath == filepath.Join(".claude", "skills", "foo", "SKILL.md") {
-				sawSkill = true
-			}
-		}
-		if !sawSkill {
-			names := make([]string, len(entries))
-			for i, e := range entries {
-				names[i] = e.RelPath
-			}
-			t.Fatalf("expected .claude/skills/foo/SKILL.md to be indexed, got %v", names)
+		found := relPathSet(entries)
+		if !found[filepath.Join(".claude", "skills", "foo", "SKILL.md")] {
+			t.Fatalf("expected .claude/skills/foo/SKILL.md to be indexed, got %v", relPathList(entries))
 		}
 	})
 }
@@ -136,23 +136,12 @@ func TestScanDirMaxSize(t *testing.T) {
 		for i := range bigData {
 			bigData[i] = 'x'
 		}
-		if err := os.WriteFile(filepath.Join(tmp, "big.md"), bigData, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, "small.md"), []byte("# small"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "big.md"), bigData)
+		writeFile(t, filepath.Join(tmp, "small.md"), []byte("# small"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
+		entries := scanOrFatal(t, tmp)
 		if len(entries) != 1 {
-			names := make([]string, len(entries))
-			for i, e := range entries {
-				names[i] = e.RelPath
-			}
-			t.Fatalf("expected 1 file (small.md only), got %d: %v", len(entries), names)
+			t.Fatalf("expected 1 file (small.md only), got %d: %v", len(entries), relPathList(entries))
 		}
 		if entries[0].RelPath != "small.md" {
 			t.Fatalf("expected small.md, got %s", entries[0].RelPath)
@@ -162,22 +151,12 @@ func TestScanDirMaxSize(t *testing.T) {
 	t.Run("docx files over 10MB are skipped", func(t *testing.T) {
 		tmp := t.TempDir()
 
-		bigData := make([]byte, 10_485_761) // 10 MB + 1 byte
-		if err := os.WriteFile(filepath.Join(tmp, "big.docx"), bigData, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, "small.docx"), []byte("PK"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "big.docx"), make([]byte, 10_485_761)) // 10 MB + 1 byte
+		writeFile(t, filepath.Join(tmp, "small.docx"), []byte("PK"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
-		for _, e := range entries {
-			if e.RelPath == "big.docx" {
-				t.Errorf("big.docx over 10MB should be skipped")
-			}
+		found := relPathSet(scanOrFatal(t, tmp))
+		if found["big.docx"] {
+			t.Errorf("big.docx over 10MB should be skipped")
 		}
 	})
 
@@ -185,24 +164,11 @@ func TestScanDirMaxSize(t *testing.T) {
 		tmp := t.TempDir()
 
 		bigData := make([]byte, 5_242_881) // 5 MB + 1 byte
-		if err := os.WriteFile(filepath.Join(tmp, "big.html"), bigData, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, "big.htm"), bigData, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, "small.html"), []byte("<html></html>"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "big.html"), bigData)
+		writeFile(t, filepath.Join(tmp, "big.htm"), bigData)
+		writeFile(t, filepath.Join(tmp, "small.html"), []byte("<html></html>"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
-		found := map[string]bool{}
-		for _, e := range entries {
-			found[e.RelPath] = true
-		}
+		found := relPathSet(scanOrFatal(t, tmp))
 		if found["big.html"] {
 			t.Error("big.html over 5MB should be skipped")
 		}
@@ -217,22 +183,10 @@ func TestScanDirMaxSize(t *testing.T) {
 	t.Run("pdf files over 50MB are skipped", func(t *testing.T) {
 		tmp := t.TempDir()
 
-		bigData := make([]byte, 52_428_801) // 50 MB + 1 byte
-		if err := os.WriteFile(filepath.Join(tmp, "big.pdf"), bigData, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(tmp, "small.pdf"), []byte("%PDF-1.4"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "big.pdf"), make([]byte, 52_428_801)) // 50 MB + 1 byte
+		writeFile(t, filepath.Join(tmp, "small.pdf"), []byte("%PDF-1.4"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
-		found := map[string]bool{}
-		for _, e := range entries {
-			found[e.RelPath] = true
-		}
+		found := relPathSet(scanOrFatal(t, tmp))
 		if found["big.pdf"] {
 			t.Error("big.pdf over 50MB should be skipped")
 		}
@@ -245,24 +199,13 @@ func TestScanDirMaxSize(t *testing.T) {
 		tmp := t.TempDir()
 
 		for _, name := range []string{"file.txt", "file.csv", "file.xlsx", "file.png"} {
-			if err := os.WriteFile(filepath.Join(tmp, name), []byte("data"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			writeFile(t, filepath.Join(tmp, name), []byte("data"))
 		}
-		if err := os.WriteFile(filepath.Join(tmp, "keep.md"), []byte("# ok"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeFile(t, filepath.Join(tmp, "keep.md"), []byte("# ok"))
 
-		entries, err := ScanDir(tmp)
-		if err != nil {
-			t.Fatalf("ScanDir: %v", err)
-		}
+		entries := scanOrFatal(t, tmp)
 		if len(entries) != 1 || entries[0].RelPath != "keep.md" {
-			names := make([]string, len(entries))
-			for i, e := range entries {
-				names[i] = e.RelPath
-			}
-			t.Fatalf("expected only keep.md, got %v", names)
+			t.Fatalf("expected only keep.md, got %v", relPathList(entries))
 		}
 	})
 }

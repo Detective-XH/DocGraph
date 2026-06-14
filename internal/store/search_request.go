@@ -28,13 +28,7 @@ func newSearchRequest(opts SearchOptions) searchRequest {
 	if limit <= 0 {
 		limit = 20
 	}
-	candidateLimit := limit * 8
-	if candidateLimit < 40 {
-		candidateLimit = 40
-	}
-	if candidateLimit > 200 {
-		candidateLimit = 200
-	}
+	candidateLimit := min(max(limit*8, 40), 200)
 	governance := trimGovernanceOptions(opts.Governance)
 	research := trimResearchOptions(opts.Research)
 	entity := trimEntityOptions(opts.Entity)
@@ -108,7 +102,7 @@ func inferSearchIntent(query, kind string) SearchIntent {
 func queryTerms(query string) []string {
 	seen := make(map[string]bool)
 	var out []string
-	for _, raw := range strings.Fields(query) {
+	for raw := range strings.FieldsSeq(query) {
 		term := normalizeSearchTerm(raw)
 		if term == "" || seen[term] {
 			continue

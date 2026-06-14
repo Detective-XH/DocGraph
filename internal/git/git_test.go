@@ -148,6 +148,42 @@ func TestCollectHistory_CommittedFile(t *testing.T) {
 	}
 }
 
+// mustInitGitRepo runs the four git commands needed to initialise a bare
+// repository in tmp (init, user.email, user.name, commit.gpgsign=false).
+// It is shared by tests that need a scratch repo.
+func mustInitGitRepo(t *testing.T, tmp string) {
+	t.Helper()
+	env := []string{"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp}
+	for _, args := range [][]string{
+		{"init"}, {"config", "user.email", "alice@example.com"},
+		{"config", "user.name", "Alice"}, {"config", "commit.gpgsign", "false"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+}
+
+// assertAllWorkerRegimesMatch calls CollectHistories for each worker count in
+// workers and checks that every result slot equals the serial baseline want.
+// This is the core parallel-matches-serial assertion.
+func assertAllWorkerRegimesMatch(t *testing.T, tmp string, relPaths []string, want []FileHistory, workers []int) {
+	t.Helper()
+	for _, w := range workers {
+		got := CollectHistories(tmp, relPaths, w)
+		if len(got) != len(want) {
+			t.Fatalf("workers=%d: len(got)=%d, want %d", w, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("workers=%d slot %d: got %+v, want %+v", w, i, got[i], want[i])
+			}
+		}
+	}
+}
+
 // TestCollectHistories_ParallelMatchesSerial proves the fan-out wrapper returns
 // the exact per-file FileHistory the serial path would, in input order, across
 // every worker regime (serial, parallel, oversubscribed). Files get distinct
@@ -159,6 +195,7 @@ func TestCollectHistories_ParallelMatchesSerial(t *testing.T) {
 		t.Skip("git not available")
 	}
 	tmp := t.TempDir()
+	mustInitGitRepo(t, tmp)
 
 	day := 0
 	commit := func(name, content string) {
@@ -185,18 +222,6 @@ func TestCollectHistories_ParallelMatchesSerial(t *testing.T) {
 		run("commit", "-m", "edit "+name)
 	}
 
-	initEnv := []string{"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp}
-	for _, args := range [][]string{
-		{"init"}, {"config", "user.email", "alice@example.com"},
-		{"config", "user.name", "Alice"}, {"config", "commit.gpgsign", "false"},
-	} {
-		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
-		cmd.Env = initEnv
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
 	// Distinct histories: a.md×1, b.md×2, c.md×3.
 	commit("a.md", "a1")
 	commit("b.md", "b1")
@@ -219,17 +244,7 @@ func TestCollectHistories_ParallelMatchesSerial(t *testing.T) {
 			want[0].CommitCount, want[1].CommitCount, want[2].CommitCount, want[3].CommitCount)
 	}
 
-	for _, workers := range []int{1, 2, 8, 100} {
-		got := CollectHistories(tmp, relPaths, workers)
-		if len(got) != len(want) {
-			t.Fatalf("workers=%d: len(got)=%d, want %d", workers, len(got), len(want))
-		}
-		for i := range want {
-			if got[i] != want[i] {
-				t.Errorf("workers=%d slot %d: got %+v, want %+v", workers, i, got[i], want[i])
-			}
-		}
-	}
+	assertAllWorkerRegimesMatch(t, tmp, relPaths, want, []int{1, 2, 8, 100})
 
 	if got := CollectHistories(tmp, nil, 8); len(got) != 0 {
 		t.Errorf("nil paths: len(got)=%d, want 0", len(got))
@@ -280,17 +295,7 @@ func TestCollectHistories_GlobalForkBoundConcurrentCallers(t *testing.T) {
 		run("commit", "-m", "edit "+name)
 	}
 
-	initEnv := []string{"GIT_CONFIG_NOSYSTEM=1", "HOME=" + tmp}
-	for _, args := range [][]string{
-		{"init"}, {"config", "user.email", "alice@example.com"},
-		{"config", "user.name", "Alice"}, {"config", "commit.gpgsign", "false"},
-	} {
-		cmd := exec.Command("git", append([]string{"-C", tmp}, args...)...)
-		cmd.Env = initEnv
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	mustInitGitRepo(t, tmp)
 	commit("a.md", "a1")
 	commit("b.md", "b1")
 	commit("b.md", "b2")

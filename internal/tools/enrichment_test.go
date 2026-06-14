@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"maps"
 	"strings"
 	"sync"
 	"testing"
@@ -495,9 +496,7 @@ func TestHandleEnrichmentPending_TokenBindsExactDocIDs(t *testing.T) {
 	// The token's docIDs set must contain exactly x.pdf and y.pdf.
 	storedToken.mu.Lock()
 	ids := make(map[string]struct{}, len(storedToken.docIDs))
-	for k, v := range storedToken.docIDs {
-		ids[k] = v
-	}
+	maps.Copy(ids, storedToken.docIDs)
 	storedToken.mu.Unlock()
 
 	for _, want := range []string{"x.pdf", "y.pdf"} {

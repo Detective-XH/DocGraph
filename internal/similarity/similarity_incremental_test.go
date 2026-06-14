@@ -80,6 +80,28 @@ func TestIncrementalAddNewDoc(t *testing.T) {
 	}
 }
 
+// govSecEdgeExists reports whether a similar_to edge exists between governance.md
+// and security.md (in either direction), checking both nodes' outgoing edges.
+func govSecEdgeExists(t *testing.T, st *store.Store) bool {
+	t.Helper()
+	govEdges, err := st.GetOutgoingEdges("governance.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range govEdges {
+		if e.Kind == "similar_to" && (e.Target == "security.md" || e.Source == "security.md") {
+			return true
+		}
+	}
+	secEdges, _ := st.GetOutgoingEdges("security.md")
+	for _, e := range secEdges {
+		if e.Kind == "similar_to" && (e.Target == "governance.md" || e.Source == "governance.md") {
+			return true
+		}
+	}
+	return false
+}
+
 // TestIncrementalPreservesUnchangedPairs verifies that pairs not involving
 // changed docs keep their edges intact after an incremental run.
 func TestIncrementalPreservesUnchangedPairs(t *testing.T) {
@@ -90,27 +112,8 @@ func TestIncrementalPreservesUnchangedPairs(t *testing.T) {
 		t.Fatalf("full ComputeSimilarity: %v", err)
 	}
 
-	// Check governance↔security pair exists.
-	govEdges, err := st.GetOutgoingEdges("governance.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var govSecEdge bool
-	for _, e := range govEdges {
-		if e.Kind == "similar_to" && (e.Target == "security.md" || e.Source == "security.md") {
-			govSecEdge = true
-		}
-	}
-	if !govSecEdge {
-		// Also check incoming direction
-		secEdges, _ := st.GetOutgoingEdges("security.md")
-		for _, e := range secEdges {
-			if e.Kind == "similar_to" && (e.Target == "governance.md" || e.Source == "governance.md") {
-				govSecEdge = true
-			}
-		}
-	}
-	if !govSecEdge {
+	// Check governance↔security pair exists before the incremental run.
+	if !govSecEdgeExists(t, st) {
 		t.Skip("governance↔security edge not created at this threshold — skipping preservation check")
 	}
 
@@ -119,26 +122,8 @@ func TestIncrementalPreservesUnchangedPairs(t *testing.T) {
 		t.Fatalf("incremental: %v", err)
 	}
 
-	// governance↔security edge should still exist.
-	govEdges2, err := st.GetOutgoingEdges("governance.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var stillExists bool
-	for _, e := range govEdges2 {
-		if e.Kind == "similar_to" && (e.Target == "security.md" || e.Source == "security.md") {
-			stillExists = true
-		}
-	}
-	if !stillExists {
-		secEdges2, _ := st.GetOutgoingEdges("security.md")
-		for _, e := range secEdges2 {
-			if e.Kind == "similar_to" && (e.Target == "governance.md" || e.Source == "governance.md") {
-				stillExists = true
-			}
-		}
-	}
-	if !stillExists {
+	// governance↔security edge should still exist after the incremental run.
+	if !govSecEdgeExists(t, st) {
 		t.Error("governance↔security similar_to edge was deleted by incremental run that only changed install.md")
 	}
 }

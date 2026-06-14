@@ -2,6 +2,46 @@ package store
 
 import "testing"
 
+// assertRerankBaseline checks that both twin docs are present in the baseline
+// (no-edge) results and that they tie — a tied ranking is the precondition
+// that makes the treatment's graph signal the sole cause of any order change.
+// Returns the positions of (aaa, zzz) for the caller to verify aaa < zzz.
+func assertRerankBaseline(t *testing.T, base []SearchResult) (ia, iz int) {
+	t.Helper()
+	ia, iz = indexOfDoc(base, "aaa.md"), indexOfDoc(base, "zzz.md")
+	if ia < 0 || iz < 0 {
+		t.Fatalf("baseline: both docs must be present, got sparse=%d dense=%d", ia, iz)
+	}
+	// The isolation depends on the twins scoring identically with no edges. Assert
+	// the tie directly (equal rank, not a magic value) so a future scoring change
+	// that breaks the premise fails loudly here rather than silently.
+	if base[ia].Rank != base[iz].Rank {
+		t.Fatalf("baseline: twins must tie to isolate the graph signal, got aaa=%.6f zzz=%.6f",
+			base[ia].Rank, base[iz].Rank)
+	}
+	if ia >= iz {
+		t.Fatalf("baseline: expected aaa.md before zzz.md on a tie (sparse=%d, dense=%d)", ia, iz)
+	}
+	return ia, iz
+}
+
+// assertRerankTreatment checks that after adding incomingCount edges to zzz.md,
+// zzz.md overtakes aaa.md — verifying the graph rerank feature activated.
+func assertRerankTreatment(t *testing.T, treat []SearchResult, incomingCount, baseIA, baseIZ int) {
+	t.Helper()
+	ja, jz := indexOfDoc(treat, "aaa.md"), indexOfDoc(treat, "zzz.md")
+	if ja < 0 || jz < 0 {
+		t.Fatalf("treatment: both docs must be present, got sparse=%d dense=%d", ja, jz)
+	}
+	if jz >= ja {
+		t.Fatalf("graph rerank did NOT activate: zzz.md has %d incoming wikilinks_to but did "+
+			"not overtake aaa.md (sparse=%d, dense=%d). The feature is wired but ineffective.",
+			incomingCount, ja, jz)
+	}
+	t.Logf("graph rerank verified: %d incoming refs flipped zzz.md from #%d→#%d (sparse #%d→#%d)",
+		incomingCount, baseIZ, jz, baseIA, ja)
+}
+
 // TestGraphRerankActivatesOnLinkDensity verifies Item 4(b): the graph-aware
 // reranking (applyGraphReranking → graphSignals) is wired but contributes
 // nothing on a link-sparse corpus, and proves it DOES activate — flipping
@@ -66,20 +106,7 @@ func TestGraphRerankActivatesOnLinkDensity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("baseline Search: %v", err)
 	}
-	ia, iz := indexOfDoc(base, "aaa.md"), indexOfDoc(base, "zzz.md")
-	if ia < 0 || iz < 0 {
-		t.Fatalf("baseline: both docs must be present, got sparse=%d dense=%d", ia, iz)
-	}
-	// The isolation depends on the twins scoring identically with no edges. Assert
-	// the tie directly (equal rank, not a magic value) so a future scoring change
-	// that breaks the premise fails loudly here rather than silently.
-	if base[ia].Rank != base[iz].Rank {
-		t.Fatalf("baseline: twins must tie to isolate the graph signal, got aaa=%.6f zzz=%.6f",
-			base[ia].Rank, base[iz].Rank)
-	}
-	if ia >= iz {
-		t.Fatalf("baseline: expected aaa.md before zzz.md on a tie (sparse=%d, dense=%d)", ia, iz)
-	}
+	ia, iz := assertRerankBaseline(t, base)
 
 	// Treatment: 50 docs now wikilinks_to zzz.md. Only edges changed.
 	edges := make([]Edge, linkers)
@@ -94,17 +121,7 @@ func TestGraphRerankActivatesOnLinkDensity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("treatment Search: %v", err)
 	}
-	ja, jz := indexOfDoc(treat, "aaa.md"), indexOfDoc(treat, "zzz.md")
-	if ja < 0 || jz < 0 {
-		t.Fatalf("treatment: both docs must be present, got sparse=%d dense=%d", ja, jz)
-	}
-	if jz >= ja {
-		t.Fatalf("graph rerank did NOT activate: zzz.md has %d incoming wikilinks_to but did "+
-			"not overtake aaa.md (sparse=%d, dense=%d). The feature is wired but ineffective.",
-			linkers, ja, jz)
-	}
-	t.Logf("graph rerank verified: %d incoming refs flipped zzz.md from #%d→#%d (sparse #%d→#%d)",
-		linkers, iz, jz, ia, ja)
+	assertRerankTreatment(t, treat, linkers, ia, iz)
 }
 
 func linkerName(i int) string {
