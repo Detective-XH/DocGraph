@@ -1,7 +1,6 @@
 package store
 
 import (
-	"database/sql"
 	"strings"
 	"time"
 	"unicode"
@@ -168,38 +167,41 @@ func (se *searchStore) expandQueryTermsLike(req searchRequest) []string {
 		if len(out) >= 32 {
 			break
 		}
-		pattern := "%" + escapeLike(term) + "%"
-		rows, err := se.db.Query(`
-			SELECT DISTINCT name
-			FROM nodes
-			WHERE kind IN ('heading','definition','tag')
-			  AND lower(name) LIKE ? ESCAPE '\'
-			ORDER BY length(name), name
-			LIMIT 12`, pattern)
-		if err != nil {
+		expandLikeTermInto(se, term, &out, addTerm)
+	}
+	return out
+}
+
+// expandLikeTermInto runs a single LIKE-based expansion query for term and feeds
+// results into addTerm, stopping when out reaches 32 entries.
+func expandLikeTermInto(se *searchStore, term string, out *[]string, addTerm func(string)) {
+	pattern := "%" + escapeLike(term) + "%"
+	rows, err := se.db.Query(`
+		SELECT DISTINCT name
+		FROM nodes
+		WHERE kind IN ('heading','definition','tag')
+		  AND lower(name) LIKE ? ESCAPE '\'
+		ORDER BY length(name), name
+		LIMIT 12`, pattern)
+	if err != nil {
+		return
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
 			continue
 		}
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				continue
-			}
-			for _, t := range queryTerms(name) {
-				addTerm(t)
-				if len(out) >= 32 {
-					break
-				}
-			}
-			if len(out) >= 32 {
+		for _, t := range queryTerms(name) {
+			addTerm(t)
+			if len(*out) >= 32 {
 				break
 			}
 		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			continue
+		if len(*out) >= 32 {
+			break
 		}
 	}
-	return out
+	rows.Close()
 }
 
 func (se *searchStore) expandQueryTerms(req searchRequest) []string {
@@ -211,7 +213,12 @@ func (se *searchStore) expandQueryTerms(req searchRequest) []string {
 		seen[t] = true
 	}
 	var out []string
+	// addTerm de-duplicates and enforces the 32-term cap. Folding the cap here
+	// means expandTermFTS/expandTermLike callers don't need to check len(out).
 	addTerm := func(term string) {
+		if len(out) >= 32 {
+			return
+		}
 		term = normalizeSearchTerm(term)
 		if term == "" || seen[term] {
 			return
@@ -224,54 +231,73 @@ func (se *searchStore) expandQueryTerms(req searchRequest) []string {
 		if len(out) >= 32 {
 			break
 		}
-		var rows *sql.Rows
-		var err error
 		if len([]rune(term)) < 3 {
-			// FTS5 trigram requires ≥3 runes; fall back to LIKE for sub-trigram terms.
-			pattern := "%" + escapeLike(term) + "%"
-			rows, err = se.db.Query(`
-				SELECT DISTINCT name
-				FROM nodes
-				WHERE kind IN ('heading','definition','tag')
-				  AND lower(name) LIKE ? ESCAPE '\'
-				ORDER BY length(name), name
-				LIMIT 12`, pattern)
+			if err := expandTermLike(se, term, addTerm); err != nil {
+				continue
+			}
 		} else {
-			ftsArg := buildExpansionFTSQuery(term)
-			if ftsArg == "" {
+			if err := expandTermFTS(se, term, addTerm); err != nil {
 				continue
 			}
-			rows, err = se.db.Query(`
-				SELECT DISTINCT n.name
-				FROM nodes_fts
-				JOIN nodes n ON n.rowid = nodes_fts.rowid
-				WHERE nodes_fts MATCH ?
-				  AND n.kind IN ('heading','definition','tag')
-				ORDER BY length(n.name), n.name
-				LIMIT 12`, ftsArg)
-		}
-		if err != nil {
-			continue
-		}
-		for rows.Next() {
-			var name string
-			if err := rows.Scan(&name); err != nil {
-				continue
-			}
-			for _, t := range queryTerms(name) {
-				addTerm(t)
-				if len(out) >= 32 {
-					break
-				}
-			}
-			if len(out) >= 32 {
-				break
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			continue
 		}
 	}
 	return out
+}
+
+// expandTermFTS runs an FTS5-based expansion query for a single term and feeds
+// normalized sub-terms into addTerm.
+func expandTermFTS(se *searchStore, term string, addTerm func(string)) error {
+	ftsArg := buildExpansionFTSQuery(term)
+	if ftsArg == "" {
+		return nil
+	}
+	rows, err := se.db.Query(`
+		SELECT DISTINCT n.name
+		FROM nodes_fts
+		JOIN nodes n ON n.rowid = nodes_fts.rowid
+		WHERE nodes_fts MATCH ?
+		  AND n.kind IN ('heading','definition','tag')
+		ORDER BY length(n.name), n.name
+		LIMIT 12`, ftsArg)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		for _, t := range queryTerms(name) {
+			addTerm(t)
+		}
+	}
+	rows.Close()
+	return rows.Err()
+}
+
+// expandTermLike runs a LIKE-based expansion query for sub-trigram terms and
+// feeds normalized sub-terms into addTerm.
+func expandTermLike(se *searchStore, term string, addTerm func(string)) error {
+	pattern := "%" + escapeLike(term) + "%"
+	rows, err := se.db.Query(`
+		SELECT DISTINCT name
+		FROM nodes
+		WHERE kind IN ('heading','definition','tag')
+		  AND lower(name) LIKE ? ESCAPE '\'
+		ORDER BY length(name), name
+		LIMIT 12`, pattern)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			continue
+		}
+		for _, t := range queryTerms(name) {
+			addTerm(t)
+		}
+	}
+	rows.Close()
+	return rows.Err()
 }

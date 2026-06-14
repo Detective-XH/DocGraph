@@ -266,54 +266,10 @@ func (se *searchStore) collectMetadataFilteredCandidates(req searchRequest, cand
 }
 
 func (se *searchStore) getNodesByRetrievalFilters(req searchRequest) ([]Node, error) {
-	args := []any{}
 	where := []string{"n.kind = 'document'"}
-	if req.Governance.Status != "" ||
-		req.Governance.Sensitivity != "" ||
-		req.Governance.CanonicalSource != "" ||
-		req.Governance.AllowedAudience != "" {
-		where = append(where, "gm.node_id IS NOT NULL")
-	}
-	if req.Research.ClaimID != "" ||
-		req.Research.SourceType != "" ||
-		req.Research.Confidence != "" ||
-		req.Research.AnalystStatus != "" {
-		where = append(where, "rm.node_id IS NOT NULL")
-	}
-	if req.Governance.Status != "" {
-		where = append(where, "lower(gm.status) = lower(?)")
-		args = append(args, req.Governance.Status)
-	}
-	if req.Governance.Sensitivity != "" {
-		where = append(where, "lower(gm.sensitivity) = lower(?)")
-		args = append(args, req.Governance.Sensitivity)
-	}
-	if req.Governance.CanonicalSource != "" {
-		where = append(where, "lower(gm.canonical_source) = lower(?)")
-		args = append(args, req.Governance.CanonicalSource)
-	}
-	if req.Governance.AsOfDate != "" {
-		where = append(where, "(gm.node_id IS NULL OR gm.effective_date = '' OR date(gm.effective_date) <= date(?))")
-		args = append(args, req.Governance.AsOfDate)
-		where = append(where, "(rm.node_id IS NULL OR rm.valid_until = '' OR date(rm.valid_until) >= date(?))")
-		args = append(args, req.Governance.AsOfDate)
-	}
-	if req.Research.ClaimID != "" {
-		where = append(where, "lower(rm.claim_id) = lower(?)")
-		args = append(args, req.Research.ClaimID)
-	}
-	if req.Research.SourceType != "" {
-		where = append(where, "lower(rm.source_type) = lower(?)")
-		args = append(args, req.Research.SourceType)
-	}
-	if req.Research.Confidence != "" {
-		where = append(where, "lower(rm.confidence) = lower(?)")
-		args = append(args, req.Research.Confidence)
-	}
-	if req.Research.AnalystStatus != "" {
-		where = append(where, "lower(rm.analyst_status) = lower(?)")
-		args = append(args, req.Research.AnalystStatus)
-	}
+	var args []any
+	where, args = appendGovernanceWhereArgs(req, where, args)
+	where, args = appendResearchWhereArgs(req, where, args)
 
 	q := `
 		SELECT n.id, n.kind, n.name, n.qualified_name, n.file_path,
@@ -338,6 +294,66 @@ func (se *searchStore) getNodesByRetrievalFilters(req searchRequest) ([]Node, er
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// appendGovernanceWhereArgs appends governance-related WHERE clauses and bind
+// arguments in the order the original function applied them. The AsOfDate block
+// also appends the rm.valid_until clause (keyed on Governance.AsOfDate) because
+// both clauses were originally inside the same governance-date guard.
+func appendGovernanceWhereArgs(req searchRequest, where []string, args []any) ([]string, []any) {
+	if req.Governance.Status != "" ||
+		req.Governance.Sensitivity != "" ||
+		req.Governance.CanonicalSource != "" ||
+		req.Governance.AllowedAudience != "" {
+		where = append(where, "gm.node_id IS NOT NULL")
+	}
+	if req.Governance.Status != "" {
+		where = append(where, "lower(gm.status) = lower(?)")
+		args = append(args, req.Governance.Status)
+	}
+	if req.Governance.Sensitivity != "" {
+		where = append(where, "lower(gm.sensitivity) = lower(?)")
+		args = append(args, req.Governance.Sensitivity)
+	}
+	if req.Governance.CanonicalSource != "" {
+		where = append(where, "lower(gm.canonical_source) = lower(?)")
+		args = append(args, req.Governance.CanonicalSource)
+	}
+	if req.Governance.AsOfDate != "" {
+		where = append(where, "(gm.node_id IS NULL OR gm.effective_date = '' OR date(gm.effective_date) <= date(?))")
+		args = append(args, req.Governance.AsOfDate)
+		where = append(where, "(rm.node_id IS NULL OR rm.valid_until = '' OR date(rm.valid_until) >= date(?))") // #nosec G202 -- structural SQL: constant fragment; value bound via ? parameter
+		args = append(args, req.Governance.AsOfDate)
+	}
+	return where, args
+}
+
+// appendResearchWhereArgs appends research-related WHERE clauses and bind
+// arguments in the order the original function applied them.
+func appendResearchWhereArgs(req searchRequest, where []string, args []any) ([]string, []any) {
+	if req.Research.ClaimID != "" ||
+		req.Research.SourceType != "" ||
+		req.Research.Confidence != "" ||
+		req.Research.AnalystStatus != "" {
+		where = append(where, "rm.node_id IS NOT NULL")
+	}
+	if req.Research.ClaimID != "" {
+		where = append(where, "lower(rm.claim_id) = lower(?)")
+		args = append(args, req.Research.ClaimID)
+	}
+	if req.Research.SourceType != "" {
+		where = append(where, "lower(rm.source_type) = lower(?)")
+		args = append(args, req.Research.SourceType)
+	}
+	if req.Research.Confidence != "" {
+		where = append(where, "lower(rm.confidence) = lower(?)")
+		args = append(args, req.Research.Confidence)
+	}
+	if req.Research.AnalystStatus != "" {
+		where = append(where, "lower(rm.analyst_status) = lower(?)")
+		args = append(args, req.Research.AnalystStatus)
+	}
+	return where, args
 }
 
 func (se *searchStore) nodeMatchesRetrievalQuery(req searchRequest, n Node) (bool, string, string, error) {

@@ -112,79 +112,62 @@ func pySymbols(lines []string, startAfter int, fileType, lang string) []CodeDocE
 		sigEndIdx := pySignatureEnd(lines, i)
 		dsStart, dsText, dsEnd := pyDocstringAfter(lines, sigEndIdx, consumed)
 
-		switch kind {
-		case "def":
-			isTest := strings.HasPrefix(name, "test_")
-			if isTest {
-				endLine := defLine
-				if dsText != "" {
-					endLine = dsEnd
-				}
-				entries = append(entries, CodeDocEntry{
-					SymbolName:  name,
-					CommentKind: KindTestFunc,
-					HeadingPath: "Tests > " + name,
-					Text:        dsText,
-					StartLine:   defLine,
-					EndLine:     endLine,
-					FileType:    fileType,
-					Lang:        lang,
-				})
-				if dsEnd > sigEndIdx {
-					pyMarkConsumed(consumed, dsStart, dsEnd-1)
-				}
-			} else if dsText != "" {
-				entries = append(entries, CodeDocEntry{
-					SymbolName:  name,
-					CommentKind: KindDocComment,
-					HeadingPath: "DocComment > " + name,
-					Text:        dsText,
-					StartLine:   defLine,
-					EndLine:     dsEnd,
-					FileType:    fileType,
-					Lang:        lang,
-				})
-				pyMarkConsumed(consumed, dsStart, dsEnd-1)
-			}
-
-		case "class":
-			isTest := strings.HasPrefix(name, "Test")
-			if isTest {
-				endLine := defLine
-				if dsText != "" {
-					endLine = dsEnd
-				}
-				entries = append(entries, CodeDocEntry{
-					SymbolName:  name,
-					CommentKind: KindTestFunc,
-					HeadingPath: "Tests > " + name,
-					Text:        dsText,
-					StartLine:   defLine,
-					EndLine:     endLine,
-					FileType:    fileType,
-					Lang:        lang,
-				})
-				if dsEnd > sigEndIdx {
-					pyMarkConsumed(consumed, dsStart, dsEnd-1)
-				}
-			} else if dsText != "" {
-				entries = append(entries, CodeDocEntry{
-					SymbolName:  name,
-					CommentKind: KindDocComment,
-					HeadingPath: "DocComment > " + name,
-					Text:        dsText,
-					StartLine:   defLine,
-					EndLine:     dsEnd,
-					FileType:    fileType,
-					Lang:        lang,
-				})
-				pyMarkConsumed(consumed, dsStart, dsEnd-1)
-			}
+		if e, ok := pyEmitSymbol(kind, name, defLine, sigEndIdx, dsStart, dsText, dsEnd, fileType, lang, consumed); ok {
+			entries = append(entries, e)
 		}
 
 		i = sigEndIdx + 1
 	}
 	return entries
+}
+
+// pyEmitSymbol builds a CodeDocEntry for a def or class symbol and marks
+// docstring lines as consumed. Returns (entry, true) when an entry should be
+// emitted, (zero, false) otherwise. The consumed slice is mutated in-place.
+func pyEmitSymbol(kind, name string, defLine, sigEndIdx, dsStart int, dsText string, dsEnd int, fileType, lang string, consumed []bool) (CodeDocEntry, bool) {
+	var isTest bool
+	switch kind {
+	case "def":
+		isTest = strings.HasPrefix(name, "test_")
+	case "class":
+		isTest = strings.HasPrefix(name, "Test")
+	}
+
+	if isTest {
+		endLine := defLine
+		if dsText != "" {
+			endLine = dsEnd
+		}
+		if dsEnd > sigEndIdx {
+			pyMarkConsumed(consumed, dsStart, dsEnd-1)
+		}
+		return CodeDocEntry{
+			SymbolName:  name,
+			CommentKind: KindTestFunc,
+			HeadingPath: "Tests > " + name,
+			Text:        dsText,
+			StartLine:   defLine,
+			EndLine:     endLine,
+			FileType:    fileType,
+			Lang:        lang,
+		}, true
+	}
+
+	if dsText != "" {
+		pyMarkConsumed(consumed, dsStart, dsEnd-1)
+		return CodeDocEntry{
+			SymbolName:  name,
+			CommentKind: KindDocComment,
+			HeadingPath: "DocComment > " + name,
+			Text:        dsText,
+			StartLine:   defLine,
+			EndLine:     dsEnd,
+			FileType:    fileType,
+			Lang:        lang,
+		}, true
+	}
+
+	return CodeDocEntry{}, false
 }
 
 func pyDefOrClass(line string) (kind, name string, found bool) {
@@ -418,46 +401,44 @@ func rbSymbols(lines []string, startAfter int, fileType, lang string) []CodeDocE
 			commentStartLine = pendingStart + 1
 		}
 
-		switch {
-		case isTest:
-			entries = append(entries, CodeDocEntry{
-				SymbolName:  name,
-				CommentKind: KindTestFunc,
-				HeadingPath: "Tests > " + name,
-				Text:        docText,
-				StartLine:   commentStartLine,
-				EndLine:     defLine,
-				FileType:    fileType,
-				Lang:        lang,
-			})
-		case kind == "def" && docText != "":
-			entries = append(entries, CodeDocEntry{
-				SymbolName:  name,
-				CommentKind: KindDocComment,
-				HeadingPath: "DocComment > " + name,
-				Text:        docText,
-				StartLine:   commentStartLine,
-				EndLine:     defLine,
-				FileType:    fileType,
-				Lang:        lang,
-			})
-		case kind == "describe" || kind == "context":
-			entries = append(entries, CodeDocEntry{
-				SymbolName:  name,
-				CommentKind: KindTestFunc,
-				HeadingPath: "Tests > " + name,
-				Text:        docText,
-				StartLine:   commentStartLine,
-				EndLine:     defLine,
-				FileType:    fileType,
-				Lang:        lang,
-			})
+		if e, ok := rbBuildEntry(kind, name, isTest, docText, commentStartLine, defLine, fileType, lang); ok {
+			entries = append(entries, e)
 		}
 
 		pendingComment = nil
 		i++
 	}
 	return entries
+}
+
+// rbBuildEntry constructs a CodeDocEntry for a Ruby symbol. Returns (entry, true)
+// when the symbol should be emitted, (zero, false) otherwise.
+func rbBuildEntry(kind, name string, isTest bool, docText string, commentStartLine, defLine int, fileType, lang string) (CodeDocEntry, bool) {
+	switch {
+	case isTest || kind == "describe" || kind == "context":
+		return CodeDocEntry{
+			SymbolName:  name,
+			CommentKind: KindTestFunc,
+			HeadingPath: "Tests > " + name,
+			Text:        docText,
+			StartLine:   commentStartLine,
+			EndLine:     defLine,
+			FileType:    fileType,
+			Lang:        lang,
+		}, true
+	case kind == "def" && docText != "":
+		return CodeDocEntry{
+			SymbolName:  name,
+			CommentKind: KindDocComment,
+			HeadingPath: "DocComment > " + name,
+			Text:        docText,
+			StartLine:   commentStartLine,
+			EndLine:     defLine,
+			FileType:    fileType,
+			Lang:        lang,
+		}, true
+	}
+	return CodeDocEntry{}, false
 }
 
 func rbStatement(line string) (kind, name string, isTest bool) {
@@ -474,31 +455,29 @@ func rbStatement(line string) (kind, name string, isTest bool) {
 		return "def", methodName, strings.HasPrefix(methodName, "test_")
 	}
 
-	if strings.HasPrefix(line, "it ") || strings.HasPrefix(line, "it('") || strings.HasPrefix(line, `it("`) {
-		label := rbExtractStringArg(line)
-		if label == "" {
-			label = "anonymous"
+	for _, kw := range []string{"it", "describe", "context"} {
+		if label, ok := rbMatchRSpecBlock(line, kw); ok {
+			return kw, label, true
 		}
-		return "it", label, true
-	}
-
-	if strings.HasPrefix(line, "describe ") || strings.HasPrefix(line, "describe('") || strings.HasPrefix(line, `describe("`) {
-		label := rbExtractStringArg(line)
-		if label == "" {
-			label = "anonymous"
-		}
-		return "describe", label, true
-	}
-
-	if strings.HasPrefix(line, "context ") || strings.HasPrefix(line, "context('") || strings.HasPrefix(line, `context("`) {
-		label := rbExtractStringArg(line)
-		if label == "" {
-			label = "anonymous"
-		}
-		return "context", label, true
 	}
 
 	return "", "", false
+}
+
+// rbMatchRSpecBlock returns the label and true when line starts an RSpec
+// it/describe/context block with the given keyword. Handles bare-word,
+// single-quoted, and double-quoted forms (keyword+" ", keyword+"('", keyword+`("`).
+func rbMatchRSpecBlock(line, keyword string) (label string, ok bool) {
+	if !strings.HasPrefix(line, keyword+" ") &&
+		!strings.HasPrefix(line, keyword+"('") &&
+		!strings.HasPrefix(line, keyword+`("`) {
+		return "", false
+	}
+	label = rbExtractStringArg(line)
+	if label == "" {
+		label = "anonymous"
+	}
+	return label, true
 }
 
 func rbExtractStringArg(line string) string {

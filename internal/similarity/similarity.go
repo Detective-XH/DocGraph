@@ -21,6 +21,91 @@ type docFeatures struct {
 	tags    map[string]bool
 }
 
+// rawDoc is used internally by buildDocFeatures to carry per-document token
+// and set data before TF-IDF weights are applied.
+type rawDoc struct {
+	id      string
+	tokens  []string
+	targets map[string]bool
+	tags    map[string]bool
+}
+
+// buildDocFeatures builds the TF-IDF feature vector for every document in
+// docs. It is shared between ComputeSimilarity and ComputeSimilarityIncremental
+// to avoid duplicating the raw→df→tfidf loop.
+func buildDocFeatures(st SimilarityStore, docs []store.Node) ([]docFeatures, error) {
+	raw := make([]rawDoc, len(docs))
+	df := make(map[string]int)
+	for i, d := range docs {
+		tokens := tokenize(d.Name + " " + d.BodyExcerpt)
+		targets, err := buildCappedTargets(st, d.ID)
+		if err != nil {
+			return nil, err
+		}
+		raw[i] = rawDoc{id: d.ID, tokens: tokens, targets: targets, tags: extractTagSet(d.Metadata)}
+		seen := make(map[string]bool)
+		for _, t := range tokens {
+			if !seen[t] {
+				df[t]++
+				seen[t] = true
+			}
+		}
+	}
+
+	n := float64(len(docs))
+	features := make([]docFeatures, len(raw))
+	for i, rd := range raw {
+		tf := make(map[string]float64)
+		total := float64(len(rd.tokens))
+		if total == 0 {
+			features[i] = docFeatures{tfidf: tf, targets: rd.targets, tags: rd.tags}
+			continue
+		}
+		for _, t := range rd.tokens {
+			tf[t]++
+		}
+		tfidf := make(map[string]float64, len(tf))
+		for term, count := range tf {
+			tfidf[term] = (count / total) * math.Log(n/float64(df[term]))
+		}
+		features[i] = docFeatures{tfidf: tfidf, targets: rd.targets, tags: rd.tags}
+	}
+	return features, nil
+}
+
+// resolveNeuralThreshold resolves the effective threshold for neural similarity.
+// If threshold > 0 it is returned unchanged. Otherwise the stored project-meta
+// value is used, falling back to 0.25. This mirrors the pre-refactor logic
+// exactly: any successfully-parsed stored value is assigned, and only a final
+// threshold <= 0 triggers the 0.25 fallback (a stored NaN parses successfully
+// and is <= 0-false, so it propagates as before — do not "fix" that here; a
+// behavior change belongs in its own commit with a test).
+func resolveNeuralThreshold(st SimilarityStore, threshold float64) float64 {
+	if threshold > 0 {
+		return threshold
+	}
+	if stored, ok, _ := st.GetProjectMeta("similarity_threshold"); ok {
+		if v, err := strconv.ParseFloat(stored, 64); err == nil {
+			threshold = v
+		}
+	}
+	if threshold <= 0 {
+		return 0.25
+	}
+	return threshold
+}
+
+// findDocVector returns the embedding vector for docID from embs, or nil if
+// not present.
+func findDocVector(embs []store.Embedding, docID string) []float64 {
+	for _, e := range embs {
+		if e.DocID == docID {
+			return e.Vector
+		}
+	}
+	return nil
+}
+
 // ComputeSimilarity computes pairwise topic similarity between all documents
 // using a hybrid of TF-IDF text similarity, shared reference targets, and tag
 // overlap. Edges of kind "similar_to" are inserted for pairs whose composite
@@ -44,57 +129,9 @@ func ComputeSimilarity(st SimilarityStore, threshold float64) error {
 		return fmt.Errorf("clean similarity edges: %w", err)
 	}
 
-	// Step 1: build per-document raw token lists, target sets, and tag sets.
-	type rawDoc struct {
-		id      string
-		tokens  []string
-		targets map[string]bool
-		tags    map[string]bool
-	}
-	raw := make([]rawDoc, len(docs))
-	df := make(map[string]int)
-	for i, d := range docs {
-		tokens := tokenize(d.Name + " " + d.BodyExcerpt)
-
-		targets, err := buildCappedTargets(st, d.ID)
-		if err != nil {
-			return err
-		}
-
-		raw[i] = rawDoc{
-			id:      d.ID,
-			tokens:  tokens,
-			targets: targets,
-			tags:    extractTagSet(d.Metadata),
-		}
-
-		seen := make(map[string]bool)
-		for _, t := range tokens {
-			if !seen[t] {
-				df[t]++
-				seen[t] = true
-			}
-		}
-	}
-
-	// Step 2: compute TF-IDF vectors.
-	n := float64(len(docs))
-	features := make([]docFeatures, len(raw))
-	for i, rd := range raw {
-		tf := make(map[string]float64)
-		total := float64(len(rd.tokens))
-		if total == 0 {
-			features[i] = docFeatures{tfidf: tf, targets: rd.targets, tags: rd.tags}
-			continue
-		}
-		for _, t := range rd.tokens {
-			tf[t]++
-		}
-		tfidf := make(map[string]float64, len(tf))
-		for term, count := range tf {
-			tfidf[term] = (count / total) * math.Log(n/float64(df[term]))
-		}
-		features[i] = docFeatures{tfidf: tfidf, targets: rd.targets, tags: rd.tags}
+	features, err := buildDocFeatures(st, docs)
+	if err != nil {
+		return err
 	}
 
 	// Steps 3–6: pairwise comparison → edge creation. Scoring fans out across
@@ -147,48 +184,10 @@ func ComputeSimilarityIncremental(st SimilarityStore, changedDocIDs []string, th
 		changed[id] = true
 	}
 
-	// Build per-doc raw features and global IDF from all docs (O(n)).
-	type rawDoc struct {
-		id      string
-		tokens  []string
-		targets map[string]bool
-		tags    map[string]bool
-	}
-	raw := make([]rawDoc, len(docs))
-	df := make(map[string]int)
-	for i, d := range docs {
-		tokens := tokenize(d.Name + " " + d.BodyExcerpt)
-		targets, err := buildCappedTargets(st, d.ID)
-		if err != nil {
-			return err
-		}
-		raw[i] = rawDoc{id: d.ID, tokens: tokens, targets: targets, tags: extractTagSet(d.Metadata)}
-		seen := make(map[string]bool)
-		for _, t := range tokens {
-			if !seen[t] {
-				df[t]++
-				seen[t] = true
-			}
-		}
-	}
-
-	n := float64(len(docs))
-	features := make([]docFeatures, len(raw))
-	for i, rd := range raw {
-		tf := make(map[string]float64)
-		total := float64(len(rd.tokens))
-		if total == 0 {
-			features[i] = docFeatures{tfidf: tf, targets: rd.targets, tags: rd.tags}
-			continue
-		}
-		for _, t := range rd.tokens {
-			tf[t]++
-		}
-		tfidf := make(map[string]float64, len(tf))
-		for term, count := range tf {
-			tfidf[term] = (count / total) * math.Log(n/float64(df[term]))
-		}
-		features[i] = docFeatures{tfidf: tfidf, targets: rd.targets, tags: rd.tags}
+	// Build per-doc features and global IDF from all docs (O(n)).
+	features, err := buildDocFeatures(st, docs)
+	if err != nil {
+		return err
 	}
 
 	// Remove stale edges involving changed docs.
@@ -215,17 +214,7 @@ func ComputeSimilarityIncremental(st SimilarityStore, changedDocIDs []string, th
 // Existing neural edges for docID are replaced. Uses the stored similarity
 // threshold from project_metadata (default 0.25).
 func ComputeNeuralSimilarityForDoc(st SimilarityStore, docID, modelID string, threshold float64) error {
-	if threshold <= 0 {
-		stored, ok, _ := st.GetProjectMeta("similarity_threshold")
-		if ok {
-			if v, err := strconv.ParseFloat(stored, 64); err == nil {
-				threshold = v
-			}
-		}
-		if threshold <= 0 {
-			threshold = 0.25
-		}
-	}
+	threshold = resolveNeuralThreshold(st, threshold)
 
 	embs, err := st.GetEmbeddingsByModel(modelID)
 	if err != nil {
@@ -235,14 +224,7 @@ func ComputeNeuralSimilarityForDoc(st SimilarityStore, docID, modelID string, th
 		return nil
 	}
 
-	// Find this doc's vector.
-	var docVec []float64
-	for _, e := range embs {
-		if e.DocID == docID {
-			docVec = e.Vector
-			break
-		}
-	}
+	docVec := findDocVector(embs, docID)
 	if docVec == nil {
 		return nil
 	}

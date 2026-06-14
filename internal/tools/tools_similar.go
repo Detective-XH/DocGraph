@@ -42,22 +42,9 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	// Query similar_to edges (both directions) for this document.
-	var edges []store.Edge
-	if h.workspace != nil {
-		for _, p := range h.workspace.Projects {
-			if projectFilter != "" && p.Name != projectFilter {
-				continue
-			}
-			if es, err := fetchSimilarEdges(p.Store, node.ID); err == nil {
-				edges = append(edges, es...)
-			}
-		}
-	} else {
-		var err error
-		edges, err = fetchSimilarEdges(h.store, node.ID)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get similar edges: %v", err)), nil
-		}
+	edges, fetchErr := h.collectSimilarEdges(node.ID, projectFilter)
+	if fetchErr != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("get similar edges: %v", fetchErr)), nil
 	}
 
 	deduped := rankSimilarEdges(edges, engine, limit)
@@ -79,35 +66,43 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 		if other == nil {
 			continue
 		}
-		score := ""
-		if e.Metadata != "" {
-			var m map[string]any
-			if json.Unmarshal([]byte(e.Metadata), &m) == nil {
-				if s, ok := m["score"].(float64); ok {
-					tf, okT := m["tfidf"].(float64)
-					rs, okR := m["refs"].(float64)
-					gs, okG := m["tags"].(float64)
-					if okT && okR && okG {
-						// TF-IDF edge: surface blend label + component breakdown.
-						score = fmt.Sprintf(" (score: %.2f (0-1 weighted blend); signals behind this score: tfidf-cosine %.2f, shared-refs %.2f, shared-tags %.2f)", s, tf, rs, gs)
-					} else {
-						// Neural or other edge: render unchanged (score + engine + model).
-						score = fmt.Sprintf(" (score: %.2f", s)
-						if eng, ok := m["engine"].(string); ok {
-							score += ", engine: " + eng
-							if mid, ok := m["model_id"].(string); ok {
-								score += ", model: " + mid
-							}
-						}
-						score += ")"
-					}
-				}
-			}
-		}
+		score := formatSimilarEdgeScore(e)
 		fmt.Fprintf(&sb, "\n%d. **%s** %s%s\n", i+1, other.Name, other.FilePath, score)
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// formatSimilarEdgeScore returns the parenthetical score annotation for a
+// similar_to edge — empty string when metadata is absent or unparseable.
+func formatSimilarEdgeScore(e store.Edge) string {
+	if e.Metadata == "" {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal([]byte(e.Metadata), &m) != nil {
+		return ""
+	}
+	s, ok := m["score"].(float64)
+	if !ok {
+		return ""
+	}
+	tf, okT := m["tfidf"].(float64)
+	rs, okR := m["refs"].(float64)
+	gs, okG := m["tags"].(float64)
+	if okT && okR && okG {
+		// TF-IDF edge: surface blend label + component breakdown.
+		return fmt.Sprintf(" (score: %.2f (0-1 weighted blend); signals behind this score: tfidf-cosine %.2f, shared-refs %.2f, shared-tags %.2f)", s, tf, rs, gs)
+	}
+	// Neural or other edge: render unchanged (score + engine + model).
+	score := fmt.Sprintf(" (score: %.2f", s)
+	if eng, ok := m["engine"].(string); ok {
+		score += ", engine: " + eng
+		if mid, ok := m["model_id"].(string); ok {
+			score += ", model: " + mid
+		}
+	}
+	return score + ")"
 }
 
 // SimilarityReader is the narrow similarity-edge surface handleSimilar consumes
@@ -131,6 +126,26 @@ func fetchSimilarEdges(r SimilarityReader, docID string) ([]store.Edge, error) {
 	return r.GetSimilarEdgesForDoc(docID)
 }
 
+// collectSimilarEdges gathers all similar_to edges for nodeID across all
+// projects (workspace) or the single store. In workspace mode per-store errors
+// are tolerated (skipped). In single-store mode the error is propagated to the
+// caller.
+func (h *handler) collectSimilarEdges(nodeID, projectFilter string) ([]store.Edge, error) {
+	if h.workspace != nil {
+		var edges []store.Edge
+		for _, p := range h.workspace.Projects {
+			if projectFilter != "" && p.Name != projectFilter {
+				continue
+			}
+			if es, err := fetchSimilarEdges(p.Store, nodeID); err == nil {
+				edges = append(edges, es...)
+			}
+		}
+		return edges, nil
+	}
+	return fetchSimilarEdges(h.store, nodeID)
+}
+
 // rankSimilarEdges turns raw similar_to edges into the display set:
 //   - filter by engine ("tfidf"/"neural"; "" or "auto" keeps all), BEFORE dedup
 //     so a tfidf edge sharing a pair with a neural edge is not lost;
@@ -143,18 +158,28 @@ func fetchSimilarEdges(r SimilarityReader, docID string) ([]store.Edge, error) {
 //
 // Pure (no store access) so the dedup/order/limit contract is unit-testable
 // directly on []store.Edge.
+// filterSimilarEdgesByEngine retains only edges matching the requested engine.
+// engine must be "tfidf" or "neural"; any other value is a no-op that returns
+// edges unchanged. A new slice is always returned to avoid aliasing the input.
+func filterSimilarEdgesByEngine(edges []store.Edge, engine string) []store.Edge {
+	if engine != "tfidf" && engine != "neural" {
+		return edges
+	}
+	filtered := make([]store.Edge, 0, len(edges))
+	for _, e := range edges {
+		eng := edgeEngine(e)
+		if engine == "neural" && eng == "neural" {
+			filtered = append(filtered, e)
+		} else if engine == "tfidf" && eng != "neural" {
+			filtered = append(filtered, e)
+		}
+	}
+	return filtered
+}
+
 func rankSimilarEdges(edges []store.Edge, engine string, limit int) []store.Edge {
 	if engine == "tfidf" || engine == "neural" {
-		filtered := edges[:0]
-		for _, e := range edges {
-			eng := edgeEngine(e)
-			if engine == "neural" && eng == "neural" {
-				filtered = append(filtered, e)
-			} else if engine == "tfidf" && eng != "neural" {
-				filtered = append(filtered, e)
-			}
-		}
-		edges = filtered
+		edges = filterSimilarEdgesByEngine(edges, engine)
 	}
 
 	type pairKey struct{ a, b string }

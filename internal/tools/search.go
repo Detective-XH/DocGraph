@@ -38,14 +38,11 @@ var searchTool = mcp.NewTool("docgraph_search",
 // Handlers
 // ---------------------------------------------------------------------------
 
-func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.GetArguments()
-
-	query := getStringArg(args, "query", "")
-	if query == "" {
-		return mcp.NewToolResultError("query parameter is required"), nil
-	}
-	query = sanitizeArg(query, maxArgLength)
+// parseSearchArgs extracts and sanitizes all search parameters from the MCP
+// tool arguments map and returns a populated store.SearchOptions. The query
+// field is NOT validated here (empty-query guard stays in handleSearch).
+func parseSearchArgs(args map[string]any) store.SearchOptions {
+	query := sanitizeArg(getStringArg(args, "query", ""), maxArgLength)
 	kind := getStringArg(args, "kind", "")
 	limit := getIntArgClamped(args, "limit", 10, 1, 200)
 	includeCode := getBoolArg(args, "include_code", false)
@@ -60,7 +57,7 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 	analystStatusFilter := sanitizeArg(getStringArg(args, "analyst_status", ""), 100)
 	projectFilter := sanitizeArg(getStringArg(args, "project", ""), maxArgLength)
 
-	opts := store.SearchOptions{
+	return store.SearchOptions{
 		Query:       query,
 		Kind:        kind,
 		Limit:       limit,
@@ -81,6 +78,21 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 		},
 		ProjectFilter: projectFilter,
 	}
+}
+
+func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+
+	query := getStringArg(args, "query", "")
+	if query == "" {
+		return mcp.NewToolResultError("query parameter is required"), nil
+	}
+
+	opts := parseSearchArgs(args)
+	// Render from the sanitized/length-capped query (parseSearchArgs truncates it
+	// via sanitizeArg), never the raw arg — an oversized query must not be echoed
+	// back in full (TestMCPOversizedQuery).
+	query = opts.Query
 	useMetadataFilters := opts.HasMetadataFilters()
 
 	var sb strings.Builder
@@ -103,6 +115,31 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 		fmt.Fprintf(&sb, "## Search Results for %q\n\nFound %d results.\n", query, len(results))
 	}
 
+	seenFiles := h.appendSearchResults(&sb, results)
+
+	if len(results) > 0 {
+		distinctFiles := len(seenFiles)
+		if len(results) >= opts.Limit {
+			// Capped at limit= → distinctFiles is PAGE-SCOPED (only the distinct files
+			// among the rows shown) and grows as limit rises (AX probe v5
+			// limit-dependent-count-instability: K=6/8/11/34 at limit 10/15/50/100 for a
+			// broad query). Tell a weak agent the count is a page total, not a corpus-wide
+			// distinct-document total, so raising limit does not produce a silent
+			// over-count. Mirrors docgraph_graph's "first N of M" truncation honesty. (P-v5-1)
+			fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows. Results were capped at limit=%d; more matching rows and more distinct files likely exist (raise limit=), so this %d is a page count, not a corpus-wide distinct-document total.)\n",
+				len(results), distinctFiles, opts.Limit, distinctFiles)
+		} else {
+			fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows.)\n",
+				len(results), distinctFiles)
+		}
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// appendSearchResults renders each search result into sb and returns a map of
+// distinct file paths seen (used by the caller to compute the page-count footer).
+func (h *handler) appendSearchResults(sb *strings.Builder, results []store.SearchResult) map[string]struct{} {
 	seenFiles := make(map[string]struct{}, len(results))
 	for i, sr := range results {
 		n := sr.Node
@@ -112,48 +149,29 @@ func (h *handler) handleSearch(ctx context.Context, request mcp.CallToolRequest)
 		if n.Kind == "heading" && n.QualifiedName != "" {
 			path = n.QualifiedName
 		}
-		fmt.Fprintf(&sb, "\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine)
+		fmt.Fprintf(sb, "\n%d. **%s** [%s] %s:%d-%d\n", i+1, n.Name, n.Kind, path, n.StartLine, n.EndLine)
 		// A heading hit's path carries a #heading:line suffix; surface the bare
 		// parent-document path so a weak agent can chain into node/graph/context
 		// without string-stripping (P-v3-3b).
 		if n.Kind == "heading" {
-			fmt.Fprintf(&sb, "   parent document: %s\n", barePath)
+			fmt.Fprintf(sb, "   parent document: %s\n", barePath)
 		}
-
 		if n.BodyExcerpt != "" {
 			excerpt := strings.TrimRight(n.BodyExcerpt, "\n")
 			firstLine, _, _ := strings.Cut(excerpt, "\n")
 			if len(firstLine) > 100 {
 				firstLine = firstLine[:100] + "..."
 			}
-			fmt.Fprintf(&sb, "   > %s\n", firstLine)
+			fmt.Fprintf(sb, "   > %s\n", firstLine)
 		}
 		if st := h.getStoreForResolvedNode(&n); st != nil {
 			if quality, err := st.GetMetadataQuality(n.ID, time.Time{}); err == nil && quality != nil {
-				fmt.Fprintf(&sb, "   Quality: %d/100 %s%s\n",
+				fmt.Fprintf(sb, "   Quality: %d/100 %s%s\n",
 					quality.Score, quality.Level, formatQualityIssueCodes(quality.Issues, 3))
 			}
 		}
 	}
-
-	if len(results) > 0 {
-		distinctFiles := len(seenFiles)
-		if len(results) >= limit {
-			// Capped at limit= → distinctFiles is PAGE-SCOPED (only the distinct files
-			// among the rows shown) and grows as limit rises (AX probe v5
-			// limit-dependent-count-instability: K=6/8/11/34 at limit 10/15/50/100 for a
-			// broad query). Tell a weak agent the count is a page total, not a corpus-wide
-			// distinct-document total, so raising limit does not produce a silent
-			// over-count. Mirrors docgraph_graph's "first N of M" truncation honesty. (P-v5-1)
-			fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows. Results were capped at limit=%d; more matching rows and more distinct files likely exist (raise limit=), so this %d is a page count, not a corpus-wide distinct-document total.)\n",
-				len(results), distinctFiles, limit, distinctFiles)
-		} else {
-			fmt.Fprintf(&sb, "\n(The %d result(s) above span %d distinct file(s) — count distinct files, not rows.)\n",
-				len(results), distinctFiles)
-		}
-	}
-
-	return mcp.NewToolResultText(sb.String()), nil
+	return seenFiles
 }
 
 func describeSearchFilters(opts store.SearchOptions) string {

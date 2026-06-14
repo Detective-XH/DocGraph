@@ -16,6 +16,30 @@ var filesTool = mcp.NewTool("docgraph_files",
 	mcp.WithString("project", mcp.Description("Workspace mode only: scope results to a single project by name (the directory name shown in docgraph_status). Omit to query all projects. No-op in single-store mode.")),
 )
 
+// buildFilesEmptyResponse constructs the explanatory zero-result response for
+// handleFiles. When pathFilter is non-empty, it queries the store/workspace for
+// known top-level directories to give the agent a useful hint.
+func (h *handler) buildFilesEmptyResponse(pathFilter, projectFilter string) *mcp.CallToolResult {
+	if pathFilter != "" {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "No indexed files found under path %q.\n", pathFilter)
+		var dirs []string
+		var dirsErr error
+		if h.workspace != nil {
+			dirs, dirsErr = h.workspace.GetAllTopLevelDirs(projectFilter)
+		} else {
+			dirs, dirsErr = h.store.GetTopLevelDirs()
+		}
+		if dirsErr == nil && len(dirs) > 0 {
+			fmt.Fprintf(&sb, "Known top-level indexed directories: %s", strings.Join(dirs, ", "))
+		} else {
+			sb.WriteString("The index appears to be empty.")
+		}
+		return mcp.NewToolResultText(sb.String())
+	}
+	return mcp.NewToolResultText("No files have been indexed yet.")
+}
+
 func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	pathFilter := getStringArg(args, "path", "")
@@ -43,30 +67,13 @@ func (h *handler) handleFiles(ctx context.Context, request mcp.CallToolRequest) 
 		}
 	}
 
-	total := len(files)
-
 	// Zero-result guard: explain WHY no results were returned before falling
 	// back to an empty table that leaves agents without actionable context.
-	if total == 0 {
-		if pathFilter != "" {
-			var sb strings.Builder
-			fmt.Fprintf(&sb, "No indexed files found under path %q.\n", pathFilter)
-			var dirs []string
-			var dirsErr error
-			if h.workspace != nil {
-				dirs, dirsErr = h.workspace.GetAllTopLevelDirs(projectFilter)
-			} else {
-				dirs, dirsErr = h.store.GetTopLevelDirs()
-			}
-			if dirsErr == nil && len(dirs) > 0 {
-				fmt.Fprintf(&sb, "Known top-level indexed directories: %s", strings.Join(dirs, ", "))
-			} else {
-				sb.WriteString("The index appears to be empty.")
-			}
-			return mcp.NewToolResultText(sb.String()), nil
-		}
-		return mcp.NewToolResultText("No files have been indexed yet."), nil
+	if len(files) == 0 {
+		return h.buildFilesEmptyResponse(pathFilter, projectFilter), nil
 	}
+
+	total := len(files)
 
 	if fileLimit > 0 && len(files) > fileLimit {
 		files = files[:fileLimit]
