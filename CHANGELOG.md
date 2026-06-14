@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.2 — 2026-06-14
+
+Code-quality maintenance release. Internal refactoring only — 28 of the highest-complexity functions were decomposed into smaller, well-named units to improve readability and maintainability. No behavior, API, output, or schema changes; fully backward-compatible (same inputs produce identical results). Decomposed areas include the MCP tool handlers, the SQLite search/ranking layer, the HTML/DOCX extractors, the Markdown parser, and the file scanner. Verified with full `-race` tests, golden/equivalence tests, and an adversarial review.
+
 ## v0.3.1 — 2026-06-13
 
 Maintenance + agent-experience release. Drift and metadata-quality findings are now actionable, binary documents are no longer mis-scored for governance fields they cannot hold, and `.docgraphignore` exclusions are discoverable from the tools and apply on a running server. Dependency bump; backward-compatible, no schema change.
