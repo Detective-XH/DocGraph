@@ -31,7 +31,7 @@ func TestReconcileDeletedFiles_PrunesNewlyIgnored(t *testing.T) {
 	dir, st := openPruneTestStore(t)
 	indexPruneTestFile(t, dir, st, "keep1.md", "# K1\n\nkeeper one.\n")
 	indexPruneTestFile(t, dir, st, "keep2.md", "# K2\n\nkeeper two.\n")
-	indexPruneTestFile(t, dir, st, "drop.md", "# Drop\n\nto be ignored.\n")
+	indexPruneTestFile(t, dir, st, "drop.md", "# Drop\n\nwill be ignored.\n")
 
 	// Add the exclusion AFTER indexing; the file stays on disk.
 	if err := os.WriteFile(filepath.Join(dir, ".docgraphignore"), []byte("drop.md\n"), 0o644); err != nil {
