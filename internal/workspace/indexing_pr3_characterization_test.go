@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/Detective-XH/docgraph/internal/store"
 )
 
 // gitRun runs a git subcommand inside dir with signing disabled (a contributor's
@@ -110,38 +112,11 @@ func TestIndexProjectOpts_GitAndPlainCharacterization(t *testing.T) {
 	// --- git path: per-file history alignment (the projectFlushGitBatch guard) ---
 	// alpha.md's only touching commit is "add alpha"; beta.md's is "add beta". A
 	// histories[idx]↔batch[idx] misalignment would cross these subjects.
-	alphaH, err := gp.Store.GetFileHistory("alpha.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if alphaH == nil {
-		t.Fatal("alpha.md has no git history (git path did not write it)")
-	}
-	if alphaH.LastSubject != "add alpha" {
-		t.Errorf("alpha.md LastSubject = %q; want %q (history misaligned)", alphaH.LastSubject, "add alpha")
-	}
-	if alphaH.CommitCount != 1 {
-		t.Errorf("alpha.md CommitCount = %d; want 1", alphaH.CommitCount)
-	}
-	betaH, err := gp.Store.GetFileHistory("beta.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if betaH == nil {
-		t.Fatal("beta.md has no git history (git path did not write it)")
-	}
-	if betaH.LastSubject != "add beta" {
-		t.Errorf("beta.md LastSubject = %q; want %q (history misaligned)", betaH.LastSubject, "add beta")
-	}
+	assertFileHistory(t, gp.Store, "alpha.md", "add alpha", 1)
+	assertFileHistory(t, gp.Store, "beta.md", "add beta", 1)
 
 	// --- streaming path must write NO history (non-git project) ---
-	gammaH, err := pp.Store.GetFileHistory("gamma.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gammaH != nil {
-		t.Errorf("plain-proj gamma.md unexpectedly has git history: %#v", gammaH)
-	}
+	assertNoHistory(t, pp.Store, "gamma.md")
 
 	// --- FTS: every unique term must be searchable workspace-wide (rebuild ran) ---
 	for _, term := range []string{"uniquealphaterm", "uniquebetaterm", "uniquegammaterm", "uniquedeltaterm"} {
@@ -156,6 +131,38 @@ func assertStat(t *testing.T, name string, got, want int) {
 	t.Helper()
 	if got != want {
 		t.Errorf("%s = %d; want %d", name, got, want)
+	}
+}
+
+// assertFileHistory asserts the file at path carries a git history row with the given
+// last-commit subject and commit count (the git write path).
+func assertFileHistory(t *testing.T, st *store.Store, path, wantSubject string, wantCommits int) {
+	t.Helper()
+	h, err := st.GetFileHistory(path)
+	if err != nil {
+		t.Fatalf("GetFileHistory %s: %v", path, err)
+	}
+	if h == nil {
+		t.Fatalf("%s has no git history (git path did not write it)", path)
+	}
+	if h.LastSubject != wantSubject {
+		t.Errorf("%s LastSubject = %q; want %q (history misaligned)", path, h.LastSubject, wantSubject)
+	}
+	if h.CommitCount != wantCommits {
+		t.Errorf("%s CommitCount = %d; want %d", path, h.CommitCount, wantCommits)
+	}
+}
+
+// assertNoHistory asserts the file at path has NO git history row (the streaming
+// non-git write path must not synthesize one).
+func assertNoHistory(t *testing.T, st *store.Store, path string) {
+	t.Helper()
+	h, err := st.GetFileHistory(path)
+	if err != nil {
+		t.Fatalf("GetFileHistory %s: %v", path, err)
+	}
+	if h != nil {
+		t.Errorf("%s unexpectedly has git history: %#v", path, h)
 	}
 }
 
