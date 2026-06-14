@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+// assertSearchOrder locates idA and idZ in results and asserts their rank and
+// position semantics. wantTied=true requires equal Rank values. wantAFirst=true
+// requires idA at a lower index than idZ; false requires idZ before idA. label
+// is a short phase name used in failure messages (e.g. "phase 1").
+func assertSearchOrder(t *testing.T, results []SearchResult, idA, idZ, label string, wantTied, wantAFirst bool) {
+	t.Helper()
+	ia, iz := indexOfDoc(results, idA), indexOfDoc(results, idZ)
+	if ia < 0 || iz < 0 {
+		t.Fatalf("%s: both docs must be present, got a=%d z=%d", label, ia, iz)
+	}
+	if wantTied && results[ia].Rank != results[iz].Rank {
+		t.Fatalf("%s: twins must tie, got %s=%.6f %s=%.6f", label, idA, results[ia].Rank, idZ, results[iz].Rank)
+	}
+	if wantAFirst && ia >= iz {
+		t.Fatalf("%s: expected %s before %s (a=%d, z=%d)", label, idA, idZ, ia, iz)
+	}
+	if !wantAFirst && !wantTied && iz >= ia {
+		t.Fatalf("%s: expected %s before %s (a=%d, z=%d)", label, idZ, idA, ia, iz)
+	}
+}
+
 // TestHistoryRerankActivatesOnChurn verifies applyHistoryReranking is wired but
 // contributes nothing without git history, and proves it DOES activate —
 // flipping result order — once one twin carries high git churn. Churn is used as
@@ -49,17 +70,7 @@ func TestHistoryRerankActivatesOnChurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("phase 1 Search: %v", err)
 	}
-	ia, iz := indexOfDoc(base, "aaaaa.md"), indexOfDoc(base, "zzzzz.md")
-	if ia < 0 || iz < 0 {
-		t.Fatalf("phase 1: both docs must be present, got a=%d z=%d", ia, iz)
-	}
-	if base[ia].Rank != base[iz].Rank {
-		t.Fatalf("phase 1: twins must tie to isolate the history signal, got aaaaa=%.6f zzzzz=%.6f",
-			base[ia].Rank, base[iz].Rank)
-	}
-	if ia >= iz {
-		t.Fatalf("phase 1: expected aaaaa.md before zzzzz.md on a tie (a=%d, z=%d)", ia, iz)
-	}
+	assertSearchOrder(t, base, "aaaaa.md", "zzzzz.md", "phase 1", true, true)
 
 	// Phase 2: EQUAL history on both twins. The boost is identical, so the tie and
 	// the FilePath order must survive — presence of history alone changes nothing.
@@ -74,17 +85,7 @@ func TestHistoryRerankActivatesOnChurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("phase 2 Search: %v", err)
 	}
-	ea, ez := indexOfDoc(eq, "aaaaa.md"), indexOfDoc(eq, "zzzzz.md")
-	if ea < 0 || ez < 0 {
-		t.Fatalf("phase 2: both docs must be present, got a=%d z=%d", ea, ez)
-	}
-	if eq[ea].Rank != eq[ez].Rank {
-		t.Fatalf("phase 2: EQUAL history must keep the twins tied, got aaaaa=%.6f zzzzz=%.6f",
-			eq[ea].Rank, eq[ez].Rank)
-	}
-	if ea >= ez {
-		t.Fatalf("phase 2: expected aaaaa.md still before zzzzz.md on the equal-history tie (a=%d, z=%d)", ea, ez)
-	}
+	assertSearchOrder(t, eq, "aaaaa.md", "zzzzz.md", "phase 2", true, true)
 
 	// Phase 3: bump ONLY zzzzz.md to high churn (near the cap). aaaaa.md keeps its
 	// phase-2 history, so the delta in churn boost is the sole cause of any flip.
@@ -105,6 +106,7 @@ func TestHistoryRerankActivatesOnChurn(t *testing.T) {
 		t.Fatalf("history rerank did NOT activate: zzzzz.md has commit_count=50/author_count=20 but "+
 			"did not overtake aaaaa.md (a=%d, z=%d). The feature is wired but ineffective.", ja, jz)
 	}
+	ia, iz := indexOfDoc(base, "aaaaa.md"), indexOfDoc(base, "zzzzz.md")
 	t.Logf("history rerank verified: high churn flipped zzzzz.md from #%d→#%d (aaaaa #%d→#%d)", iz, jz, ia, ja)
 }
 

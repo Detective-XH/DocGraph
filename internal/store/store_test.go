@@ -621,6 +621,21 @@ func TestSearchSQLInjection(t *testing.T) {
 	}
 }
 
+// assertSingleEdge asserts that the returned edge slice has exactly one element,
+// no error occurred, and that the field extracted by getField equals wantField.
+func assertSingleEdge(t *testing.T, edges []Edge, err error, wantField string, getField func(Edge) string) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("edge query failed: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 edge, got %d", len(edges))
+	}
+	if got := getField(edges[0]); got != wantField {
+		t.Errorf("expected %q, got %q", wantField, got)
+	}
+}
+
 func TestGetIncomingOutgoingEdges(t *testing.T) {
 	st := tempStore(t)
 
@@ -646,52 +661,28 @@ func TestGetIncomingOutgoingEdges(t *testing.T) {
 	}
 
 	t.Run("incoming edges for heading node", func(t *testing.T) {
-		incoming, err := st.GetIncomingEdges("a.md#intro")
-		if err != nil {
-			t.Fatalf("GetIncomingEdges failed: %v", err)
-		}
 		// Should find the wikilinks_to edge from b.md (contains is excluded by filter).
-		if len(incoming) != 1 {
-			t.Fatalf("expected 1 incoming edge, got %d", len(incoming))
-		}
-		if incoming[0].Source != "b.md" {
-			t.Errorf("expected source=b.md, got %q", incoming[0].Source)
-		}
-		if incoming[0].Kind != "wikilinks_to" {
+		incoming, err := st.GetIncomingEdges("a.md#intro")
+		assertSingleEdge(t, incoming, err, "b.md", func(e Edge) string { return e.Source })
+		if len(incoming) == 1 && incoming[0].Kind != "wikilinks_to" {
 			t.Errorf("expected kind=wikilinks_to, got %q", incoming[0].Kind)
 		}
 	})
 
 	t.Run("outgoing edges for heading node", func(t *testing.T) {
-		outgoing, err := st.GetOutgoingEdges("a.md#intro")
-		if err != nil {
-			t.Fatalf("GetOutgoingEdges failed: %v", err)
-		}
 		// Should find the references edge to b.md (contains is excluded by filter).
-		if len(outgoing) != 1 {
-			t.Fatalf("expected 1 outgoing edge, got %d", len(outgoing))
-		}
-		if outgoing[0].Target != "b.md" {
-			t.Errorf("expected target=b.md, got %q", outgoing[0].Target)
-		}
-		if outgoing[0].Kind != "references" {
+		outgoing, err := st.GetOutgoingEdges("a.md#intro")
+		assertSingleEdge(t, outgoing, err, "b.md", func(e Edge) string { return e.Target })
+		if len(outgoing) == 1 && outgoing[0].Kind != "references" {
 			t.Errorf("expected kind=references, got %q", outgoing[0].Kind)
 		}
 	})
 
 	t.Run("incoming edges for document node", func(t *testing.T) {
 		// Document branch: GetIncomingEdges joins on file_path for kind=document.
-		incoming, err := st.GetIncomingEdges("b.md")
-		if err != nil {
-			t.Fatalf("GetIncomingEdges failed: %v", err)
-		}
 		// a.md#intro → b.md (references)
-		if len(incoming) != 1 {
-			t.Fatalf("expected 1 incoming edge for document, got %d", len(incoming))
-		}
-		if incoming[0].Source != "a.md#intro" {
-			t.Errorf("expected source=a.md#intro, got %q", incoming[0].Source)
-		}
+		incoming, err := st.GetIncomingEdges("b.md")
+		assertSingleEdge(t, incoming, err, "a.md#intro", func(e Edge) string { return e.Source })
 	})
 
 	t.Run("outgoing edges for document node", func(t *testing.T) {
@@ -699,15 +690,7 @@ func TestGetIncomingOutgoingEdges(t *testing.T) {
 		// b.md → a.md#intro (wikilinks_to) — source is b.md, a document node,
 		// so the query joins edges where source.file_path = "b.md".
 		outgoing, err := st.GetOutgoingEdges("b.md")
-		if err != nil {
-			t.Fatalf("GetOutgoingEdges failed: %v", err)
-		}
-		if len(outgoing) != 1 {
-			t.Fatalf("expected 1 outgoing edge for document, got %d", len(outgoing))
-		}
-		if outgoing[0].Target != "a.md#intro" {
-			t.Errorf("expected target=a.md#intro, got %q", outgoing[0].Target)
-		}
+		assertSingleEdge(t, outgoing, err, "a.md#intro", func(e Edge) string { return e.Target })
 	})
 }
 

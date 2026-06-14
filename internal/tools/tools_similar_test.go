@@ -29,6 +29,24 @@ func neuralEdge(src, tgt, modelID string, score float64) store.Edge {
 		Metadata: fmt.Sprintf(`{"engine":"neural","model_id":%q,"score":%.4f}`, modelID, score)}
 }
 
+// assertContains asserts that text contains want, using ctx as description in
+// the failure message. Uses t.Helper so failures point to the call site.
+func assertContains(t *testing.T, text, want, ctx string) {
+	t.Helper()
+	if !strings.Contains(text, want) {
+		t.Errorf("expected %q in %s, got:\n%s", want, ctx, text)
+	}
+}
+
+// assertNotContains asserts that text does not contain want. Uses t.Helper so
+// failures point to the call site.
+func assertNotContains(t *testing.T, text, want, ctx string) {
+	t.Helper()
+	if strings.Contains(text, want) {
+		t.Errorf("%q should not appear in %s, got:\n%s", want, ctx, text)
+	}
+}
+
 // TestHandleSimilar_TFIDFShowsBlendAndSignals verifies that a TF-IDF edge (which
 // carries tfidf/refs/tags in metadata) renders the blend marker and signal
 // components, while a neural edge (which carries engine/model_id/score only)
@@ -54,18 +72,10 @@ func TestHandleSimilar_TFIDFShowsBlendAndSignals(t *testing.T) {
 		}
 		text := extractText(res)
 
-		if !strings.Contains(text, "0-1 weighted blend") {
-			t.Errorf("expected '0-1 weighted blend' in TF-IDF result, got:\n%s", text)
-		}
-		if !strings.Contains(text, "tfidf-cosine 0.50") {
-			t.Errorf("expected 'tfidf-cosine 0.50' in TF-IDF result, got:\n%s", text)
-		}
-		if !strings.Contains(text, "shared-refs 0.30") {
-			t.Errorf("expected 'shared-refs 0.30' in TF-IDF result, got:\n%s", text)
-		}
-		if !strings.Contains(text, "shared-tags 0.20") {
-			t.Errorf("expected 'shared-tags 0.20' in TF-IDF result, got:\n%s", text)
-		}
+		assertContains(t, text, "0-1 weighted blend", "TF-IDF result")
+		assertContains(t, text, "tfidf-cosine 0.50", "TF-IDF result")
+		assertContains(t, text, "shared-refs 0.30", "TF-IDF result")
+		assertContains(t, text, "shared-tags 0.20", "TF-IDF result")
 	})
 
 	t.Run("neural edge does not show blend marker or signal components", func(t *testing.T) {
@@ -91,22 +101,12 @@ func TestHandleSimilar_TFIDFShowsBlendAndSignals(t *testing.T) {
 		}
 		text := extractText(res)
 
-		if strings.Contains(text, "0-1 weighted blend") {
-			t.Errorf("neural edge should NOT show '0-1 weighted blend', got:\n%s", text)
-		}
-		if strings.Contains(text, "tfidf-cosine") {
-			t.Errorf("neural edge should NOT show 'tfidf-cosine', got:\n%s", text)
-		}
-		if strings.Contains(text, "shared-refs") {
-			t.Errorf("neural edge should NOT show 'shared-refs', got:\n%s", text)
-		}
+		assertNotContains(t, text, "0-1 weighted blend", "neural edge result")
+		assertNotContains(t, text, "tfidf-cosine", "neural edge result")
+		assertNotContains(t, text, "shared-refs", "neural edge result")
 		// Neural edge should show engine and score.
-		if !strings.Contains(text, "engine: neural") {
-			t.Errorf("neural edge should show 'engine: neural', got:\n%s", text)
-		}
-		if !strings.Contains(text, "score: 0.90") {
-			t.Errorf("neural edge should show 'score: 0.90', got:\n%s", text)
-		}
+		assertContains(t, text, "engine: neural", "neural edge result")
+		assertContains(t, text, "score: 0.90", "neural edge result")
 	})
 }
 
@@ -289,13 +289,9 @@ func TestHandleSimilar_OrderedByScore(t *testing.T) {
 	}
 	text2 := extractText(res2)
 	for _, name := range []string{"T2", "T4"} { // top-2 by score must survive
-		if !strings.Contains(text2, "**"+name+"**") {
-			t.Errorf("limit=2 should keep the top-2 by score; missing %q:\n%s", name, text2)
-		}
+		assertContains(t, text2, "**"+name+"**", "limit=2 result (top-2 by score must survive)")
 	}
 	for _, name := range []string{"T6", "T3", "T5", "T1"} { // the rest must be dropped
-		if strings.Contains(text2, "**"+name+"**") {
-			t.Errorf("limit=2 should drop the least-similar tail; unexpectedly kept %q:\n%s", name, text2)
-		}
+		assertNotContains(t, text2, "**"+name+"**", "limit=2 result (least-similar tail must be dropped)")
 	}
 }
