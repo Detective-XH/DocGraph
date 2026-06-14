@@ -6,9 +6,21 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
+// EntityWriter is the narrow persistence surface IndexFile needs: just the two
+// entity-graph writes. Depending on this interface (rather than the concrete
+// *store.Store) keeps entitygraph decoupled from the rest of the store API and
+// makes IndexFile trivially mockable. *store.Store satisfies it via the thin
+// forwarders in internal/store/forwarders.go.
+type EntityWriter interface {
+	InsertEntities([]store.Entity) error
+	InsertEntityMentions([]store.Mention) error
+}
+
+var _ EntityWriter = (*store.Store)(nil)
+
 // IndexFile extracts entity data from one parsed document and persists it.
 // Called per changed file inside the indexStore loop after metadata upserts.
-func IndexFile(st *store.Store, relPath string, res *parser.ParseResult) error {
+func IndexFile(st EntityWriter, relPath string, res *parser.ParseResult) error {
 	packs := domainpacks.Packs()
 	allowed := AllowedTypes(packs)
 	result := FromParseResult(res, allowed)
@@ -25,7 +37,7 @@ func IndexFile(st *store.Store, relPath string, res *parser.ParseResult) error {
 		preIDs[i] = e.ID
 	}
 
-	if err := st.Entity.InsertEntities(result.Entities); err != nil {
+	if err := st.InsertEntities(result.Entities); err != nil {
 		return err
 	}
 
@@ -40,7 +52,7 @@ func IndexFile(st *store.Store, relPath string, res *parser.ParseResult) error {
 				result.Mentions[i].EntityID = canonical
 			}
 		}
-		return st.Entity.InsertEntityMentions(result.Mentions)
+		return st.InsertEntityMentions(result.Mentions)
 	}
 	return nil
 }

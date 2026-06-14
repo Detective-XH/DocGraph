@@ -137,7 +137,7 @@ func ResolveWorkspace(projects []ProjectRef) error {
 	return nil
 }
 
-func Resolve(st *store.Store) error {
+func Resolve(st RefResolver) error {
 	docs, err := st.GetAllDocumentNodes()
 	if err != nil {
 		return fmt.Errorf("load document nodes: %w", err)
@@ -239,7 +239,7 @@ func Resolve(st *store.Store) error {
 	return nil
 }
 
-func resolveMarkdownLink(ref store.UnresolvedRef, target string, byPath map[string]string, st *store.Store) *store.Edge {
+func resolveMarkdownLink(ref store.UnresolvedRef, target string, byPath map[string]string, st RefResolver) *store.Edge {
 	anchor := ""
 	if idx := strings.Index(target, "#"); idx >= 0 {
 		anchor = target[idx+1:]

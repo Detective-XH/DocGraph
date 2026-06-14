@@ -8,11 +8,25 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Detective-XH/docgraph/internal/domainpacks"
 	"github.com/Detective-XH/docgraph/internal/store"
 	"github.com/Detective-XH/docgraph/internal/workspace"
 )
 
 const codeDocPackID = "code_doc"
+
+// PackManager is the narrow store surface the `docgraph pack` consumers depend
+// on: read the registered domain packs, flip a pack's enabled state, and (when
+// disabling an indexed pack) drop its files by node kind. Lifecycle is owned by
+// the callers — they openStoreForPack and Close the concrete handle — so Close
+// is deliberately absent here. *store.Store satisfies this interface.
+type PackManager interface {
+	GetDomainPacks() ([]domainpacks.Pack, error)
+	SetPackEnabled(packID string, enabled bool) error
+	DeleteFilesByNodeKind(kind string) (int, error)
+}
+
+var _ PackManager = (*store.Store)(nil)
 
 func cmdPack(args []string) {
 	if len(args) == 0 {
@@ -86,7 +100,7 @@ func cmdPackSet(args []string, enabled bool) {
 	fmt.Printf("%s %s\n", packID, enabledWord(enabled))
 }
 
-func printPackList(st *store.Store) {
+func printPackList(st PackManager) {
 	packs, err := st.GetDomainPacks()
 	if err != nil {
 		log.Fatal(err)
@@ -102,7 +116,7 @@ func printPackList(st *store.Store) {
 	}
 }
 
-func applyPackState(st *store.Store, projectPath, packID string, enabled, noSync bool) {
+func applyPackState(st PackManager, projectPath, packID string, enabled, noSync bool) {
 	if err := st.SetPackEnabled(packID, enabled); err != nil {
 		log.Fatal(err)
 	}

@@ -25,7 +25,7 @@ type docFeatures struct {
 // using a hybrid of TF-IDF text similarity, shared reference targets, and tag
 // overlap. Edges of kind "similar_to" are inserted for pairs whose composite
 // score meets the threshold.
-func ComputeSimilarity(st *store.Store, threshold float64) error {
+func ComputeSimilarity(st SimilarityStore, threshold float64) error {
 	if threshold <= 0 {
 		threshold = 0.25
 	}
@@ -114,7 +114,7 @@ func ComputeSimilarity(st *store.Store, threshold float64) error {
 // IDF drift note: adding a new doc shifts IDF for its terms, which can
 // slightly alter scores for unchanged pairs. These pairs are corrected on
 // their next change or a forced full rebuild (--force on index).
-func ComputeSimilarityIncremental(st *store.Store, changedDocIDs []string, threshold float64) error {
+func ComputeSimilarityIncremental(st SimilarityStore, changedDocIDs []string, threshold float64) error {
 	if len(changedDocIDs) == 0 {
 		return nil
 	}
@@ -214,7 +214,7 @@ func ComputeSimilarityIncremental(st *store.Store, changedDocIDs []string, thres
 // document against all other documents that share the same model_id embedding.
 // Existing neural edges for docID are replaced. Uses the stored similarity
 // threshold from project_metadata (default 0.25).
-func ComputeNeuralSimilarityForDoc(st *store.Store, docID, modelID string, threshold float64) error {
+func ComputeNeuralSimilarityForDoc(st SimilarityStore, docID, modelID string, threshold float64) error {
 	if threshold <= 0 {
 		stored, ok, _ := st.GetProjectMeta("similarity_threshold")
 		if ok {
