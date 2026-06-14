@@ -25,7 +25,7 @@ const maxTargetsPerDoc = 10000
 // GetEdgesBySource returns: references/wikilinks_to/related_to/embeds) into a
 // set, capped at maxTargetsPerDoc. On truncation it logs once to stderr so the
 // degradation is observable rather than silent.
-func buildCappedTargets(st *store.Store, docID string) (map[string]bool, error) {
+func buildCappedTargets(st SimilarityStore, docID string) (map[string]bool, error) {
 	edges, err := st.GetEdgesBySource(docID)
 	if err != nil {
 		return nil, fmt.Errorf("get edges for %s: %w", docID, err)
@@ -59,12 +59,12 @@ const similarityEdgeBatch = 10000
 // backing slice is reused across flushes — safe because InsertEdges consumes it
 // synchronously (the rows are written before it returns).
 type edgeBatcher struct {
-	st    *store.Store
+	st    SimilarityStore
 	buf   []store.Edge
 	total int
 }
 
-func newEdgeBatcher(st *store.Store) *edgeBatcher {
+func newEdgeBatcher(st SimilarityStore) *edgeBatcher {
 	return &edgeBatcher{st: st, buf: make([]store.Edge, 0, similarityEdgeBatch)}
 }
 
@@ -131,7 +131,7 @@ func scorePair(docs []store.Node, features []docFeatures, i, j int, threshold fl
 // exactly 0, strictly below the threshold, so it is never an edge — enforcing
 // the invariant at the point the prune decision is made rather than trusting the
 // caller.
-func scoreAndCollectEdges(st *store.Store, docs []store.Node, features []docFeatures, threshold float64, changed map[string]bool) (int, error) {
+func scoreAndCollectEdges(st SimilarityStore, docs []store.Node, features []docFeatures, threshold float64, changed map[string]bool) (int, error) {
 	if threshold <= 0 {
 		threshold = 0.25
 	}
@@ -167,7 +167,7 @@ type rowProcessor func(i int, addEdge func(store.Edge) error) error
 // matches so lock contention is negligible, a dense corpus is writer-bound
 // either way. makeProcess builds a fresh rowProcessor per goroutine so each owns
 // its scratch state (e.g. the pruned gather's dedup buffer) without sharing.
-func runPairwiseWorkers(st *store.Store, n, workers int, makeProcess func() rowProcessor) (int, error) {
+func runPairwiseWorkers(st SimilarityStore, n, workers int, makeProcess func() rowProcessor) (int, error) {
 	b := newEdgeBatcher(st)
 
 	if workers <= 1 {
@@ -230,7 +230,7 @@ func runPairwiseWorkers(st *store.Store, n, workers int, makeProcess func() rowP
 // threshold > 0 — non-candidates score exactly 0). workers <= 1 forces the
 // serial path. Split from scoreAndCollectEdges so tests can force the concurrent
 // and/or pruned path regardless of host core count or corpus density.
-func scorePairsToBatcher(st *store.Store, docs []store.Node, features []docFeatures, threshold float64, changed map[string]bool, workers int, postings *postingIndex) (int, error) {
+func scorePairsToBatcher(st SimilarityStore, docs []store.Node, features []docFeatures, threshold float64, changed map[string]bool, workers int, postings *postingIndex) (int, error) {
 	n := len(docs)
 	if workers > n {
 		workers = n

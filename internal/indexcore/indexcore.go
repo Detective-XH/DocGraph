@@ -25,6 +25,30 @@ import (
 	"github.com/Detective-XH/docgraph/internal/store"
 )
 
+// DependentWriter is the narrow persistence surface WriteDependents needs. It
+// lists every store method WriteDependents calls directly, PLUS the two
+// entity-graph writes that entitygraph.IndexFile needs: because WriteDependents
+// forwards st to entitygraph.IndexFile (which takes an EntityWriter),
+// DependentWriter's method set must be a superset of entitygraph.EntityWriter,
+// so the two entity methods are required and must match it exactly. *store.Store
+// satisfies the whole set (the entity methods via internal/store/forwarders.go).
+type DependentWriter interface {
+	InsertDocumentMetadata(nodeID string, tuples []store.MetadataTuple) error
+	UpsertGovernanceMetadata(nodeID string, tuples []store.MetadataTuple) error
+	UpsertResearchMetadata(nodeID string, tuples []store.MetadataTuple) error
+	InsertEdges(edges []store.Edge) error
+	InsertUnresolvedRefs(refs []store.UnresolvedRef) error
+	UpsertFile(f store.FileInfo) error
+	UpsertFileHistory(h store.FileHistory) error
+
+	// Required so st can be passed to entitygraph.IndexFile(EntityWriter);
+	// keep these identical to entitygraph.EntityWriter's method set.
+	InsertEntities([]store.Entity) error
+	InsertEntityMentions([]store.Mention) error
+}
+
+var _ DependentWriter = (*store.Store)(nil)
+
 // WriteDependents persists the per-file dependent rows that must be written after a
 // file's nodes and section chunks already exist: document / governance / research
 // metadata, the entity graph, edges, unresolved references, the file row, and (when
@@ -44,7 +68,7 @@ import (
 // (logged to stderr) so a bad entity pass or history fork never aborts indexing a
 // document's nodes/edges — matching the pre-extraction behavior of both pipelines.
 func WriteDependents(
-	st *store.Store,
+	st DependentWriter,
 	res *parser.ParseResult,
 	fh git.FileHistory,
 	gitEnabled bool,

@@ -17,6 +17,25 @@ const (
 	pruneBlastRadiusMinFiles = 10  // skip the ratio gate below this many indexed files (tiny projects)
 )
 
+// FileDeleter is the narrow store surface the prune/reconcile path depends on:
+// the index lock (so a prune serialises against reindex) plus the per-file
+// read/delete primitives that remove one file's index data. Declaring exactly
+// this surface lets the deletion functions accept any store-shaped value while
+// documenting their real dependency; *store.Store satisfies it via its embedded
+// IndexMu (LockIndex/UnlockIndex) and entity-substore forwarder (DeleteEntityData).
+type FileDeleter interface {
+	LockIndex()
+	UnlockIndex()
+	GetFileHash(string) (string, error)
+	GetFiles(string) ([]store.FileInfo, error)
+	DeleteSectionChunksByFile(string) error
+	DeleteDocumentMetadataByFile(string) error
+	DeleteEntityData(string) error
+	DeleteFileData(string) error
+}
+
+var _ FileDeleter = (*store.Store)(nil)
+
 // deleteIndexedFile removes all index data for one project-relative path: section
 // chunks, document metadata, entity mentions, then the node/edge/file rows. The
 // order mirrors the reindex write path so the edge cascade (FK ON DELETE CASCADE on
@@ -25,8 +44,8 @@ const (
 // fire. Returns false (without error to the caller) when the path is not indexed or
 // a delete step fails — the caller treats that as "nothing pruned". Callers decide
 // WHETHER a path should be pruned (absent from disk, or ignore-matched); this only
-// performs the deletion. Run under st.IndexMu.
-func deleteIndexedFile(st *store.Store, rel string) bool {
+// performs the deletion. Run with the index lock held (see LockIndex).
+func deleteIndexedFile(st FileDeleter, rel string) bool {
 	if h, _ := st.GetFileHash(rel); h == "" {
 		return false // not indexed (already pruned / never indexed) — nothing to do
 	}
@@ -38,7 +57,7 @@ func deleteIndexedFile(st *store.Store, rel string) bool {
 		fmt.Fprintf(os.Stderr, "[prune] %s: %v\n", rel, err)
 		return false
 	}
-	if err := st.Entity.DeleteEntityData(rel); err != nil {
+	if err := st.DeleteEntityData(rel); err != nil {
 		fmt.Fprintf(os.Stderr, "[prune] %s: %v\n", rel, err)
 		return false
 	}
@@ -61,7 +80,7 @@ func deleteIndexedFile(st *store.Store, rel string) bool {
 // scan applies (a present, ignore-matched file is unambiguously meant to be
 // excluded) — neither is the empty-scan / partial-walk that raw scan-set membership
 // would conflate. A blast-radius guard backstops both. Returns count pruned.
-func reconcileDeletedFiles(root string, st *store.Store, ignoreMatch func(string) bool) int {
+func reconcileDeletedFiles(root string, st FileDeleter, ignoreMatch func(string) bool) int {
 	// Guard 1 — tree present (the ONLY way per-file Stat could mass-delete: whole tree gone).
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		fmt.Fprintf(os.Stderr, "[reconcile] skipped: project root %q not accessible\n", root)
@@ -104,8 +123,8 @@ func reconcileDeletedFiles(root string, st *store.Store, ignoreMatch func(string
 			toPrune, len(dbFiles), pruneBlastRadiusMax*100)
 		return 0
 	}
-	st.IndexMu.Lock()
-	defer st.IndexMu.Unlock()
+	st.LockIndex()
+	defer st.UnlockIndex()
 	pruned := 0
 	for _, rel := range absent {
 		// TOCTOU guard: a delete+recreate between the candidate stat above and now
@@ -168,7 +187,7 @@ func containsIgnoreRuleFile(changed []string) bool {
 // can never trigger a mass-delete here (those produce no per-file Remove event; the
 // ignore-driven prune lives in reconcileDeletedFiles, guarded). Returns count pruned.
 // `root` is the absolute project root, `changed` are project-relative watcher paths.
-func pruneDeletedFiles(root string, st *store.Store, changed []string) int {
+func pruneDeletedFiles(root string, st FileDeleter, changed []string) int {
 	pruned := 0
 	for _, rel := range changed {
 		if !docformat.SupportedExt(strings.ToLower(filepath.Ext(rel))) {

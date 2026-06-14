@@ -48,13 +48,13 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 			if projectFilter != "" && p.Name != projectFilter {
 				continue
 			}
-			if es, err := p.Store.GetSimilarEdgesForDoc(node.ID); err == nil {
+			if es, err := fetchSimilarEdges(p.Store, node.ID); err == nil {
 				edges = append(edges, es...)
 			}
 		}
 	} else {
 		var err error
-		edges, err = h.store.GetSimilarEdgesForDoc(node.ID)
+		edges, err = fetchSimilarEdges(h.store, node.ID)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("get similar edges: %v", err)), nil
 		}
@@ -108,6 +108,27 @@ func (h *handler) handleSimilar(ctx context.Context, request mcp.CallToolRequest
 	}
 
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// SimilarityReader is the narrow similarity-edge surface handleSimilar consumes
+// from a store. GetSimilarEdgesForDoc is the only store method this tool needs —
+// the ranking/dedup downstream is pure (rankSimilarEdges over []store.Edge) — so
+// the consumer depends on this single-method interface instead of the whole
+// *store.Store. *store.Store satisfies it; in workspace mode each project's
+// *Store does, so handleSimilar passes the per-store value into fetchSimilarEdges
+// for both single-store and workspace modes.
+type SimilarityReader interface {
+	GetSimilarEdgesForDoc(docID string) ([]store.Edge, error)
+}
+
+var _ SimilarityReader = (*store.Store)(nil)
+
+// fetchSimilarEdges loads the similar_to edges (both directions) for one
+// document from a single store. handleSimilar calls it once per store: directly
+// in single-store mode (returning the error to the user) and per project in
+// workspace mode (where per-store errors are tolerated and skipped, as before).
+func fetchSimilarEdges(r SimilarityReader, docID string) ([]store.Edge, error) {
+	return r.GetSimilarEdgesForDoc(docID)
 }
 
 // rankSimilarEdges turns raw similar_to edges into the display set:
