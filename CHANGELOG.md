@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.3.3 — 2026-06-14
+
+Code-quality and dependency maintenance release. No behavior, API, output, or schema changes; fully backward-compatible (same inputs produce identical results).
+
+- **Cyclomatic-complexity reduction** — 21 test functions decomposed via helper extraction; `GetDriftFindings` refactored from 12 repeated blocks into a finder-table loop. Gocyclo file-ratio improved from 91.3% to 98.63%. Modernization sweep: range-over-int, `min`/`max` builtins, `strings.FieldsSeq`, `b.Loop()`, and `maps.Copy` replacing hand-rolled equivalents.
+- **Dependency bump** — `github.com/Detective-XH/gopdf` updated from v0.7.9 to v0.8.0 (additive and fix-only; no breaking API changes).
+
+Verified with full `-race` tests, security-audit (0 failures), ax-audit Layer-1 (14/14 assertions), and `govulncheck` (clean).
+
 ## v0.3.2 — 2026-06-14
 
 Code-quality maintenance release. Internal refactoring only — 28 of the highest-complexity functions were decomposed into smaller, well-named units to improve readability and maintainability. No behavior, API, output, or schema changes; fully backward-compatible (same inputs produce identical results). Decomposed areas include the MCP tool handlers, the SQLite search/ranking layer, the HTML/DOCX extractors, the Markdown parser, and the file scanner. Verified with full `-race` tests, golden/equivalence tests, and an adversarial review.
