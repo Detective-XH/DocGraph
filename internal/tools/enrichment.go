@@ -49,6 +49,100 @@ func (h *handler) handleEnrichment(ctx context.Context, request mcp.CallToolRequ
 	}
 }
 
+type pendingEnrichmentResult struct {
+	docs        []store.EnrichmentCandidate
+	projectName string
+	projectRoot string
+}
+
+// fetchPendingEnrichmentResults fetches pending enrichment docs from all stores.
+// Returns a tool error result on failure, otherwise nil.
+func (h *handler) fetchPendingEnrichmentResults(limit int) ([]pendingEnrichmentResult, *mcp.CallToolResult) {
+	var results []pendingEnrichmentResult
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			docs, err := p.Store.GetPendingEnrichments(limit)
+			if err != nil {
+				return nil, mcp.NewToolResultError(fmt.Sprintf("get pending enrichment for %s: %v", p.Name, err))
+			}
+			results = append(results, pendingEnrichmentResult{docs: docs, projectName: p.Name, projectRoot: p.Path})
+		}
+	} else {
+		docs, err := h.store.GetPendingEnrichments(limit)
+		if err != nil {
+			return nil, mcp.NewToolResultError(fmt.Sprintf("get pending enrichment: %v", err))
+		}
+		results = append(results, pendingEnrichmentResult{docs: docs, projectRoot: h.projectRoot})
+	}
+	return results, nil
+}
+
+// buildEnrichmentPendingToken generates and stores a confirmation token bound to
+// the exact docIDs shown in the pending list. Returns "" when N=0 or all-sensitive.
+func (h *handler) buildEnrichmentPendingToken(results []pendingEnrichmentResult, pendingDocs []callout.PendingDoc) string {
+	paths := make([]string, len(pendingDocs))
+	for i, d := range pendingDocs {
+		paths[i] = d.FilePath
+	}
+	if len(pendingDocs) == 0 || callout.IsAllSensitive(paths) {
+		return ""
+	}
+	// Collect doc_ids across all projects — the token authorizes exactly
+	// the documents shown to the user in this pending call. process must
+	// reject any doc_id not in this set.
+	docIDs := make(map[string]struct{}, len(pendingDocs))
+	for _, r := range results {
+		for _, doc := range r.docs {
+			docIDs[doc.DocID] = struct{}{}
+		}
+	}
+	token := h.newConfirmationToken()
+	h.enrichmentPendingTokens.Range(func(k, v any) bool {
+		if v.(*pendingToken).expiresAt.Before(time.Now()) {
+			h.enrichmentPendingTokens.Delete(k)
+		}
+		return true
+	})
+	h.enrichmentPendingTokens.Store(token, &pendingToken{
+		expiresAt: time.Now().Add(30 * time.Minute),
+		docIDs:    docIDs,
+	})
+	return token
+}
+
+// appendEnrichmentPendingDocList writes the ## Document List section into sb.
+func appendEnrichmentPendingDocList(sb *strings.Builder, results []pendingEnrichmentResult, contentMode string) {
+	sb.WriteString("\n## Document List\n\n")
+	i := 0
+	for _, r := range results {
+		for _, doc := range r.docs {
+			i++
+			prefix := ""
+			if r.projectName != "" {
+				prefix = "[" + r.projectName + "] "
+			}
+			fmt.Fprintf(sb, "### %d. %s%s\n", i, prefix, doc.Name)
+			fmt.Fprintf(sb, "- **doc_id:** `%s`\n", doc.DocID)
+			fmt.Fprintf(sb, "- **path:** %s\n", doc.FilePath)
+			fmt.Fprintf(sb, "- **content_hash:** `%s`\n", doc.ContentHash)
+			sb.WriteString("- **frontmatter:** absent\n")
+
+			content := doc.BodyExcerpt
+			if contentMode == "full" && r.projectRoot != "" {
+				if c, err := store.ReadSectionContent(doc.FilePath, doc.StartLine, doc.EndLine, r.projectRoot, 8000); err == nil {
+					content = c
+				}
+			}
+			if content != "" {
+				sb.WriteString("- **content:**\n\n```text\n")
+				sb.WriteString(content)
+				sb.WriteString("\n```\n")
+			}
+			sb.WriteString("\n")
+		}
+	}
+}
+
 func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args := request.GetArguments()
 	limit := getIntArgClamped(args, "limit", defaultEnrichmentLimit, 1, maxListLimit)
@@ -57,27 +151,9 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 		contentMode = "full"
 	}
 
-	type pendingResult struct {
-		docs        []store.EnrichmentCandidate
-		projectName string
-		projectRoot string
-	}
-
-	var results []pendingResult
-	if h.workspace != nil {
-		for _, p := range h.workspace.Projects {
-			docs, err := p.Store.GetPendingEnrichments(limit)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get pending enrichment for %s: %v", p.Name, err)), nil
-			}
-			results = append(results, pendingResult{docs: docs, projectName: p.Name, projectRoot: p.Path})
-		}
-	} else {
-		docs, err := h.store.GetPendingEnrichments(limit)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get pending enrichment: %v", err)), nil
-		}
-		results = append(results, pendingResult{docs: docs, projectRoot: h.projectRoot})
+	results, toolErr := h.fetchPendingEnrichmentResults(limit)
+	if toolErr != nil {
+		return toolErr, nil
 	}
 
 	// Build pending docs for impact graph.
@@ -92,33 +168,7 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 	}
 
 	// Generate token only when N>0 and not all-sensitive.
-	paths := make([]string, len(pendingDocs))
-	for i, d := range pendingDocs {
-		paths[i] = d.FilePath
-	}
-	var token string
-	if len(pendingDocs) > 0 && !callout.IsAllSensitive(paths) {
-		// Collect doc_ids across all projects — the token authorizes exactly
-		// the documents shown to the user in this pending call. process must
-		// reject any doc_id not in this set.
-		docIDs := make(map[string]struct{}, len(pendingDocs))
-		for _, r := range results {
-			for _, doc := range r.docs {
-				docIDs[doc.DocID] = struct{}{}
-			}
-		}
-		token = h.newConfirmationToken()
-		h.enrichmentPendingTokens.Range(func(k, v any) bool {
-			if v.(*pendingToken).expiresAt.Before(time.Now()) {
-				h.enrichmentPendingTokens.Delete(k)
-			}
-			return true
-		})
-		h.enrichmentPendingTokens.Store(token, &pendingToken{
-			expiresAt: time.Now().Add(30 * time.Minute),
-			docIDs:    docIDs,
-		})
-	}
+	token := h.buildEnrichmentPendingToken(results, pendingDocs)
 
 	workspaceDir := h.projectRoot
 	if h.workspace != nil {
@@ -139,36 +189,59 @@ func (h *handler) handleEnrichmentPending(ctx context.Context, request mcp.CallT
 
 	var sb strings.Builder
 	sb.WriteString(graph)
-	sb.WriteString("\n## Document List\n\n")
-	i := 0
-	for _, r := range results {
-		for _, doc := range r.docs {
-			i++
-			prefix := ""
-			if r.projectName != "" {
-				prefix = "[" + r.projectName + "] "
-			}
-			fmt.Fprintf(&sb, "### %d. %s%s\n", i, prefix, doc.Name)
-			fmt.Fprintf(&sb, "- **doc_id:** `%s`\n", doc.DocID)
-			fmt.Fprintf(&sb, "- **path:** %s\n", doc.FilePath)
-			fmt.Fprintf(&sb, "- **content_hash:** `%s`\n", doc.ContentHash)
-			sb.WriteString("- **frontmatter:** absent\n")
-
-			content := doc.BodyExcerpt
-			if contentMode == "full" && r.projectRoot != "" {
-				if c, err := store.ReadSectionContent(doc.FilePath, doc.StartLine, doc.EndLine, r.projectRoot, 8000); err == nil {
-					content = c
-				}
-			}
-			if content != "" {
-				sb.WriteString("- **content:**\n\n```text\n")
-				sb.WriteString(content)
-				sb.WriteString("\n```\n")
-			}
-			sb.WriteString("\n")
-		}
-	}
+	appendEnrichmentPendingDocList(&sb, results, contentMode)
 	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// enrichmentProcessArgs holds the parsed, validated arguments for action=process.
+type enrichmentProcessArgs struct {
+	docID       string
+	contentHash string
+	summary     string
+	modelID     string
+	provider    string
+	agentID     string
+	tuples      []store.MetadataTuple
+}
+
+// parseEnrichmentProcessArgs extracts and validates the pure document-level
+// parameters from the request. Token validation and the pt.mu critical section
+// remain in the caller.
+func parseEnrichmentProcessArgs(args map[string]any) (enrichmentProcessArgs, *mcp.CallToolResult) {
+	var out enrichmentProcessArgs
+	out.docID = sanitizeArg(getStringArg(args, "doc_id", ""), maxArgLength)
+	if out.docID == "" {
+		return out, mcp.NewToolResultError("doc_id parameter is required")
+	}
+	out.contentHash = sanitizeArg(getStringArg(args, "content_hash", ""), maxArgLength)
+	if out.contentHash == "" {
+		return out, mcp.NewToolResultError("content_hash parameter is required")
+	}
+	out.summary = sanitizeArg(getStringArg(args, "summary", ""), maxArgLength)
+	metadataRaw := getStringArg(args, "metadata", "")
+	if len(metadataRaw) > 1024*1024 {
+		return out, mcp.NewToolResultError("metadata parameter exceeds 1 MB limit")
+	}
+	out.modelID = sanitizeArg(getStringArg(args, "model_id", ""), 200)
+	if out.modelID == "" {
+		return out, mcp.NewToolResultError("model_id parameter is required")
+	}
+	out.provider = sanitizeArg(getStringArg(args, "provider", ""), 100)
+	out.agentID = sanitizeArg(getStringArg(args, "agent_id", ""), 200)
+
+	confidence, err := getOptionalConfidence(args, "confidence")
+	if err != nil {
+		return out, mcp.NewToolResultError(err.Error())
+	}
+	tuples, err := agentMetadataTuplesFromJSON(metadataRaw, confidence)
+	if err != nil {
+		return out, mcp.NewToolResultError(fmt.Sprintf("invalid metadata: %v", err))
+	}
+	if out.summary == "" && len(tuples) == 0 {
+		return out, mcp.NewToolResultError("summary or metadata parameter is required")
+	}
+	out.tuples = tuples
+	return out, nil
 }
 
 func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -192,50 +265,23 @@ func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallT
 		return mcp.NewToolResultError("Confirmation token expired (30-minute limit). Call action=pending again to review scope and get a new token."), nil
 	}
 
-	docID := sanitizeArg(getStringArg(args, "doc_id", ""), maxArgLength)
-	if docID == "" {
-		return mcp.NewToolResultError("doc_id parameter is required"), nil
-	}
-	contentHash := sanitizeArg(getStringArg(args, "content_hash", ""), maxArgLength)
-	if contentHash == "" {
-		return mcp.NewToolResultError("content_hash parameter is required"), nil
-	}
-	summary := sanitizeArg(getStringArg(args, "summary", ""), maxArgLength)
-	metadataRaw := getStringArg(args, "metadata", "")
-	if len(metadataRaw) > 1024*1024 {
-		return mcp.NewToolResultError("metadata parameter exceeds 1 MB limit"), nil
-	}
-	modelID := sanitizeArg(getStringArg(args, "model_id", ""), 200)
-	if modelID == "" {
-		return mcp.NewToolResultError("model_id parameter is required"), nil
-	}
-	provider := sanitizeArg(getStringArg(args, "provider", ""), 100)
-	agentID := sanitizeArg(getStringArg(args, "agent_id", ""), 200)
-
-	confidence, err := getOptionalConfidence(args, "confidence")
-	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-	tuples, err := agentMetadataTuplesFromJSON(metadataRaw, confidence)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("invalid metadata: %v", err)), nil
-	}
-	if summary == "" && len(tuples) == 0 {
-		return mcp.NewToolResultError("summary or metadata parameter is required"), nil
+	pArgs, toolErr := parseEnrichmentProcessArgs(args)
+	if toolErr != nil {
+		return toolErr, nil
 	}
 
 	targetStore := h.store
 	if h.workspace != nil {
 		targetStore = nil
 		for _, p := range h.workspace.Projects {
-			n, _ := p.Store.GetNodeByID(docID)
+			n, _ := p.Store.GetNodeByID(pArgs.docID)
 			if n != nil {
 				targetStore = p.Store
 				break
 			}
 		}
 		if targetStore == nil {
-			return mcp.NewToolResultError(fmt.Sprintf("doc_id not found in any project: %s", docID)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("doc_id not found in any project: %s", pArgs.docID)), nil
 		}
 	}
 
@@ -246,26 +292,26 @@ func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallT
 	// same token serialize on disk I/O, which is acceptable given MCP stdio
 	// already serializes handler calls today.
 	pt.mu.Lock()
-	if _, ok := pt.docIDs[docID]; !ok {
+	if _, ok := pt.docIDs[pArgs.docID]; !ok {
 		pt.mu.Unlock()
 		return mcp.NewToolResultError(fmt.Sprintf(
 			"doc_id %q was not in the authorized batch for this confirmation_token. Call action=pending again to authorize this document.",
-			docID)), nil
+			pArgs.docID)), nil
 	}
-	err = targetStore.UpsertAgentEnrichment(store.AgentEnrichment{
-		DocID:       docID,
-		Summary:     summary,
-		Provider:    provider,
-		ModelID:     modelID,
-		AgentID:     agentID,
-		ContentHash: contentHash,
-		Metadata:    tuples,
+	err := targetStore.UpsertAgentEnrichment(store.AgentEnrichment{
+		DocID:       pArgs.docID,
+		Summary:     pArgs.summary,
+		Provider:    pArgs.provider,
+		ModelID:     pArgs.modelID,
+		AgentID:     pArgs.agentID,
+		ContentHash: pArgs.contentHash,
+		Metadata:    pArgs.tuples,
 	})
 	if err != nil {
 		pt.mu.Unlock()
 		return mcp.NewToolResultError(fmt.Sprintf("store enrichment: %v", err)), nil
 	}
-	delete(pt.docIDs, docID)
+	delete(pt.docIDs, pArgs.docID)
 	batchExhausted := len(pt.docIDs) == 0
 	pt.mu.Unlock()
 	if batchExhausted {
@@ -274,7 +320,7 @@ func (h *handler) handleEnrichmentProcess(ctx context.Context, request mcp.CallT
 
 	return mcp.NewToolResultText(fmt.Sprintf(
 		"Stored current agent enrichment for doc %q: summary=%t, metadata_fields=%d, source=agent_inferred, authority=advisory, model_id=%q.",
-		docID, summary != "", len(tuples), modelID)), nil
+		pArgs.docID, pArgs.summary != "", len(pArgs.tuples), pArgs.modelID)), nil
 }
 
 func getOptionalConfidence(args map[string]any, key string) (*float64, error) {

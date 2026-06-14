@@ -30,12 +30,10 @@ func ScanDir(root string) ([]FileEntry, error) {
 	return ScanDirOpts(root, ScanOptions{})
 }
 
-func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return nil, err
-	}
-
+// loadRootIgnores loads the root-level .gitignore and .docgraphignore into a
+// slice of matchers. It is shared by ScanDirOpts and NewIgnoreMatcher so the
+// two functions apply identical root-ignore rules.
+func loadRootIgnores(root string, opts ScanOptions) []*gitignore {
 	var ignores []*gitignore
 	if !opts.NoGitignore {
 		if gi := loadGitignore(filepath.Join(root, ".gitignore")); gi != nil {
@@ -45,6 +43,48 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 	if gi := loadGitignore(filepath.Join(root, ".docgraphignore")); gi != nil {
 		ignores = append(ignores, gi)
 	}
+	return ignores
+}
+
+// scanHandleDir handles a directory entry inside the ScanDirOpts WalkDir
+// callback. It enforces the security-relevant symlink skip, worktree skip,
+// skipDirs skip, and loads any nested ignore files. The ignores pointer must
+// not be nil; nested ignores are appended through it so the outer walk sees
+// them for subsequent file entries.
+func scanHandleDir(root, path string, d fs.DirEntry, opts ScanOptions, ignores *[]*gitignore) error {
+	if skipDirs[d.Name()] {
+		return filepath.SkipDir
+	}
+	// Security: never follow symlinked directories — they could escape the root.
+	if d.Type()&os.ModeSymlink != 0 {
+		return filepath.SkipDir
+	}
+	dirRel, _ := filepath.Rel(root, path)
+	// Skip agent git worktrees — they are full repo copies that would
+	// index duplicate documents and pollute search/similarity results.
+	if dirRel == filepath.Join(".claude", "worktrees") {
+		return filepath.SkipDir
+	}
+	if !opts.NoGitignore {
+		if nested := loadGitignore(filepath.Join(path, ".gitignore")); nested != nil {
+			nested.baseDir = dirRel
+			*ignores = append(*ignores, nested)
+		}
+	}
+	if nested := loadGitignore(filepath.Join(path, ".docgraphignore")); nested != nil {
+		nested.baseDir = dirRel
+		*ignores = append(*ignores, nested)
+	}
+	return nil
+}
+
+func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+
+	ignores := loadRootIgnores(root, opts)
 
 	matchesAny := func(relPath string) bool {
 		for _, gi := range ignores {
@@ -63,31 +103,10 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 		}
 
 		if d.IsDir() {
-			if skipDirs[d.Name()] {
-				return filepath.SkipDir
-			}
-			if d.Type()&os.ModeSymlink != 0 {
-				return filepath.SkipDir
-			}
-			dirRel, _ := filepath.Rel(root, path)
-			// Skip agent git worktrees — they are full repo copies that would
-			// index duplicate documents and pollute search/similarity results.
-			if dirRel == filepath.Join(".claude", "worktrees") {
-				return filepath.SkipDir
-			}
-			if !opts.NoGitignore {
-				if nested := loadGitignore(filepath.Join(path, ".gitignore")); nested != nil {
-					nested.baseDir = dirRel
-					ignores = append(ignores, nested)
-				}
-			}
-			if nested := loadGitignore(filepath.Join(path, ".docgraphignore")); nested != nil {
-				nested.baseDir = dirRel
-				ignores = append(ignores, nested)
-			}
-			return nil
+			return scanHandleDir(root, path, d, opts, &ignores)
 		}
 
+		// Security: never follow symlinked files.
 		if d.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
@@ -144,23 +163,12 @@ func ScanDirOpts(root string, opts ScanOptions) ([]FileEntry, error) {
 // scan-set membership (which also drops too-big / unreadable / transiently-absent
 // files) and so cannot mass-delete the index when a scan momentarily returns few
 // or no files.
-func NewIgnoreMatcher(root string, opts ScanOptions) (func(relPath string) bool, error) {
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return nil, err
-	}
-
-	var ignores []*gitignore
-	if !opts.NoGitignore {
-		if gi := loadGitignore(filepath.Join(root, ".gitignore")); gi != nil {
-			ignores = append(ignores, gi)
-		}
-	}
-	if gi := loadGitignore(filepath.Join(root, ".docgraphignore")); gi != nil {
-		ignores = append(ignores, gi)
-	}
-
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+// discoverNestedIgnores walks subdirectories of root to collect nested
+// .gitignore and .docgraphignore files into ignores. Root-level files must
+// already be loaded (this skips dirRel == "."). The same security guards as
+// scanHandleDir apply (skipDirs, symlinks, worktrees).
+func discoverNestedIgnores(root string, opts ScanOptions, ignores *[]*gitignore) error {
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -170,6 +178,7 @@ func NewIgnoreMatcher(root string, opts ScanOptions) (func(relPath string) bool,
 		if skipDirs[d.Name()] {
 			return filepath.SkipDir
 		}
+		// Security: never follow symlinked directories.
 		if d.Type()&os.ModeSymlink != 0 {
 			return filepath.SkipDir
 		}
@@ -183,17 +192,27 @@ func NewIgnoreMatcher(root string, opts ScanOptions) (func(relPath string) bool,
 		if !opts.NoGitignore {
 			if nested := loadGitignore(filepath.Join(path, ".gitignore")); nested != nil {
 				nested.baseDir = dirRel
-				ignores = append(ignores, nested)
+				*ignores = append(*ignores, nested)
 			}
 		}
 		if nested := loadGitignore(filepath.Join(path, ".docgraphignore")); nested != nil {
 			nested.baseDir = dirRel
-			ignores = append(ignores, nested)
+			*ignores = append(*ignores, nested)
 		}
 		return nil
 	})
-	if walkErr != nil {
-		return nil, walkErr
+}
+
+func NewIgnoreMatcher(root string, opts ScanOptions) (func(relPath string) bool, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+
+	ignores := loadRootIgnores(root, opts)
+
+	if err := discoverNestedIgnores(root, opts, &ignores); err != nil {
+		return nil, err
 	}
 
 	return func(relPath string) bool {

@@ -457,3 +457,91 @@ func TestHandleEnrichmentFacade_RejectsUnknownAction(t *testing.T) {
 		t.Fatalf("expected valid action list, got: %s", extractText(res))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Characterization tests: pending token binds exactly the shown docIDs
+// and Document List render includes doc_id / path / content_hash.
+// Written before refactoring handleEnrichmentPending to satisfy GUARDRAIL-8.
+// ---------------------------------------------------------------------------
+
+func TestHandleEnrichmentPending_TokenBindsExactDocIDs(t *testing.T) {
+	h, st := newTestHandler(t)
+	// Two non-sensitive, non-frontmatter docs → both must be authorized by the token.
+	insertToolEnrichmentDoc(t, st, "x.pdf", "hash-x", false)
+	insertToolEnrichmentDoc(t, st, "y.pdf", "hash-y", false)
+
+	res, err := callTool(h, h.handleEnrichmentPending, map[string]any{
+		"content_mode": "excerpt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+
+	// Exactly one token must be stored after pending.
+	var storedToken *pendingToken
+	var tokenCount int
+	h.enrichmentPendingTokens.Range(func(_, v any) bool {
+		storedToken = v.(*pendingToken)
+		tokenCount++
+		return true
+	})
+	if tokenCount != 1 {
+		t.Fatalf("expected exactly 1 pending token, got %d", tokenCount)
+	}
+
+	// The token's docIDs set must contain exactly x.pdf and y.pdf.
+	storedToken.mu.Lock()
+	ids := make(map[string]struct{}, len(storedToken.docIDs))
+	for k, v := range storedToken.docIDs {
+		ids[k] = v
+	}
+	storedToken.mu.Unlock()
+
+	for _, want := range []string{"x.pdf", "y.pdf"} {
+		if _, ok := ids[want]; !ok {
+			t.Errorf("token docIDs missing %q; got %v", want, ids)
+		}
+	}
+	if len(ids) != 2 {
+		t.Errorf("token docIDs has %d entries, want 2; got %v", len(ids), ids)
+	}
+}
+
+func TestHandleEnrichmentPending_DocListRendersFields(t *testing.T) {
+	h, st := newTestHandler(t)
+	insertToolEnrichmentDoc(t, st, "alpha.pdf", "deadbeef", false)
+	insertToolEnrichmentDoc(t, st, "beta.pdf", "cafebabe", false)
+
+	res, err := callTool(h, h.handleEnrichmentPending, map[string]any{
+		"content_mode": "excerpt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+
+	// Each doc must appear in the Document List with its doc_id, path, and content_hash.
+	for _, doc := range []struct{ id, path, hash string }{
+		{"alpha.pdf", "alpha.pdf", "deadbeef"},
+		{"beta.pdf", "beta.pdf", "cafebabe"},
+	} {
+		if !strings.Contains(text, "`"+doc.id+"`") {
+			t.Errorf("doc_id %q not found in output:\n%s", doc.id, text)
+		}
+		if !strings.Contains(text, doc.path) {
+			t.Errorf("path %q not found in output:\n%s", doc.path, text)
+		}
+		if !strings.Contains(text, "`"+doc.hash+"`") {
+			t.Errorf("content_hash %q not found in output:\n%s", doc.hash, text)
+		}
+	}
+	if !strings.Contains(text, "## Document List") {
+		t.Errorf("Document List section header missing from output:\n%s", text)
+	}
+}

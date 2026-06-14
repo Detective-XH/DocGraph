@@ -130,89 +130,18 @@ func (se *searchStore) SearchWithOptions(opts SearchOptions) ([]SearchResult, er
 	req.ExpandedTerms = se.expandQueryTerms(req)
 
 	candidates := make(map[string]*searchCandidate)
-	if err := se.collectExactCandidates(req, candidates); err != nil {
+	if err := se.collectAllCandidates(req, candidates); err != nil {
 		return nil, err
-	}
-	if err := se.collectFilenameCandidates(req, candidates); err != nil {
-		return nil, err
-	}
-	if err := se.collectNodeCandidates(req, candidates); err != nil {
-		return nil, err
-	}
-	if err := se.collectSectionCandidates(req, candidates); err != nil {
-		return nil, err
-	}
-	if err := se.collectTagCandidates(req, candidates); err != nil {
-		return nil, err
-	}
-	if err := se.collectDefinitionContextCandidates(req, candidates); err != nil {
-		return nil, err
-	}
-	if req.HasFilters {
-		if err := se.collectMetadataFilteredCandidates(req, candidates); err != nil {
-			return nil, err
-		}
-	}
-	if req.Entity.EntityType != "" || req.Entity.EntityID != "" {
-		// Cross-domain read into the entity graph. searchStore embeds *baseDB only
-		// (not *Store), so it cannot reach Store.Entity. Construct a throwaway
-		// entityStore over the SAME shared baseDB — behaviour-identical to the
-		// former s.Entity.collectEntityFilteredCandidates, since Open() wires both
-		// sub-stores from one base and this collector touches only es.db.
-		if err := (&entityStore{baseDB: se.baseDB}).collectEntityFilteredCandidates(req, candidates); err != nil {
-			return nil, err
-		}
 	}
 
-	// Batch-load every candidate's ranking inputs before scoring. The previous
-	// loop called loadRetrievalMetadata (3 QueryRows) + graphSignals (2 + one per
-	// query term) PER CANDIDATE — on a saturated ~320-candidate / ~34-term search
-	// that is ~12,500 SQLite round-trips, which a null-out A/B attributed to ~34%
-	// of search wall time and ~81% of its allocations. These helpers fetch the
-	// same rows in ~6 set-based IN(...) / GROUP BY queries; TestSearchBatchEquivalence
-	// asserts the loaded values are byte-identical to the per-candidate path, so
-	// ranking and result order are preserved.
-	cands := make([]*searchCandidate, 0, len(candidates))
-	metaIDSet := make(map[string]struct{}, len(candidates))
-	pathSet := make(map[string]struct{}, len(candidates))
-	for _, c := range candidates {
-		cands = append(cands, c)
-		metaIDSet[retrievalDocID(c.Node)] = struct{}{}
-		pathSet[c.Node.FilePath] = struct{}{}
-	}
-	metaIDs := setKeys(metaIDSet)
-	govByID, err := se.getGovernanceMetadataBatch(metaIDs)
-	if err != nil {
-		return nil, err
-	}
-	researchByID, err := se.getResearchMetadataBatch(metaIDs)
-	if err != nil {
-		return nil, err
-	}
-	histByPath, err := se.getFileHistoryBatch(setKeys(pathSet))
-	if err != nil {
-		return nil, err
-	}
-	graphByID, err := se.graphSignalsBatch(req, cands)
+	cands, govByID, researchByID, histByPath, graphByID, err := se.batchLoadMetadata(req, candidates)
 	if err != nil {
 		return nil, err
 	}
 
-	scored := make([]*searchCandidate, 0, len(cands))
-	for _, c := range cands {
-		docID := retrievalDocID(c.Node)
-		c.Governance = govByID[docID]
-		c.Research = researchByID[docID]
-		c.History = histByPath[c.Node.FilePath]
-		if !metadataMatchesRequest(req, c) {
-			continue
-		}
-		se.applyFieldRanking(req, c)
-		sig := graphByID[c.Node.ID]
-		applyGraphScore(c, sig.incoming, sig.outgoing, sig.tagMatches)
-		se.applyMetadataReranking(req, c)
-		se.applyHistoryReranking(req, c)
-		scored = append(scored, c)
+	scored, err := se.filterAndScore(req, cands, govByID, researchByID, histByPath, graphByID)
+	if err != nil {
+		return nil, err
 	}
 
 	// An exact filename match sorts ahead of every text/graph-ranked result — a
@@ -242,4 +171,110 @@ func (se *searchStore) SearchWithOptions(opts SearchOptions) ([]SearchResult, er
 		results = results[:req.Limit]
 	}
 	return results, nil
+}
+
+// collectAllCandidates runs all candidate collectors in order, populating the
+// shared candidates map. Collector call order is preserved exactly — each
+// collector may accumulate score onto an existing candidate and order matters.
+func (se *searchStore) collectAllCandidates(req searchRequest, candidates map[string]*searchCandidate) error {
+	if err := se.collectExactCandidates(req, candidates); err != nil {
+		return err
+	}
+	if err := se.collectFilenameCandidates(req, candidates); err != nil {
+		return err
+	}
+	if err := se.collectNodeCandidates(req, candidates); err != nil {
+		return err
+	}
+	if err := se.collectSectionCandidates(req, candidates); err != nil {
+		return err
+	}
+	if err := se.collectTagCandidates(req, candidates); err != nil {
+		return err
+	}
+	if err := se.collectDefinitionContextCandidates(req, candidates); err != nil {
+		return err
+	}
+	if req.HasFilters {
+		if err := se.collectMetadataFilteredCandidates(req, candidates); err != nil {
+			return err
+		}
+	}
+	if req.Entity.EntityType != "" || req.Entity.EntityID != "" {
+		// Cross-domain read into the entity graph. searchStore embeds *baseDB only
+		// (not *Store), so it cannot reach Store.Entity. Construct a throwaway
+		// entityStore over the SAME shared baseDB — behaviour-identical to the
+		// former s.Entity.collectEntityFilteredCandidates, since Open() wires both
+		// sub-stores from one base and this collector touches only es.db.
+		if err := (&entityStore{baseDB: se.baseDB}).collectEntityFilteredCandidates(req, candidates); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// batchLoadMetadata builds the candidate slice and fetches all ranking inputs
+// (governance, research, file history, graph signals) in set-based queries.
+// The previous per-candidate approach cost ~12,500 SQLite round-trips on a
+// saturated search; TestSearchBatchEquivalence asserts byte-identical values.
+func (se *searchStore) batchLoadMetadata(req searchRequest, candidates map[string]*searchCandidate) (
+	cands []*searchCandidate,
+	govByID map[string]*GovernanceRecord,
+	researchByID map[string]*ResearchRecord,
+	histByPath map[string]*FileHistory,
+	graphByID map[string]graphSig,
+	err error,
+) {
+	cands = make([]*searchCandidate, 0, len(candidates))
+	metaIDSet := make(map[string]struct{}, len(candidates))
+	pathSet := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		cands = append(cands, c)
+		metaIDSet[retrievalDocID(c.Node)] = struct{}{}
+		pathSet[c.Node.FilePath] = struct{}{}
+	}
+	metaIDs := setKeys(metaIDSet)
+	govByID, err = se.getGovernanceMetadataBatch(metaIDs)
+	if err != nil {
+		return
+	}
+	researchByID, err = se.getResearchMetadataBatch(metaIDs)
+	if err != nil {
+		return
+	}
+	histByPath, err = se.getFileHistoryBatch(setKeys(pathSet))
+	if err != nil {
+		return
+	}
+	graphByID, err = se.graphSignalsBatch(req, cands)
+	return
+}
+
+// filterAndScore applies metadata filters and scoring to each candidate,
+// returning only the candidates that pass the metadata filter.
+func (se *searchStore) filterAndScore(
+	req searchRequest,
+	cands []*searchCandidate,
+	govByID map[string]*GovernanceRecord,
+	researchByID map[string]*ResearchRecord,
+	histByPath map[string]*FileHistory,
+	graphByID map[string]graphSig,
+) ([]*searchCandidate, error) {
+	scored := make([]*searchCandidate, 0, len(cands))
+	for _, c := range cands {
+		docID := retrievalDocID(c.Node)
+		c.Governance = govByID[docID]
+		c.Research = researchByID[docID]
+		c.History = histByPath[c.Node.FilePath]
+		if !metadataMatchesRequest(req, c) {
+			continue
+		}
+		se.applyFieldRanking(req, c)
+		sig := graphByID[c.Node.ID]
+		applyGraphScore(c, sig.incoming, sig.outgoing, sig.tagMatches)
+		se.applyMetadataReranking(req, c)
+		se.applyHistoryReranking(req, c)
+		scored = append(scored, c)
+	}
+	return scored, nil
 }

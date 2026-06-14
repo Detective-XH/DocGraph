@@ -202,103 +202,77 @@ func headingLevel(styleVal string) int {
 	return lvl
 }
 
-// ── main extractor ────────────────────────────────────────────────────────────
+// docxEntries holds the raw bytes read from a DOCX zip.
+type docxEntries struct {
+	rawDocument []byte
+	rawRels     []byte
+	rawCore     []byte
+}
 
-func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
-	_ = absPath
-	// Open ZIP from in-memory bytes.
-	zr, err := zip.NewReader(bytes.NewReader(src), int64(len(src)))
-	if err != nil {
-		return nil, fmt.Errorf("docx: not a valid zip: %w", err)
-	}
-
+// docxReadEntries reads relevant entries from the zip, enforcing security limits.
+// It checks entry count, zip-slip paths, per-entry sizes, and the total budget.
+func docxReadEntries(zr *zip.Reader) (docxEntries, error) {
 	// Security: entry count limit.
 	if len(zr.File) > docxMaxEntries {
-		return nil, fmt.Errorf("docx: zip entry count %d exceeds limit of %d", len(zr.File), docxMaxEntries)
+		return docxEntries{}, fmt.Errorf("docx: zip entry count %d exceeds limit of %d", len(zr.File), docxMaxEntries)
 	}
 
 	// Security: zip-slip — scan all entries upfront.
 	for _, f := range zr.File {
 		if isMaliciousPath(f.Name) {
-			return nil, fmt.Errorf("docx: malicious zip entry path %q", f.Name)
+			return docxEntries{}, fmt.Errorf("docx: malicious zip entry path %q", f.Name)
 		}
 	}
 
 	// Read relevant entries, enforcing per-entry and total budget.
 	var (
-		rawDocument []byte
-		rawRels     []byte
-		rawCore     []byte
-		totalBytes  int64
+		entries    docxEntries
+		totalBytes int64
+		err        error
 	)
 
 	for _, f := range zr.File {
 		switch f.Name {
 		case "word/document.xml":
-			rawDocument, err = readZipEntry(f, docxMaxDocumentXML)
+			entries.rawDocument, err = readZipEntry(f, docxMaxDocumentXML)
 			if err != nil {
-				return nil, fmt.Errorf("docx: %w", err)
+				return docxEntries{}, fmt.Errorf("docx: %w", err)
 			}
-			totalBytes += int64(len(rawDocument))
+			totalBytes += int64(len(entries.rawDocument))
 		case "word/_rels/document.xml.rels":
-			rawRels, err = readZipEntry(f, docxMaxOtherEntry)
+			entries.rawRels, err = readZipEntry(f, docxMaxOtherEntry)
 			if err != nil {
-				return nil, fmt.Errorf("docx: %w", err)
+				return docxEntries{}, fmt.Errorf("docx: %w", err)
 			}
-			totalBytes += int64(len(rawRels))
+			totalBytes += int64(len(entries.rawRels))
 		case "docProps/core.xml":
-			rawCore, err = readZipEntry(f, docxMaxOtherEntry)
+			entries.rawCore, err = readZipEntry(f, docxMaxOtherEntry)
 			if err != nil {
-				return nil, fmt.Errorf("docx: %w", err)
+				return docxEntries{}, fmt.Errorf("docx: %w", err)
 			}
-			totalBytes += int64(len(rawCore))
+			totalBytes += int64(len(entries.rawCore))
 		default:
 			// Still count other entries against budget; read header only via UncompressedSize64.
 			totalBytes += int64(f.UncompressedSize64) // #nosec G115 -- non-named zip entries are counted but never decompressed; named entries are capped by readZipEntry's LimitReader, so an overflowed accumulator cannot create a decompression-bomb path
 		}
 		if totalBytes > docxMaxTotalBytes {
-			return nil, errors.New("docx: total uncompressed size exceeds 50 MB budget")
+			return docxEntries{}, errors.New("docx: total uncompressed size exceeds 50 MB budget")
 		}
 	}
 
-	// Parse relationships.
-	rels := make(map[string]string) // rId → URL
-	if rawRels != nil {
-		var dr docRels
-		if err := xml.Unmarshal(rawRels, &dr); err == nil {
-			for _, r := range dr.Relationships {
-				if strings.HasPrefix(r.Target, "http://") || strings.HasPrefix(r.Target, "https://") {
-					rels[r.ID] = r.Target
-				}
-			}
-		}
-	}
+	return entries, nil
+}
 
-	// Parse core.xml metadata.
-	var core coreProps
-	if rawCore != nil {
-		// core.xml uses Dublin Core namespaces; encoding/xml matches by local name.
-		_ = xml.Unmarshal(rawCore, &core)
-	}
+// docxWalkResult holds the output of walking the document paragraphs.
+type docxWalkResult struct {
+	headings  []store.Node
+	rawLinks  []parser.RawLink
+	bodyParts []string
+}
 
-	// Parse document.xml.
-	var body docBody
-	if rawDocument != nil {
-		if err := xml.Unmarshal(rawDocument, &body); err != nil {
-			return nil, fmt.Errorf("docx: parse word/document.xml: %w", err)
-		}
-	}
-
-	// Determine document title.
-	docTitle := core.Title
-	if docTitle == "" {
-		base := filepath.Base(relPath)
-		docTitle = strings.TrimSuffix(base, filepath.Ext(base))
-	}
-
-	now := time.Now().Unix()
-
-	// Walk paragraphs: collect headings, body text, hyperlinks.
+// docxWalkParagraphs walks paragraphs from the parsed document body,
+// collecting headings, hyperlink raw links, and body text parts.
+func docxWalkParagraphs(body docBody, relPath string, rels map[string]string, now int64) docxWalkResult {
 	var (
 		headings   []store.Node
 		rawLinks   []parser.RawLink
@@ -341,9 +315,8 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 				for _, r := range hl.Runs {
 					hlBuilder.WriteString(runText(r))
 				}
-				hlText := hlBuilder.String()
 				rawLinks = append(rawLinks, parser.RawLink{
-					Text:       hlText,
+					Text:       hlBuilder.String(),
 					Target:     url,
 					Kind:       "docx_hyperlink",
 					Line:       0,
@@ -353,7 +326,65 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 		}
 	}
 
-	bodyExcerpt := truncateExcerpt(strings.Join(bodyParts, " "), docxBodyExcerptCap)
+	return docxWalkResult{headings: headings, rawLinks: rawLinks, bodyParts: bodyParts}
+}
+
+// ── main extractor ────────────────────────────────────────────────────────────
+
+func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
+	_ = absPath
+	// Open ZIP from in-memory bytes.
+	zr, err := zip.NewReader(bytes.NewReader(src), int64(len(src)))
+	if err != nil {
+		return nil, fmt.Errorf("docx: not a valid zip: %w", err)
+	}
+
+	entries, err := docxReadEntries(zr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse relationships.
+	rels := make(map[string]string) // rId → URL
+	if entries.rawRels != nil {
+		var dr docRels
+		if err := xml.Unmarshal(entries.rawRels, &dr); err == nil {
+			for _, r := range dr.Relationships {
+				if strings.HasPrefix(r.Target, "http://") || strings.HasPrefix(r.Target, "https://") {
+					rels[r.ID] = r.Target
+				}
+			}
+		}
+	}
+
+	// Parse core.xml metadata.
+	var core coreProps
+	if entries.rawCore != nil {
+		// core.xml uses Dublin Core namespaces; encoding/xml matches by local name.
+		_ = xml.Unmarshal(entries.rawCore, &core)
+	}
+
+	// Parse document.xml.
+	var body docBody
+	if entries.rawDocument != nil {
+		if err := xml.Unmarshal(entries.rawDocument, &body); err != nil {
+			return nil, fmt.Errorf("docx: parse word/document.xml: %w", err)
+		}
+	}
+
+	// Determine document title.
+	docTitle := core.Title
+	if docTitle == "" {
+		base := filepath.Base(relPath)
+		docTitle = strings.TrimSuffix(base, filepath.Ext(base))
+	}
+
+	now := time.Now().Unix()
+
+	// Walk paragraphs: collect headings, body text, hyperlinks.
+	walked := docxWalkParagraphs(body, relPath, rels, now)
+
+	bodyExcerpt := truncateExcerpt(strings.Join(walked.bodyParts, " "), docxBodyExcerptCap)
 
 	// Build DocNode.
 	docNode := store.Node{
@@ -369,7 +400,7 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 	}
 
 	// Build containment edges.
-	edges := buildDocxContainmentEdges(docNode.ID, headings)
+	edges := buildDocxContainmentEdges(docNode.ID, walked.headings)
 
 	// Build MetadataTuples from core.xml.
 	var metaTuples []store.MetadataTuple
@@ -390,22 +421,22 @@ func extractDOCX(absPath, relPath string, src []byte, hash string) (*parser.Pars
 	addMeta("modified", core.Modified, "date")
 
 	// Build SectionChunks: document chunk + one per heading.
-	sectionChunks := buildDocxSectionChunks(docNode, headings, hash, bodyParts)
+	sectionChunks := buildDocxSectionChunks(docNode, walked.headings, hash, walked.bodyParts)
 
 	fileInfo := store.FileInfo{
 		Path:           relPath,
 		ContentHash:    hash,
 		Size:           int64(len(src)),
 		IndexedAt:      now,
-		NodeCount:      1 + len(headings),
+		NodeCount:      1 + len(walked.headings),
 		HasFrontmatter: false,
 	}
 
 	return &parser.ParseResult{
 		DocNode:        docNode,
-		Headings:       headings,
+		Headings:       walked.headings,
 		Edges:          edges,
-		RawLinks:       rawLinks,
+		RawLinks:       walked.rawLinks,
 		FileInfo:       fileInfo,
 		SectionChunks:  sectionChunks,
 		MetadataTuples: metaTuples,

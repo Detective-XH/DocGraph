@@ -16,27 +16,168 @@ import (
 
 const htmlSectionMaxBytes = 10240 // 10 KB section text cap
 
+// hstate tracks the currently open heading element.
+type hstate struct {
+	level     int
+	id        string
+	startLine int
+	buf       strings.Builder
+}
+
+// htmlState holds all mutable state for the HTML tokenizer walk.
+type htmlState struct {
+	relPath      string
+	title        strings.Builder
+	body         strings.Builder
+	headings     []store.Node
+	sectionTexts []string // per-section body text, parallel to headings
+	sectionBuf   strings.Builder
+	inSection    bool // true after the first heading has closed
+	rawLinks     []parser.RawLink
+	metaTuples   []store.MetadataTuple
+	inHead       bool
+	inTitle      bool
+	inScript     bool
+	inStyle      bool
+	cur          *hstate
+	globalIdx    int
+	lineNum      int
+}
+
+func newHTMLState(relPath string) *htmlState {
+	return &htmlState{relPath: relPath, lineNum: 1}
+}
+
+// handleHeadingStart flushes the previous section and opens a new heading.
+func (s *htmlState) handleHeadingStart(tok html.Token) {
+	if s.inSection {
+		s.sectionTexts = append(s.sectionTexts, s.sectionBuf.String())
+		s.sectionBuf.Reset()
+	}
+	level := int(tok.Data[1] - '0')
+	idAttr := attrVal(tok.Attr, "id")
+	var nodeID string
+	if idAttr != "" {
+		nodeID = s.relPath + "#" + idAttr
+	} else {
+		nodeID = fmt.Sprintf("%s#h%d-%d", s.relPath, level, s.globalIdx)
+		s.globalIdx++
+	}
+	s.cur = &hstate{level: level, id: nodeID, startLine: s.lineNum}
+}
+
+// handleAnchorTag extracts href links from <a> tags.
+func (s *htmlState) handleAnchorTag(tok html.Token) {
+	href := attrVal(tok.Attr, "href")
+	if href == "" {
+		return
+	}
+	kind := "html_link"
+	if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
+		kind = "external"
+	}
+	from := s.relPath
+	if s.cur != nil {
+		from = s.cur.id
+	}
+	s.rawLinks = append(s.rawLinks, parser.RawLink{
+		Text: href, Target: href, Kind: kind,
+		Line: s.lineNum, FromNodeID: from,
+	})
+}
+
+// handleMetaTag extracts name/property + content metadata from <meta> tags.
+func (s *htmlState) handleMetaTag(tok html.Token) {
+	name := attrVal(tok.Attr, "name")
+	prop := attrVal(tok.Attr, "property")
+	content := attrVal(tok.Attr, "content")
+	key := name
+	if key == "" {
+		key = prop
+	}
+	if key != "" && content != "" {
+		s.metaTuples = append(s.metaTuples, store.MetadataTuple{
+			Key: key, Value: content, ValueType: "string", Source: "html_meta",
+		})
+	}
+}
+
+// handleStartTag dispatches start/self-closing tokens.
+func (s *htmlState) handleStartTag(tok html.Token) {
+	switch tok.Data {
+	case "head":
+		s.inHead = true
+	case "title":
+		s.inTitle = true
+	case "script":
+		s.inScript = true
+	case "style":
+		s.inStyle = true
+	case "h1", "h2", "h3", "h4", "h5", "h6":
+		s.handleHeadingStart(tok)
+	case "a":
+		s.handleAnchorTag(tok)
+	case "meta":
+		s.handleMetaTag(tok)
+	}
+}
+
+// handleHeadingEnd closes the current heading and records the node.
+func (s *htmlState) handleHeadingEnd() {
+	if s.cur == nil {
+		return
+	}
+	s.headings = append(s.headings, store.Node{
+		ID:            s.cur.id,
+		Kind:          "heading",
+		Name:          strings.TrimSpace(s.cur.buf.String()),
+		QualifiedName: s.cur.id,
+		FilePath:      s.relPath,
+		StartLine:     s.cur.startLine,
+		EndLine:       s.lineNum,
+		Level:         s.cur.level,
+		UpdatedAt:     time.Now().Unix(),
+	})
+	s.cur = nil
+	s.inSection = true
+}
+
+// handleEndTag dispatches end tokens.
+func (s *htmlState) handleEndTag(tok html.Token) {
+	switch tok.Data {
+	case "head":
+		s.inHead, s.inTitle = false, false
+	case "title":
+		s.inTitle = false
+	case "script":
+		s.inScript = false
+	case "style":
+		s.inStyle = false
+	case "h1", "h2", "h3", "h4", "h5", "h6":
+		s.handleHeadingEnd()
+	}
+}
+
+// handleTextToken processes text content tokens.
+func (s *htmlState) handleTextToken(text string) {
+	if s.inTitle {
+		s.title.WriteString(text)
+		return
+	}
+	if s.inScript || s.inStyle || s.inHead {
+		return
+	}
+	if s.cur != nil {
+		s.cur.buf.WriteString(text)
+	} else if s.inSection {
+		s.sectionBuf.WriteString(text)
+	}
+	s.body.WriteString(text)
+}
+
 func extractHTML(absPath, relPath string, src []byte, hash string) (*parser.ParseResult, error) {
 	_ = absPath
-	type hstate struct {
-		level     int
-		id        string
-		startLine int
-		buf       strings.Builder
-	}
-	var (
-		title, body                        strings.Builder
-		headings                           []store.Node
-		sectionTexts                       []string // per-section body text, parallel to headings
-		sectionBuf                         strings.Builder
-		inSection                          bool // true after the first heading has closed
-		rawLinks                           []parser.RawLink
-		metaTuples                         []store.MetadataTuple
-		inHead, inTitle, inScript, inStyle bool
-		cur                                *hstate
-		globalIdx                          int
-		lineNum                            = 1
-	)
+	s := newHTMLState(relPath)
 
 	z := html.NewTokenizer(bytes.NewReader(src))
 	for {
@@ -46,126 +187,31 @@ func extractHTML(absPath, relPath string, src []byte, hash string) (*parser.Pars
 		}
 		for _, b := range z.Raw() {
 			if b == '\n' {
-				lineNum++
+				s.lineNum++
 			}
 		}
 		switch tt {
 		case html.StartTagToken, html.SelfClosingTagToken:
-			tok := z.Token()
-			switch tok.Data {
-			case "head":
-				inHead = true
-			case "title":
-				inTitle = true
-			case "script":
-				inScript = true
-			case "style":
-				inStyle = true
-			case "h1", "h2", "h3", "h4", "h5", "h6":
-				// Flush section body accumulated since the previous heading closed.
-				if inSection {
-					sectionTexts = append(sectionTexts, sectionBuf.String())
-					sectionBuf.Reset()
-				}
-				level := int(tok.Data[1] - '0')
-				idAttr := attrVal(tok.Attr, "id")
-				var nodeID string
-				if idAttr != "" {
-					nodeID = relPath + "#" + idAttr
-				} else {
-					nodeID = fmt.Sprintf("%s#h%d-%d", relPath, level, globalIdx)
-					globalIdx++
-				}
-				cur = &hstate{level: level, id: nodeID, startLine: lineNum}
-			case "a":
-				if href := attrVal(tok.Attr, "href"); href != "" {
-					kind := "html_link"
-					if strings.HasPrefix(href, "http://") || strings.HasPrefix(href, "https://") {
-						kind = "external"
-					}
-					from := relPath
-					if cur != nil {
-						from = cur.id
-					}
-					rawLinks = append(rawLinks, parser.RawLink{
-						Text: href, Target: href, Kind: kind,
-						Line: lineNum, FromNodeID: from,
-					})
-				}
-			case "meta":
-				name := attrVal(tok.Attr, "name")
-				prop := attrVal(tok.Attr, "property")
-				content := attrVal(tok.Attr, "content")
-				key := name
-				if key == "" {
-					key = prop
-				}
-				if key != "" && content != "" {
-					metaTuples = append(metaTuples, store.MetadataTuple{
-						Key: key, Value: content, ValueType: "string", Source: "html_meta",
-					})
-				}
-			}
-
+			s.handleStartTag(z.Token())
 		case html.EndTagToken:
-			tok := z.Token()
-			switch tok.Data {
-			case "head":
-				inHead, inTitle = false, false
-			case "title":
-				inTitle = false
-			case "script":
-				inScript = false
-			case "style":
-				inStyle = false
-			case "h1", "h2", "h3", "h4", "h5", "h6":
-				if cur != nil {
-					headings = append(headings, store.Node{
-						ID:            cur.id,
-						Kind:          "heading",
-						Name:          strings.TrimSpace(cur.buf.String()),
-						QualifiedName: cur.id,
-						FilePath:      relPath,
-						StartLine:     cur.startLine,
-						EndLine:       lineNum,
-						Level:         cur.level,
-						UpdatedAt:     time.Now().Unix(),
-					})
-					cur = nil
-					inSection = true
-				}
-			}
-
+			s.handleEndTag(z.Token())
 		case html.TextToken:
-			text := string(z.Text())
-			if inTitle {
-				title.WriteString(text)
-				continue
-			}
-			if inScript || inStyle || inHead {
-				continue
-			}
-			if cur != nil {
-				cur.buf.WriteString(text)
-			} else if inSection {
-				sectionBuf.WriteString(text)
-			}
-			body.WriteString(text)
+			s.handleTextToken(string(z.Text()))
 		}
 	}
 
 	// Flush section body for the last heading.
-	if inSection {
-		sectionTexts = append(sectionTexts, sectionBuf.String())
+	if s.inSection {
+		s.sectionTexts = append(s.sectionTexts, s.sectionBuf.String())
 	}
 
-	titleStr := strings.TrimSpace(title.String())
+	titleStr := strings.TrimSpace(s.title.String())
 	name := titleStr
 	if name == "" {
 		name = filepath.Base(relPath)
 	}
 
-	bodyStr := body.String()
+	bodyStr := s.body.String()
 	excerpt := bodyStr
 	if len(excerpt) > 500 {
 		excerpt = excerpt[:500]
@@ -183,20 +229,20 @@ func extractHTML(absPath, relPath string, src []byte, hash string) (*parser.Pars
 		BodyExcerpt: excerpt, UpdatedAt: time.Now().Unix(),
 	}
 
-	htmlComputeEndLines(headings, docEndLine)
+	htmlComputeEndLines(s.headings, docEndLine)
 
 	return &parser.ParseResult{
 		DocNode:  docNode,
-		Headings: headings,
-		Edges:    htmlContainmentEdges(relPath, headings),
-		RawLinks: rawLinks,
+		Headings: s.headings,
+		Edges:    htmlContainmentEdges(relPath, s.headings),
+		RawLinks: s.rawLinks,
 		FileInfo: store.FileInfo{
 			Path: relPath, ContentHash: hash, Size: int64(len(src)),
 			ModifiedAt: 0, IndexedAt: time.Now().Unix(),
-			NodeCount: 1 + len(headings),
+			NodeCount: 1 + len(s.headings),
 		},
-		SectionChunks:  htmlSectionChunks(relPath, headings, sectionTexts, hash),
-		MetadataTuples: metaTuples,
+		SectionChunks:  htmlSectionChunks(relPath, s.headings, s.sectionTexts, hash),
+		MetadataTuples: s.metaTuples,
 	}, nil
 }
 

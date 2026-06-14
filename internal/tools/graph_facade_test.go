@@ -66,8 +66,21 @@ func TestGraphFacadeTraceFindsPath(t *testing.T) {
 		t.Fatalf("unexpected error: %s", extractText(res))
 	}
 	text := extractText(res)
-	if !strings.Contains(text, "Path found") {
-		t.Fatalf("expected trace output to report a path, got:\n%s", text)
+	// Pin the full reconstructed path (tracePathBFS parent-map walk + ordering),
+	// not just that *some* path exists — the only c.md→b.md route is
+	// c.md →wikilinks_to a.md →references b.md. A dropped intermediate hop, wrong
+	// hop count, or reversed reconstruction would otherwise pass silently.
+	if !strings.Contains(text, "Path found (2 hops)") {
+		t.Fatalf("expected a 2-hop path, got:\n%s", text)
+	}
+	// Pin the numbered hop markers (these appear only in the path body, not the
+	// "Gamma → Beta" header) so a dropped/reordered reconstruction can't pass.
+	h1, h2, h3 := strings.Index(text, "1. **Gamma** (c.md)"), strings.Index(text, "2. **Alpha** (a.md)"), strings.Index(text, "3. **Beta** (b.md)")
+	if h1 < 0 || h2 < 0 || h3 < 0 || h1 >= h2 || h2 >= h3 {
+		t.Fatalf("expected reconstructed hops 1.Gamma → 2.Alpha → 3.Beta, got:\n%s", text)
+	}
+	if wl, ref := strings.Index(text, "wikilinks_to"), strings.Index(text, "references"); wl < 0 || ref < 0 || wl >= ref {
+		t.Fatalf("expected hop kinds wikilinks_to then references in order, got:\n%s", text)
 	}
 }
 

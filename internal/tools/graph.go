@@ -124,6 +124,86 @@ func (h *handler) resolveOrErr(s string) (*store.Node, *mcp.CallToolResult) {
 type impactEntry struct{ docID, kind, via string }
 type traceHop struct{ from, kind string }
 
+// renderImpactTraverseLevel advances the BFS by one level: resolves edge sources
+// in batch, walks the current queue, and appends new impactEntries to levels[lv].
+// Returns the next frontier queue and the count of new entries added.
+func (h *handler) renderImpactTraverseLevel(
+	lv int,
+	queue []string,
+	visited map[string]bool,
+	levels map[int][]impactEntry,
+	nodeCache map[string]*store.Node,
+) (next []string, added int) {
+	// One batch call per level replaces N per-frontier queries.
+	edgeMap := h.edgesOfBatch(queue)
+
+	// Batch-resolve edge sources for getDocID (called per-edge in serial).
+	var newSources []string
+	seenSrc := make(map[string]bool)
+	for _, edges := range edgeMap {
+		for _, edge := range edges {
+			if !seenSrc[edge.Source] {
+				seenSrc[edge.Source] = true
+				if _, cached := nodeCache[edge.Source]; !cached {
+					newSources = append(newSources, edge.Source)
+				}
+			}
+		}
+	}
+	if len(newSources) > 0 {
+		maps.Copy(nodeCache, h.batchNodes(newSources))
+	}
+
+	for _, id := range queue { // walk queue in original order
+		for _, edge := range edgeMap[id] { // edges are in SQL ORDER BY order
+			src := getDocIDFromCache(edge.Source, nodeCache)
+			if visited[src] {
+				continue
+			}
+			visited[src] = true
+			next = append(next, src)
+			via := ""
+			if lv > 1 {
+				via = id
+			}
+			levels[lv] = append(levels[lv], impactEntry{src, edge.Kind, via})
+			added++
+		}
+	}
+	return next, added
+}
+
+// renderImpactLevels writes the per-depth sections of the impact report into sb.
+func renderImpactLevels(sb *strings.Builder, depth int, levels map[int][]impactEntry, nodeCache map[string]*store.Node) {
+	const maxPerLevel = 20
+	for lv := 1; lv <= depth; lv++ {
+		if len(levels[lv]) == 0 {
+			continue
+		}
+		label := "direct references"
+		if lv > 1 {
+			label = "transitive"
+		}
+		fmt.Fprintf(sb, "\nDepth %d (%s): %d documents\n", lv, label, len(levels[lv]))
+		shown := levels[lv]
+		if len(shown) > maxPerLevel {
+			shown = shown[:maxPerLevel]
+		}
+		for _, ent := range shown {
+			nm, fp := nodeNameFromCache(ent.docID, nodeCache)
+			if ent.via != "" {
+				vn, _ := nodeNameFromCache(ent.via, nodeCache)
+				fmt.Fprintf(sb, "- %s (%s) → %s %s\n", nm, fp, ent.kind, vn)
+			} else {
+				fmt.Fprintf(sb, "- %s (%s) via %s\n", nm, fp, ent.kind)
+			}
+		}
+		if len(levels[lv]) > maxPerLevel {
+			fmt.Fprintf(sb, "- (and %d more)\n", len(levels[lv])-maxPerLevel)
+		}
+	}
+}
+
 func (h *handler) renderImpact(doc string, depth int) (*mcp.CallToolResult, error) {
 	if depth < 1 {
 		depth = 1
@@ -140,44 +220,9 @@ func (h *handler) renderImpact(doc string, depth int) (*mcp.CallToolResult, erro
 	nodeCache := make(map[string]*store.Node)
 
 	for lv := 1; lv <= depth && len(queue) > 0; lv++ {
-		// Pattern 1: one batch call per level replaces N per-frontier queries.
-		edgeMap := h.edgesOfBatch(queue)
-
-		// Pattern 2: batch-resolve edge sources for getDocID (called per-edge in serial).
-		var newSources []string
-		seenSrc := make(map[string]bool)
-		for _, edges := range edgeMap {
-			for _, edge := range edges {
-				if !seenSrc[edge.Source] {
-					seenSrc[edge.Source] = true
-					if _, cached := nodeCache[edge.Source]; !cached {
-						newSources = append(newSources, edge.Source)
-					}
-				}
-			}
-		}
-		if len(newSources) > 0 {
-			maps.Copy(nodeCache, h.batchNodes(newSources))
-		}
-
-		var next []string
-		for _, id := range queue { // walk queue in original order
-			for _, edge := range edgeMap[id] { // edges are in SQL ORDER BY order
-				src := getDocIDFromCache(edge.Source, nodeCache)
-				if visited[src] {
-					continue
-				}
-				visited[src] = true
-				next = append(next, src)
-				via := ""
-				if lv > 1 {
-					via = id
-				}
-				levels[lv] = append(levels[lv], impactEntry{src, edge.Kind, via})
-				total++
-			}
-		}
-		queue = next
+		var added int
+		queue, added = h.renderImpactTraverseLevel(lv, queue, visited, levels, nodeCache)
+		total += added
 	}
 
 	// Pattern 3: batch-load all render-phase node IDs not yet in cache.
@@ -204,54 +249,20 @@ func (h *handler) renderImpact(doc string, depth int) (*mcp.CallToolResult, erro
 		maps.Copy(nodeCache, h.batchNodes(renderIDs))
 	}
 
-	const maxPerLevel = 20
 	startName, _ := nodeNameFromCache(startID, nodeCache)
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "## Impact Analysis for %q\n", startName)
-	for lv := 1; lv <= depth; lv++ {
-		if len(levels[lv]) == 0 {
-			continue
-		}
-		label := "direct references"
-		if lv > 1 {
-			label = "transitive"
-		}
-		fmt.Fprintf(&sb, "\nDepth %d (%s): %d documents\n", lv, label, len(levels[lv]))
-		shown := levels[lv]
-		if len(shown) > maxPerLevel {
-			shown = shown[:maxPerLevel]
-		}
-		for _, ent := range shown {
-			nm, fp := nodeNameFromCache(ent.docID, nodeCache)
-			if ent.via != "" {
-				vn, _ := nodeNameFromCache(ent.via, nodeCache)
-				fmt.Fprintf(&sb, "- %s (%s) → %s %s\n", nm, fp, ent.kind, vn)
-			} else {
-				fmt.Fprintf(&sb, "- %s (%s) via %s\n", nm, fp, ent.kind)
-			}
-		}
-		if len(levels[lv]) > maxPerLevel {
-			fmt.Fprintf(&sb, "- (and %d more)\n", len(levels[lv])-maxPerLevel)
-		}
-	}
+	renderImpactLevels(&sb, depth, levels, nodeCache)
 	fmt.Fprintf(&sb, "\nTotal: %d documents affected\n", total)
 	return mcp.NewToolResultText(sb.String()), nil
 }
-func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, error) {
-	fNode, e := h.resolveOrErr(from)
-	if e != nil {
-		return e, nil
-	}
-	tNode, e := h.resolveOrErr(to)
-	if e != nil {
-		return e, nil
-	}
-	fID, tID := h.getDocID(fNode.ID), h.getDocID(tNode.ID)
-	if fID == tID {
-		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nSame document.\n", fNode.Name, tNode.Name)), nil
-	}
-	parent, visited := map[string]traceHop{}, map[string]bool{fID: true}
-	queue, found := []string{fID}, false
+
+// tracePathBFS performs a forward BFS from fID toward tID using outgoing reference
+// edges, up to 10 hops. Returns parent (hop map) and found=true when tID is reached.
+func (h *handler) tracePathBFS(fID, tID string) (parent map[string]traceHop, found bool) {
+	parent = map[string]traceHop{}
+	visited := map[string]bool{fID: true}
+	queue := []string{fID}
 	for lv := 0; lv < 10 && !found && len(queue) > 0; lv++ {
 		var next []string
 		for _, id := range queue {
@@ -281,6 +292,23 @@ func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, erro
 		}
 		queue = next
 	}
+	return parent, found
+}
+
+func (h *handler) renderTrace(from string, to string) (*mcp.CallToolResult, error) {
+	fNode, e := h.resolveOrErr(from)
+	if e != nil {
+		return e, nil
+	}
+	tNode, e := h.resolveOrErr(to)
+	if e != nil {
+		return e, nil
+	}
+	fID, tID := h.getDocID(fNode.ID), h.getDocID(tNode.ID)
+	if fID == tID {
+		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nSame document.\n", fNode.Name, tNode.Name)), nil
+	}
+	parent, found := h.tracePathBFS(fID, tID)
 	if !found {
 		return mcp.NewToolResultText(fmt.Sprintf("## Trace: %q → %q\n\nNo reference path found within 10 hops (trace follows forward markdown links, wikilinks, and embeds). This does NOT mean the documents are unrelated — they may link in the reverse direction (try operation=incoming) or share tags or topical similarity (try docgraph_similar).\n", fNode.Name, tNode.Name)), nil
 	}

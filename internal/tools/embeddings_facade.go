@@ -44,6 +44,97 @@ func (h *handler) handleEmbeddingsFacade(ctx context.Context, req mcp.CallToolRe
 	}
 }
 
+type pendingEmbeddingResult struct {
+	docs        []store.PendingDoc
+	projectName string
+	projectRoot string
+}
+
+// fetchPendingEmbeddingsResults fetches pending embedding docs from all stores.
+// Returns a tool error result on failure, otherwise nil.
+func (h *handler) fetchPendingEmbeddingsResults(modelID string, limit int) ([]pendingEmbeddingResult, *mcp.CallToolResult) {
+	var results []pendingEmbeddingResult
+	if h.workspace != nil {
+		for _, p := range h.workspace.Projects {
+			docs, err := p.Store.GetPendingEmbeddings(modelID, limit)
+			if err != nil {
+				return nil, mcp.NewToolResultError(fmt.Sprintf("get pending for %s: %v", p.Name, err))
+			}
+			results = append(results, pendingEmbeddingResult{docs: docs, projectName: p.Name, projectRoot: p.Path})
+		}
+	} else {
+		docs, err := h.store.GetPendingEmbeddings(modelID, limit)
+		if err != nil {
+			return nil, mcp.NewToolResultError(fmt.Sprintf("get pending embeddings: %v", err))
+		}
+		results = append(results, pendingEmbeddingResult{docs: docs, projectRoot: h.projectRoot})
+	}
+	return results, nil
+}
+
+// buildEmbeddingsPendingToken generates and stores a confirmation token bound to
+// the exact docIDs shown in the pending list. Returns "" when N=0 or all-sensitive.
+func (h *handler) buildEmbeddingsPendingToken(results []pendingEmbeddingResult, pendingDocs []callout.PendingDoc) string {
+	paths := make([]string, len(pendingDocs))
+	for i, d := range pendingDocs {
+		paths[i] = d.FilePath
+	}
+	if len(pendingDocs) == 0 || callout.IsAllSensitive(paths) {
+		return ""
+	}
+	docIDs := make(map[string]struct{}, len(pendingDocs))
+	for _, r := range results {
+		for _, d := range r.docs {
+			docIDs[d.DocID] = struct{}{}
+		}
+	}
+	token := h.newConfirmationToken()
+	// Sweep expired tokens before inserting.
+	h.embeddingsPendingTokens.Range(func(k, v any) bool {
+		if v.(*pendingToken).expiresAt.Before(time.Now()) {
+			h.embeddingsPendingTokens.Delete(k)
+		}
+		return true
+	})
+	h.embeddingsPendingTokens.Store(token, &pendingToken{
+		expiresAt: time.Now().Add(30 * time.Minute),
+		docIDs:    docIDs,
+	})
+	return token
+}
+
+// appendEmbeddingsPendingDocList writes the ## Document List section into sb.
+func appendEmbeddingsPendingDocList(sb *strings.Builder, results []pendingEmbeddingResult, contentMode string) {
+	sb.WriteString("\n## Document List\n\n")
+	i := 0
+	for _, r := range results {
+		for _, doc := range r.docs {
+			i++
+			prefix := ""
+			if r.projectName != "" {
+				prefix = "[" + r.projectName + "] "
+			}
+			fmt.Fprintf(sb, "### %d. %s%s\n", i, prefix, doc.Name)
+			fmt.Fprintf(sb, "- **doc_id:** `%s`\n", doc.DocID)
+			fmt.Fprintf(sb, "- **path:** %s\n", doc.FilePath)
+			fmt.Fprintf(sb, "- **content_hash:** `%s`\n", doc.ContentHash)
+
+			content := doc.BodyExcerpt
+			if contentMode == "full" && r.projectRoot != "" {
+				if c, err := store.ReadSectionContent(doc.FilePath, doc.StartLine, doc.EndLine, r.projectRoot, 8000); err == nil {
+					content = c
+				}
+			}
+			if content != "" {
+				sb.WriteString("- **content:**\n\n```text\n")
+				sb.WriteString(content)
+				sb.WriteString("\n```\n")
+			}
+			sb.WriteString("\n")
+		}
+	}
+}
+
 func (h *handler) handleEmbeddingsFacadePending(args map[string]any) (*mcp.CallToolResult, error) {
 	modelID := sanitizeArg(getStringArg(args, "model_id", ""), maxArgLength)
 	if modelID == "" {
@@ -54,28 +145,10 @@ func (h *handler) handleEmbeddingsFacadePending(args map[string]any) (*mcp.CallT
 		return mcp.NewToolResultError("content_mode parameter must be either full or excerpt"), nil
 	}
 
-	type pendingEmbeddingResult struct {
-		docs        []store.PendingDoc
-		projectName string
-		projectRoot string
-	}
-
-	var results []pendingEmbeddingResult
 	limit := getIntArgClamped(args, "limit", 50, 1, maxListLimit)
-	if h.workspace != nil {
-		for _, p := range h.workspace.Projects {
-			docs, err := p.Store.GetPendingEmbeddings(modelID, limit)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("get pending for %s: %v", p.Name, err)), nil
-			}
-			results = append(results, pendingEmbeddingResult{docs: docs, projectName: p.Name, projectRoot: p.Path})
-		}
-	} else {
-		docs, err := h.store.GetPendingEmbeddings(modelID, limit)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("get pending embeddings: %v", err)), nil
-		}
-		results = append(results, pendingEmbeddingResult{docs: docs, projectRoot: h.projectRoot})
+	results, toolErr := h.fetchPendingEmbeddingsResults(modelID, limit)
+	if toolErr != nil {
+		return toolErr, nil
 	}
 
 	var pendingDocs []callout.PendingDoc
@@ -89,31 +162,7 @@ func (h *handler) handleEmbeddingsFacadePending(args map[string]any) (*mcp.CallT
 	// is bound to the exact set of doc_ids shown to the user in this response;
 	// action=store must reject any doc_id outside that set and the token is
 	// reusable for every doc in the batch until exhausted or expired.
-	paths := make([]string, len(pendingDocs))
-	for i, d := range pendingDocs {
-		paths[i] = d.FilePath
-	}
-	var token string
-	if len(pendingDocs) > 0 && !callout.IsAllSensitive(paths) {
-		docIDs := make(map[string]struct{}, len(pendingDocs))
-		for _, r := range results {
-			for _, d := range r.docs {
-				docIDs[d.DocID] = struct{}{}
-			}
-		}
-		token = h.newConfirmationToken()
-		// Sweep expired tokens before inserting.
-		h.embeddingsPendingTokens.Range(func(k, v any) bool {
-			if v.(*pendingToken).expiresAt.Before(time.Now()) {
-				h.embeddingsPendingTokens.Delete(k)
-			}
-			return true
-		})
-		h.embeddingsPendingTokens.Store(token, &pendingToken{
-			expiresAt: time.Now().Add(30 * time.Minute),
-			docIDs:    docIDs,
-		})
-	}
+	token := h.buildEmbeddingsPendingToken(results, pendingDocs)
 
 	workspaceDir := h.projectRoot
 	if h.workspace != nil {
@@ -135,34 +184,7 @@ func (h *handler) handleEmbeddingsFacadePending(args map[string]any) (*mcp.CallT
 
 	var sb strings.Builder
 	sb.WriteString(graph)
-	sb.WriteString("\n## Document List\n\n")
-	i := 0
-	for _, r := range results {
-		for _, doc := range r.docs {
-			i++
-			prefix := ""
-			if r.projectName != "" {
-				prefix = "[" + r.projectName + "] "
-			}
-			fmt.Fprintf(&sb, "### %d. %s%s\n", i, prefix, doc.Name)
-			fmt.Fprintf(&sb, "- **doc_id:** `%s`\n", doc.DocID)
-			fmt.Fprintf(&sb, "- **path:** %s\n", doc.FilePath)
-			fmt.Fprintf(&sb, "- **content_hash:** `%s`\n", doc.ContentHash)
-
-			content := doc.BodyExcerpt
-			if contentMode == "full" && r.projectRoot != "" {
-				if c, err := store.ReadSectionContent(doc.FilePath, doc.StartLine, doc.EndLine, r.projectRoot, 8000); err == nil {
-					content = c
-				}
-			}
-			if content != "" {
-				sb.WriteString("- **content:**\n\n```text\n")
-				sb.WriteString(content)
-				sb.WriteString("\n```\n")
-			}
-			sb.WriteString("\n")
-		}
-	}
+	appendEmbeddingsPendingDocList(&sb, results, contentMode)
 	return mcp.NewToolResultText(sb.String()), nil
 }
 

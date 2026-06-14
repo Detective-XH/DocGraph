@@ -497,6 +497,106 @@ func TestEmbeddingsFacadeClearRejectsPendingArgs(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Characterization tests: pending token binds exactly the shown docIDs
+// and Document List render includes doc_id / path / content_hash.
+// Written before refactoring handleEmbeddingsFacadePending to satisfy GUARDRAIL-8.
+// ---------------------------------------------------------------------------
+
+func TestEmbeddingsFacadePending_TokenBindsExactDocIDs(t *testing.T) {
+	h, st := newTestHandler(t)
+	// Two non-sensitive docs (file watcher marks them all as pending for the
+	// given model_id since no embedding has been stored yet).
+	nodes := []store.Node{
+		{ID: "p.md", Kind: "document", Name: "P", QualifiedName: "p.md", FilePath: "p.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body p", UpdatedAt: 1},
+		{ID: "q.md", Kind: "document", Name: "Q", QualifiedName: "q.md", FilePath: "q.md", StartLine: 1, EndLine: 5, BodyExcerpt: "body q", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
+		"action":       "pending",
+		"model_id":     "test-char-model",
+		"content_mode": "excerpt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+
+	// Exactly one token must be stored.
+	var storedToken *pendingToken
+	var tokenCount int
+	h.embeddingsPendingTokens.Range(func(_, v any) bool {
+		storedToken = v.(*pendingToken)
+		tokenCount++
+		return true
+	})
+	if tokenCount != 1 {
+		t.Fatalf("expected exactly 1 pending token, got %d", tokenCount)
+	}
+
+	// The token's docIDs set must contain exactly p.md and q.md.
+	storedToken.mu.Lock()
+	ids := make(map[string]struct{}, len(storedToken.docIDs))
+	for k, v := range storedToken.docIDs {
+		ids[k] = v
+	}
+	storedToken.mu.Unlock()
+
+	for _, want := range []string{"p.md", "q.md"} {
+		if _, ok := ids[want]; !ok {
+			t.Errorf("token docIDs missing %q; got %v", want, ids)
+		}
+	}
+	if len(ids) != 2 {
+		t.Errorf("token docIDs has %d entries, want 2; got %v", len(ids), ids)
+	}
+}
+
+func TestEmbeddingsFacadePending_DocListRendersFields(t *testing.T) {
+	h, st := newTestHandler(t)
+	nodes := []store.Node{
+		{ID: "alpha.md", Kind: "document", Name: "Alpha", QualifiedName: "alpha.md", FilePath: "alpha.md", StartLine: 1, EndLine: 5, BodyExcerpt: "excerpt alpha", UpdatedAt: 1},
+		{ID: "beta.md", Kind: "document", Name: "Beta", QualifiedName: "beta.md", FilePath: "beta.md", StartLine: 1, EndLine: 5, BodyExcerpt: "excerpt beta", UpdatedAt: 1},
+	}
+	if err := st.InsertNodes(nodes); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := callTool(h, h.handleEmbeddingsFacade, map[string]any{
+		"action":       "pending",
+		"model_id":     "test-char-model-2",
+		"content_mode": "excerpt",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.IsError {
+		t.Fatalf("unexpected error: %v", res.Content)
+	}
+	text := extractText(res)
+
+	// Each doc must appear in Document List with its doc_id, path, content_hash.
+	for _, doc := range []struct{ id, path string }{
+		{"alpha.md", "alpha.md"},
+		{"beta.md", "beta.md"},
+	} {
+		if !strings.Contains(text, "`"+doc.id+"`") {
+			t.Errorf("doc_id %q not found in output:\n%s", doc.id, text)
+		}
+		if !strings.Contains(text, doc.path) {
+			t.Errorf("path %q not found in output:\n%s", doc.path, text)
+		}
+	}
+	if !strings.Contains(text, "## Document List") {
+		t.Errorf("Document List section header missing from output:\n%s", text)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // handleSimilar deduplication
 // ---------------------------------------------------------------------------
 
