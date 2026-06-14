@@ -68,6 +68,30 @@ func deleteIndexedFile(st FileDeleter, rel string) bool {
 	return true
 }
 
+// classifyOutOfScope scans dbFiles and splits them into files absent from disk
+// and files present but covered by an ignore rule. Transient stat errors are
+// treated as "keep" (never classified). ignoreMatch may be nil.
+func classifyOutOfScope(root string, dbFiles []store.FileInfo, ignoreMatch func(string) bool) (absent, ignored []string) {
+	for _, f := range dbFiles {
+		if !docformat.SupportedExt(strings.ToLower(filepath.Ext(f.Path))) {
+			continue
+		}
+		_, statErr := os.Stat(filepath.Join(root, f.Path))
+		if os.IsNotExist(statErr) {
+			absent = append(absent, f.Path)
+			continue
+		}
+		if statErr != nil {
+			continue // transient error → keep (never prune on uncertainty)
+		}
+		// Present on disk: prune only if a deliberate ignore rule now covers it.
+		if ignoreMatch != nil && ignoreMatch(f.Path) {
+			ignored = append(ignored, f.Path)
+		}
+	}
+	return absent, ignored
+}
+
 // reconcileDeletedFiles removes index data for files that are no longer in scope:
 // (1) deleted from disk while no watcher was running (the gap the event-driven
 // pruneDeletedFiles cannot see), found by per-file os.Stat; and (2) — when
@@ -91,24 +115,7 @@ func reconcileDeletedFiles(root string, st FileDeleter, ignoreMatch func(string)
 		fmt.Fprintf(os.Stderr, "[reconcile] skipped: GetFiles: %v\n", err)
 		return 0 // never prune on a failed DB read
 	}
-	var absent, ignored []string
-	for _, f := range dbFiles {
-		if !docformat.SupportedExt(strings.ToLower(filepath.Ext(f.Path))) {
-			continue
-		}
-		_, statErr := os.Stat(filepath.Join(root, f.Path))
-		if os.IsNotExist(statErr) {
-			absent = append(absent, f.Path)
-			continue
-		}
-		if statErr != nil {
-			continue // transient error → keep (never prune on uncertainty)
-		}
-		// Present on disk: prune only if a deliberate ignore rule now covers it.
-		if ignoreMatch != nil && ignoreMatch(f.Path) {
-			ignored = append(ignored, f.Path)
-		}
-	}
+	absent, ignored := classifyOutOfScope(root, dbFiles, ignoreMatch)
 	toPrune := len(absent) + len(ignored)
 	if toPrune == 0 {
 		return 0
