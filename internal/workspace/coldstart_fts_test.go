@@ -3,6 +3,8 @@ package workspace
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/Detective-XH/docgraph/internal/store"
 )
 
 // TestColdStartWorkspaceFTSRebuildAndSync locks the workspace cold-start FTS
@@ -49,9 +51,7 @@ func TestColdStartWorkspaceFTSRebuildAndSync(t *testing.T) {
 	if err := w.IndexAll(); err != nil {
 		t.Fatal(err)
 	}
-	if hits := wsSearchCount(t, w, oldTerm); hits == 0 {
-		t.Errorf("cold-start: search %q = 0 hits, want >0 (FTS rebuild did not populate the index)", oldTerm)
-	}
+	assertFTSHits(t, w, oldTerm, true, "cold-start: FTS rebuild did not populate the index")
 
 	// Rewrite the searchable term, then reindex on the SAME open workspace
 	// (fullBuild=false → the recreated live triggers must keep the FTS current).
@@ -59,12 +59,8 @@ func TestColdStartWorkspaceFTSRebuildAndSync(t *testing.T) {
 	if err := w.IndexAll(); err != nil {
 		t.Fatal(err)
 	}
-	if hits := wsSearchCount(t, w, newTerm); hits == 0 {
-		t.Errorf("warm reindex: search %q = 0 hits, want >0 (triggers not recreated → incremental change missed FTS)", newTerm)
-	}
-	if hits := wsSearchCount(t, w, oldTerm); hits != 0 {
-		t.Errorf("warm reindex: search %q = %d hits, want 0 (stale FTS posting survived the update)", oldTerm, hits)
-	}
+	assertFTSHits(t, w, newTerm, true, "warm reindex: triggers not recreated → incremental change missed FTS")
+	assertFTSHits(t, w, oldTerm, false, "warm reindex: stale FTS posting survived the update")
 }
 
 // TestColdStartWorkspaceFTSCrashRecovery exercises the crash-recovery state
@@ -127,12 +123,8 @@ func TestColdStartWorkspaceFTSCrashRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	// FTS must reflect the change after the rebuild — search the same open store.
-	if hits := wsSearchCount(t, w, v2Term); hits == 0 {
-		t.Errorf("crash-recovery: search %q = 0 hits, want >0 (rebuild did not pick up the changed file)", v2Term)
-	}
-	if hits := wsSearchCount(t, w, v1Term); hits != 0 {
-		t.Errorf("crash-recovery: search %q = %d hits, want 0 (deletes skipped → stale base row rebuilt into FTS)", v1Term, hits)
-	}
+	assertFTSHits(t, w, v2Term, true, "crash-recovery: rebuild did not pick up the changed file")
+	assertFTSHits(t, w, v1Term, false, "crash-recovery: deletes skipped → stale base row rebuilt into FTS")
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -148,15 +140,7 @@ func TestColdStartWorkspaceFTSCrashRecovery(t *testing.T) {
 	if want.UnresolvedCount != 0 {
 		t.Fatalf("fixture invariant: clean v2 build should have 0 unresolved refs, got %d", want.UnresolvedCount)
 	}
-	if got.NodeCount != want.NodeCount {
-		t.Errorf("NodeCount: crash-recovery=%d, clean rebuild=%d (stale nodes survived)", got.NodeCount, want.NodeCount)
-	}
-	if got.EdgeCount != want.EdgeCount {
-		t.Errorf("EdgeCount: crash-recovery=%d, clean rebuild=%d (duplicate edges from plain InsertEdges)", got.EdgeCount, want.EdgeCount)
-	}
-	if got.UnresolvedCount != want.UnresolvedCount {
-		t.Errorf("UnresolvedCount: crash-recovery=%d, clean rebuild=%d (stale unresolved refs survived)", got.UnresolvedCount, want.UnresolvedCount)
-	}
+	assertStatsMatch(t, got, want, "crash-recovery")
 }
 
 // wsSearchCount runs a workspace FTS search against an ALREADY open + indexed
@@ -171,4 +155,34 @@ func wsSearchCount(t *testing.T, w *Workspace, query string) int {
 		t.Fatal(err)
 	}
 	return len(results)
+}
+
+// assertStatsMatch asserts that got.NodeCount, EdgeCount, and UnresolvedCount all
+// equal the corresponding fields in want. label is included in every failure message.
+func assertStatsMatch(t *testing.T, got, want store.Stats, label string) {
+	t.Helper()
+	if got.NodeCount != want.NodeCount {
+		t.Errorf("NodeCount: %s=%d, clean rebuild=%d (stale nodes survived)", label, got.NodeCount, want.NodeCount)
+	}
+	if got.EdgeCount != want.EdgeCount {
+		t.Errorf("EdgeCount: %s=%d, clean rebuild=%d (duplicate edges from plain InsertEdges)", label, got.EdgeCount, want.EdgeCount)
+	}
+	if got.UnresolvedCount != want.UnresolvedCount {
+		t.Errorf("UnresolvedCount: %s=%d, clean rebuild=%d (stale unresolved refs survived)", label, got.UnresolvedCount, want.UnresolvedCount)
+	}
+}
+
+// assertFTSHits asserts the FTS hit count for term in w is non-zero (wantNonZero=true)
+// or zero (wantNonZero=false). msg is included in the failure message for context.
+// Non-fatal (t.Errorf) to preserve the original collect-all-failures behavior of
+// the call sites, which continue past a failed FTS check to later assertions.
+func assertFTSHits(t *testing.T, w *Workspace, term string, wantNonZero bool, msg string) {
+	t.Helper()
+	hits := wsSearchCount(t, w, term)
+	if wantNonZero && hits == 0 {
+		t.Errorf("%s: search %q = 0 hits, want >0", msg, term)
+	}
+	if !wantNonZero && hits != 0 {
+		t.Errorf("%s: search %q = %d hits, want 0", msg, term, hits)
+	}
 }

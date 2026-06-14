@@ -137,10 +137,10 @@ func (s *Store) findCompetingInterpretations(opts DriftAuditOpts) ([]DriftFindin
 	return findings, nil
 }
 
-// findResearchSupersededClaim returns research.superseded_claim findings:
-// nodes that are both in governance_metadata (superseded_by set) and
-// research_metadata, and still have incoming reference edges from active docs.
-func (s *Store) findResearchSupersededClaim(opts DriftAuditOpts) ([]DriftFinding, error) {
+// queryResearchSupersededNodes returns nodes that are both superseded
+// (governance_metadata.superseded_by set) and research documents
+// (research_metadata present), ordered by id.
+func (s *Store) queryResearchSupersededNodes() ([]supersededNode, error) {
 	rows, err := s.db.Query(`
 		SELECT n.id, n.file_path, gm.superseded_by
 		FROM governance_metadata gm
@@ -154,14 +154,9 @@ func (s *Store) findResearchSupersededClaim(opts DriftAuditOpts) ([]DriftFinding
 	}
 	defer rows.Close()
 
-	type entry struct {
-		nodeID       string
-		filePath     string
-		supersededBy string
-	}
-	var superseded []entry
+	var superseded []supersededNode
 	for rows.Next() {
-		var e entry
+		var e supersededNode
 		if err := rows.Scan(&e.nodeID, &e.filePath, &e.supersededBy); err != nil {
 			return nil, fmt.Errorf("findResearchSupersededClaim scan: %w", err)
 		}
@@ -170,57 +165,81 @@ func (s *Store) findResearchSupersededClaim(opts DriftAuditOpts) ([]DriftFinding
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("findResearchSupersededClaim rows: %w", err)
 	}
+	return superseded, nil
+}
 
+// findResearchSupersededReferrers returns up to limit research.superseded_claim
+// findings for one superseded research node: one per unique active
+// (non-archived, non-superseded) source document that still references it via an
+// allowed reference edge (references, wikilinks_to, related_to).
+func (s *Store) findResearchSupersededReferrers(sup supersededNode, limit int) ([]DriftFinding, error) {
+	edges, err := s.GetIncomingEdges(sup.nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("findResearchSupersededClaim GetIncomingEdges(%s): %w", sup.nodeID, err)
+	}
 	allowedKinds := map[string]bool{"references": true, "wikilinks_to": true, "related_to": true}
+	seen := make(map[string]bool)
 	var findings []DriftFinding
+	for _, e := range edges {
+		if len(findings) >= limit {
+			break
+		}
+		if !allowedKinds[e.Kind] {
+			continue
+		}
+		sourceID := e.Source
+		if seen[sourceID] {
+			continue
+		}
+		srcGov, err := s.GetGovernanceMetadata(sourceID)
+		if err != nil {
+			return nil, fmt.Errorf("findResearchSupersededClaim GetGovernanceMetadata(%s): %w", sourceID, err)
+		}
+		if srcGov != nil && (srcGov.Status == "archived" || srcGov.Status == "superseded") {
+			continue
+		}
+		srcNode, err := s.GetNodeByID(sourceID)
+		if err != nil {
+			return nil, fmt.Errorf("findResearchSupersededClaim GetNodeByID(%s): %w", sourceID, err)
+		}
+		srcPath := sourceID
+		if srcNode != nil {
+			srcPath = srcNode.FilePath
+		}
+		seen[sourceID] = true
+		findings = append(findings, DriftFinding{
+			Code:          CodeResearchSupersededClaim,
+			NodeID:        sup.nodeID,
+			FilePath:      sup.filePath,
+			RelatedNodeID: sourceID,
+			RelatedPath:   srcPath,
+			Severity:      "warning",
+			Message:       fmt.Sprintf("Superseded research document still referenced by %s", srcPath),
+			Evidence:      fmt.Sprintf("superseded_by=%s", sup.supersededBy),
+		})
+	}
+	return findings, nil
+}
 
+// findResearchSupersededClaim returns research.superseded_claim findings:
+// nodes that are both in governance_metadata (superseded_by set) and
+// research_metadata, and still have incoming reference edges from active docs.
+func (s *Store) findResearchSupersededClaim(opts DriftAuditOpts) ([]DriftFinding, error) {
+	superseded, err := s.queryResearchSupersededNodes()
+	if err != nil {
+		return nil, err
+	}
+
+	var findings []DriftFinding
 	for _, sup := range superseded {
 		if len(findings) >= opts.Limit {
 			break
 		}
-		edges, err := s.GetIncomingEdges(sup.nodeID)
+		refs, err := s.findResearchSupersededReferrers(sup, opts.Limit-len(findings))
 		if err != nil {
-			return nil, fmt.Errorf("findResearchSupersededClaim GetIncomingEdges(%s): %w", sup.nodeID, err)
+			return nil, err
 		}
-		seen := make(map[string]bool)
-		for _, e := range edges {
-			if len(findings) >= opts.Limit {
-				break
-			}
-			if !allowedKinds[e.Kind] {
-				continue
-			}
-			sourceID := e.Source
-			if seen[sourceID] {
-				continue
-			}
-			srcGov, err := s.GetGovernanceMetadata(sourceID)
-			if err != nil {
-				return nil, fmt.Errorf("findResearchSupersededClaim GetGovernanceMetadata(%s): %w", sourceID, err)
-			}
-			if srcGov != nil && (srcGov.Status == "archived" || srcGov.Status == "superseded") {
-				continue
-			}
-			srcNode, err := s.GetNodeByID(sourceID)
-			if err != nil {
-				return nil, fmt.Errorf("findResearchSupersededClaim GetNodeByID(%s): %w", sourceID, err)
-			}
-			srcPath := sourceID
-			if srcNode != nil {
-				srcPath = srcNode.FilePath
-			}
-			seen[sourceID] = true
-			findings = append(findings, DriftFinding{
-				Code:          CodeResearchSupersededClaim,
-				NodeID:        sup.nodeID,
-				FilePath:      sup.filePath,
-				RelatedNodeID: sourceID,
-				RelatedPath:   srcPath,
-				Severity:      "warning",
-				Message:       fmt.Sprintf("Superseded research document still referenced by %s", srcPath),
-				Evidence:      fmt.Sprintf("superseded_by=%s", sup.supersededBy),
-			})
-		}
+		findings = append(findings, refs...)
 	}
 	return findings, nil
 }

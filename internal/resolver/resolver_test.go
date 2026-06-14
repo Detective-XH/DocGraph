@@ -29,6 +29,18 @@ func setupResolverTest(t *testing.T) *store.Store {
 	return st
 }
 
+// assertEdgeExists asserts that edges contains at least one edge with the given
+// target node ID and kind. Uses t.Helper so failures point to the call site.
+func assertEdgeExists(t *testing.T, edges []store.Edge, wantTarget, wantKind string) {
+	t.Helper()
+	for _, e := range edges {
+		if e.Target == wantTarget && e.Kind == wantKind {
+			return
+		}
+	}
+	t.Errorf("expected edge with target=%q kind=%q, not found", wantTarget, wantKind)
+}
+
 func TestResolveMarkdownLink(t *testing.T) {
 	t.Run("resolves markdown links to existing documents", func(t *testing.T) {
 		st := setupResolverTest(t)
@@ -64,31 +76,13 @@ func TestResolveMarkdownLink(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		found := false
-		for _, e := range edges {
-			if e.Target == "doc-a.md" && e.Kind == "references" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected edge README.md -> doc-a.md (references), not found")
-		}
+		assertEdgeExists(t, edges, "doc-a.md", "references")
 
 		edges2, err := st.GetOutgoingEdges("subdir/nested.md")
 		if err != nil {
 			t.Fatal(err)
 		}
-		found = false
-		for _, e := range edges2 {
-			if e.Target == "README.md" && e.Kind == "references" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected edge subdir/nested.md -> README.md (references), not found")
-		}
+		assertEdgeExists(t, edges2, "README.md", "references")
 
 		// Verify no unresolved refs remain
 		remaining, err := st.GetUnresolvedRefs()
@@ -144,31 +138,13 @@ func TestResolveWikilink(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		found := false
-		for _, e := range edges {
-			if e.Target == "doc-b.md" && e.Kind == "wikilinks_to" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected wikilinks_to edge doc-a.md -> doc-b.md, not found")
-		}
+		assertEdgeExists(t, edges, "doc-b.md", "wikilinks_to")
 
 		edges2, err := st.GetOutgoingEdges("doc-b.md")
 		if err != nil {
 			t.Fatal(err)
 		}
-		found = false
-		for _, e := range edges2 {
-			if e.Target == "doc-a.md" && e.Kind == "wikilinks_to" {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Error("expected wikilinks_to edge doc-b.md -> doc-a.md, not found")
-		}
+		assertEdgeExists(t, edges2, "doc-a.md", "wikilinks_to")
 
 		// Verify no unresolved refs remain
 		remaining, err := st.GetUnresolvedRefs()
