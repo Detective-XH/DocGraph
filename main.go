@@ -23,6 +23,8 @@ func main() {
 		cmdSync(os.Args[2:])
 	case "status":
 		cmdStatus(os.Args[2:])
+	case "heal":
+		cmdHeal(os.Args[2:])
 	case "serve":
 		cmdServe(os.Args[2:])
 	case "version", "--version", "-v":
@@ -34,7 +36,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--dry-run] [--interactive] [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [--update-skills] [path]\n  install [--dry-run] [--interactive] [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--update-skills] [path]\n  pack list [--workspace] <path>\n  pack enable [--workspace] [--no-sync] <pack-id> <path>\n  pack disable [--workspace] <pack-id> <path>\n  index [--force] [--threshold N] [--no-gitignore] [--no-history] <path>\n  sync [--threshold N] [--no-gitignore] [--no-history] <path>\n  status <path>\n  serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --path <path>\n  serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --workspace <dir>\n  version\n")
+	fmt.Fprintf(os.Stderr, "Usage: docgraph <command>\n\nCommands:\n  init [--dry-run] [--interactive] [--install-clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--with-skills] [--update-skills] [path]\n  install [--dry-run] [--interactive] [--clients auto|all|claude,codex,hermes,opencode] [--workspace] [--scope user] [--update-skills] [path]\n  pack list [--workspace] <path>\n  pack enable [--workspace] [--no-sync] <pack-id> <path>\n  pack disable [--workspace] <pack-id> <path>\n  heal [--project <path>] [--fix] [--owner <name>] [--git-timeout <dur>]\n  index [--force] [--threshold N] [--no-gitignore] [--no-history] <path>\n  sync [--threshold N] [--no-gitignore] [--no-history] <path>\n  status <path>\n  serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --path <path>\n  serve [--threshold N] [--no-gitignore] [--no-history] [--enable-embeddings] [--enable-enrichment] --workspace <dir>\n  version\n")
 	os.Exit(1)
 }
 
