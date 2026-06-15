@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.4 — 2026-06-15
+
+Feature release: `docgraph heal` — automated metadata quality healer for Markdown files.
+
+### Added
+
+- **`docgraph heal`** — new CLI subcommand that infers and patches missing `status` and `owner` governance fields in `.md` frontmatter. Dry-run by default; `--fix` applies patches atomically (write to a temp file, fsync, rename — no partial writes). Flags: `--project`, `--fix`, `--owner <name>` (bypasses git inference), `--git-timeout` (default 10s).
+  - Status inference: path-segment `shipped/` → `status=shipped`, `decisions/` → `status=closed`.
+  - Owner inference: `git log --follow` with ≥85% authorship across ≥3 commits.
+  - Emits the top-2 skip reasons when ambiguous, so you know why a field was left unpatched.
+  - Handles edge cases: HTML-comment-before-frontmatter reordering, non-mapping frontmatter rejection, YAML-special-character quoting, multi-line scalars and anchors preserved byte-for-byte.
+
 ## v0.3.3 — 2026-06-14
 
 Code-quality and dependency maintenance release. No behavior, API, output, or schema changes; fully backward-compatible (same inputs produce identical results).
