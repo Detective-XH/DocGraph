@@ -131,6 +131,16 @@ func main() {
 		fatalf("A11 pre-flight: %v", err)
 	}
 
+	// Find a document with NO similarity results for A2 by probing candidates via the tool.
+	a2doc, err := findDocWithNoSimilarityResults(r, []string{
+		"AGENTS.md",
+		"testdata/links/hub.md",
+		"testdata/governance/policy.md",
+	})
+	if err != nil {
+		fatalf("A2 pre-flight: %v", err)
+	}
+
 	assertions := []assertion{
 		{
 			id:   "A0",
@@ -147,7 +157,7 @@ func main() {
 		{
 			id:   "A2",
 			tool: "docgraph_similar",
-			args: map[string]any{"document": "CHANGELOG.md"},
+			args: map[string]any{"document": a2doc},
 			must: []string{"not a misconfiguration", "keyword- and link-based"},
 		},
 		{
@@ -284,6 +294,24 @@ func findDocWithSimilarityResults(r *runner, candidates []string) (string, error
 		}
 	}
 	return "", fmt.Errorf("no candidate document has similarity results (tried %v) — ensure similarity index is built", candidates)
+}
+
+// findDocWithNoSimilarityResults probes each candidate by calling docgraph_similar and
+// returns the first that produces the zero-result sentinel ("No similarity edges for
+// this document"). Checking the positive sentinel (not merely the absence of results)
+// avoids false-selecting a doc that returns an error or is missing from the index.
+func findDocWithNoSimilarityResults(r *runner, candidates []string) (string, error) {
+	const sentinel = "No similarity edges for this document"
+	for _, doc := range candidates {
+		text, err := r.call("docgraph_similar", map[string]any{"document": doc})
+		if err != nil {
+			continue
+		}
+		if strings.Contains(text, sentinel) {
+			return doc, nil
+		}
+	}
+	return "", fmt.Errorf("no candidate document has zero similarity results (tried %v) — all are topically similar to other docs; update the candidate list", candidates)
 }
 
 // findDocWithBothEdges returns the first candidate path that has at least one
