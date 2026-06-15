@@ -6,14 +6,17 @@ linters:
     - cyclop
   settings:
     cyclop:
-      # Per-function complexity backstop. NO //nolint whitelist: the CI job uses
-      # --new-from-rev (revgrep), which reports only issues on changed lines, so
-      # the known high-CC baseline (handleNode 55, indexStore 44, indexProjectOpts
-      # 43, extractHTML/extractCStyle 40 — all flat-dispatch/inherent, breadth not
-      # depth) is grandfathered untouched and stays VISIBLE on local full runs as a
-      # periodic-review list. A PR only trips cyclop by adding a new >40 function or
-      # by growing an existing one's lines past 40.
-      max-complexity: 40
+      # Per-function complexity backstop, tightened 40 → 20 after the gocyclo
+      # campaign drove the whole tree down (handleNode 55, indexStore 44,
+      # indexProjectOpts 43, extractHTML 40 — all refactored to ≤14, no longer
+      # high-CC). NO //nolint whitelist: the CI job uses --new-from-rev (revgrep),
+      # reporting only issues on changed lines, so the sole remaining high-CC
+      # function — extractCStyle (36, the by-design-red C-family FSM tokenizer;
+      # decisioned LEAVE, not gocyclo-gamed) — is grandfathered untouched and stays
+      # VISIBLE on local full runs as a one-item review list. The bar sits just
+      # above the GRC soft target (gocyclo ≤13–15) so the two don't double-fire.
+      # A PR only trips cyclop by adding a new >20 function or growing one past 20.
+      max-complexity: 20
       package-average: 0      # per-function gate only
     errcheck:
       # Conventionally-ignorable cleanup. errcheck matches concrete signatures,
