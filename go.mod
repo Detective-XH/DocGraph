@@ -3,9 +3,9 @@ module github.com/Detective-XH/docgraph
 go 1.25.5
 
 require (
-	github.com/Detective-XH/gopdf v0.8.0
+	github.com/Detective-XH/gopdf v0.8.4
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/mark3labs/mcp-go v0.54.1
+	github.com/mark3labs/mcp-go v0.55.0
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/net v0.56.0
 	gopkg.in/yaml.v3 v3.0.1
